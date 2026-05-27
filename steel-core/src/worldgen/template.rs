@@ -24,9 +24,10 @@ use steel_registry::structure_processor::{
     StructureProcessorKind, StructureRuleTestData,
 };
 use steel_registry::template_pool::Projection;
+use steel_registry::vanilla_block_tags::Tag;
 use steel_registry::{
-    Registry, RegistryExt, TaggedRegistryExt, vanilla_block_entity_types, vanilla_block_tags,
-    vanilla_blocks, vanilla_template_pools,
+    Registry, RegistryExt, TaggedRegistryExt, vanilla_block_entity_types, vanilla_blocks,
+    vanilla_template_pools,
 };
 use steel_utils::random::legacy_random::LegacyRandom;
 use steel_utils::random::worldgen_random::WorldgenRandom;
@@ -1232,7 +1233,7 @@ impl StructureTemplate {
             StructureProcessorKind::ProtectedBlocks { cannot_replace } => {
                 let existing =
                     Self::block_for_state(registry, region.block_state(current.world_pos));
-                (!registry.blocks.is_in_tag(existing, cannot_replace)).then_some(current)
+                (!existing.has_tag(cannot_replace)).then_some(current)
             }
             StructureProcessorKind::Rule { rules } => {
                 let mut rule_random =
@@ -1300,20 +1301,11 @@ impl StructureTemplate {
             || block == &vanilla_blocks::CHISELED_STONE_BRICKS
         {
             Self::maybe_replace_full_stone_block(registry, mossiness, random)
-        } else if registry
-            .blocks
-            .is_in_tag(block, &vanilla_block_tags::STAIRS_TAG)
-        {
+        } else if block.has_tag(&Tag::STAIRS) {
             Self::maybe_replace_stairs(registry, current.state, mossiness, random)
-        } else if registry
-            .blocks
-            .is_in_tag(block, &vanilla_block_tags::SLABS_TAG)
-        {
+        } else if block.has_tag(&Tag::SLABS) {
             Self::maybe_replace_slab(registry, current.state, mossiness, random)
-        } else if registry
-            .blocks
-            .is_in_tag(block, &vanilla_block_tags::WALLS_TAG)
-        {
+        } else if block.has_tag(&Tag::WALLS) {
             Self::maybe_replace_wall(registry, current.state, mossiness, random)
         } else if block == &vanilla_blocks::OBSIDIAN {
             Self::maybe_replace_obsidian(registry, random)

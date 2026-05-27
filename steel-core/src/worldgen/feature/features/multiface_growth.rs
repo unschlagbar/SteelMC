@@ -6,6 +6,7 @@
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
 use smallvec::SmallVec;
+use steel_registry::vanilla_block_tags::Tag;
 
 #[derive(Clone, Copy)]
 enum MultifaceSpreadType {
@@ -46,7 +47,6 @@ impl FeatureDecorationRunner {
         let search_directions = Self::multiface_shuffled_valid_directions(random, &resolved_config);
         if Self::place_multiface_growth_if_possible(
             region,
-            registry,
             random,
             origin,
             origin_state,
@@ -74,7 +74,6 @@ impl FeatureDecorationRunner {
 
                 if Self::place_multiface_growth_if_possible(
                     region,
-                    registry,
                     random,
                     pos,
                     state,
@@ -91,7 +90,6 @@ impl FeatureDecorationRunner {
 
     fn place_multiface_growth_if_possible(
         region: &mut WorldGenRegion<'_>,
-        registry: &Registry,
         random: &mut WorldgenRandom,
         pos: BlockPos,
         old_state: BlockStateId,
@@ -119,7 +117,6 @@ impl FeatureDecorationRunner {
             if random.next_f32() < config.raw.chance_of_spreading {
                 let _ = Self::spread_multiface_from_face_toward_random_direction(
                     region,
-                    registry,
                     random,
                     config,
                     new_state,
@@ -137,7 +134,7 @@ impl FeatureDecorationRunner {
 
     fn spread_multiface_from_face_toward_random_direction(
         region: &mut WorldGenRegion<'_>,
-        registry: &Registry,
+
         random: &mut WorldgenRandom,
         config: &ResolvedMultifaceGrowth<'_>,
         state: BlockStateId,
@@ -149,7 +146,6 @@ impl FeatureDecorationRunner {
         for spread_direction in directions {
             if let Some(spread_pos) = Self::spread_multiface_from_face_toward_direction(
                 region,
-                registry,
                 config,
                 state,
                 pos,
@@ -170,7 +166,7 @@ impl FeatureDecorationRunner {
     )]
     fn spread_multiface_from_face_toward_direction(
         region: &mut WorldGenRegion<'_>,
-        registry: &Registry,
+
         config: &ResolvedMultifaceGrowth<'_>,
         state: BlockStateId,
         pos: BlockPos,
@@ -180,7 +176,6 @@ impl FeatureDecorationRunner {
     ) -> Option<MultifaceSpreadPos> {
         let spread_pos = Self::multiface_spread_from_face_toward_direction(
             region,
-            registry,
             config,
             state,
             pos,
@@ -196,7 +191,6 @@ impl FeatureDecorationRunner {
 
     fn multiface_spread_from_face_toward_direction(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
         config: &ResolvedMultifaceGrowth<'_>,
         state: BlockStateId,
         pos: BlockPos,
@@ -217,7 +211,7 @@ impl FeatureDecorationRunner {
         for spread_type in Self::multiface_spread_types(config) {
             let spread_pos =
                 Self::multiface_spread_pos(pos, spread_direction, starting_face, spread_type);
-            if Self::multiface_can_spread_into(region, registry, config, pos, &spread_pos) {
+            if Self::multiface_can_spread_into(region, config, pos, &spread_pos) {
                 return Some(spread_pos);
             }
         }
@@ -250,7 +244,7 @@ impl FeatureDecorationRunner {
 
     fn multiface_can_spread_into(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
+
         config: &ResolvedMultifaceGrowth<'_>,
         source_pos: BlockPos,
         spread_pos: &MultifaceSpreadPos,
@@ -258,7 +252,6 @@ impl FeatureDecorationRunner {
         let existing_state = region.block_state(spread_pos.pos);
         Self::multiface_state_can_be_replaced(
             region,
-            registry,
             config,
             source_pos,
             spread_pos.pos,
@@ -275,7 +268,7 @@ impl FeatureDecorationRunner {
 
     fn multiface_state_can_be_replaced(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
+
         config: &ResolvedMultifaceGrowth<'_>,
         source_pos: BlockPos,
         placement_pos: BlockPos,
@@ -285,7 +278,6 @@ impl FeatureDecorationRunner {
         if config.is_sculk_vein {
             return Self::sculk_vein_state_can_be_replaced(
                 region,
-                registry,
                 source_pos,
                 placement_pos,
                 placement_direction,
@@ -298,7 +290,6 @@ impl FeatureDecorationRunner {
 
     fn sculk_vein_state_can_be_replaced(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
         source_pos: BlockPos,
         placement_pos: BlockPos,
         placement_direction: Direction,
@@ -327,10 +318,7 @@ impl FeatureDecorationRunner {
             return false;
         }
 
-        if registry
-            .blocks
-            .is_in_tag(existing_state.get_block(), &vanilla_block_tags::FIRE_TAG)
-        {
+        if existing_state.get_block().has_tag(&Tag::FIRE) {
             return false;
         }
 

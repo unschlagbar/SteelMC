@@ -148,7 +148,7 @@ pub fn build_simple_tags(
             Span::call_site(),
         );
         let tag_ident = Ident::new(
-            &format!("{}_TAG", tag_name.to_shouty_snake_case()),
+            &format!("{}", tag_name.to_shouty_snake_case()),
             Span::call_site(),
         );
 
@@ -164,17 +164,20 @@ pub fn build_simple_tags(
         });
 
         register_stream.extend(quote! {
-            registry.register_tag(#tag_ident, #tag_list_ident);
+            registry.register_tag(Self::#tag_ident, #tag_list_ident);
         });
     }
 
     stream.extend(quote! {
         #static_arrays
 
-        #const_identifiers
+        pub struct Tag {}
+        impl Tag {
+            #const_identifiers
+            pub fn #register_fn_ident(registry: &mut #registry_type_ident) {
+               #register_stream
+            }
 
-        pub fn #register_fn_ident(registry: &mut #registry_type_ident) {
-            #register_stream
         }
     });
 

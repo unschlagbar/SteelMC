@@ -57,7 +57,7 @@ pub(crate) fn build() -> TokenStream {
             static #tag_ident_array: &[&str] = &[#(#block_strs),*];
         });
         let tag_ident = Ident::new(
-            &format!("{}_TAG", tag_name.to_shouty_snake_case()),
+            &format!("{}", tag_name.to_shouty_snake_case()),
             Span::call_site(),
         );
         let tag_key = tag_name.clone();
@@ -73,7 +73,7 @@ pub(crate) fn build() -> TokenStream {
         }
         register_stream.extend(quote! {
             registry.register_tag(
-                #tag_ident,
+                Self::#tag_ident,
                 #tag_ident_array
             );
         });
@@ -81,10 +81,15 @@ pub(crate) fn build() -> TokenStream {
     stream.extend(quote! {
         #static_array
 
-        #const_identifier
-        pub fn register_block_tags(registry: &mut BlockRegistry) {
-            #register_stream
+        pub struct Tag {}
+        impl Tag {
+            #const_identifier
+            pub fn register_block_tags(registry: &mut BlockRegistry) {
+                #register_stream
+            }
+
         }
+
     });
 
     stream

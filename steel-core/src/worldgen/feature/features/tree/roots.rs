@@ -57,7 +57,6 @@ impl FeatureDecorationRunner {
         while column_pos.y() < trunk_origin.y() {
             if !Self::can_place_mangrove_tree_root(
                 region,
-                registry,
                 column_pos,
                 &placer.mangrove_root_placement,
             ) {
@@ -121,7 +120,7 @@ impl FeatureDecorationRunner {
             root_origin,
             placement,
         ) {
-            if Self::can_place_mangrove_tree_root(region, registry, pos, placement) {
+            if Self::can_place_mangrove_tree_root(region, pos, placement) {
                 root_positions.push(pos);
                 if !Self::simulate_mangrove_tree_roots(
                     region,
@@ -172,11 +171,11 @@ impl FeatureDecorationRunner {
 
     fn can_place_mangrove_tree_root(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
+
         pos: BlockPos,
         placement: &MangroveRootPlacement,
     ) -> bool {
-        Self::tree_valid_pos_or_tag(region, registry, pos, &placement.can_grow_through)
+        Self::tree_valid_pos_or_tag(region, pos, &placement.can_grow_through)
     }
 
     fn place_mangrove_tree_root(
@@ -204,12 +203,7 @@ impl FeatureDecorationRunner {
             return;
         }
 
-        if !Self::can_place_mangrove_tree_root(
-            region,
-            registry,
-            pos,
-            &placer.mangrove_root_placement,
-        ) {
+        if !Self::can_place_mangrove_tree_root(region, pos, &placer.mangrove_root_placement) {
             return;
         }
 
