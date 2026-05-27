@@ -1,8 +1,3 @@
-#![expect(
-    clippy::too_many_arguments,
-    reason = "multiface spread helpers thread vanilla placement state explicitly"
-)]
-
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
 use smallvec::SmallVec;
@@ -160,13 +155,8 @@ impl FeatureDecorationRunner {
         None
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Mirrors vanilla MultifaceSpreader"
-    )]
     fn spread_multiface_from_face_toward_direction(
         region: &mut WorldGenRegion<'_>,
-
         config: &ResolvedMultifaceGrowth<'_>,
         state: BlockStateId,
         pos: BlockPos,

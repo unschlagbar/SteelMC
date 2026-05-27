@@ -509,10 +509,6 @@ impl FeatureDecorationRunner {
         count
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Mirrors vanilla MultifaceSpreader for sculk vein worldgen"
-    )]
     fn sculk_vein_spread_from_face_toward_direction(
         region: &mut WorldGenRegion<'_>,
 

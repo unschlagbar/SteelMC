@@ -1,8 +1,3 @@
-#![expect(
-    clippy::too_many_arguments,
-    reason = "tree shape scanning mirrors vanilla neighbor update state"
-)]
-
 use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;

@@ -72,7 +72,6 @@ impl FeatureDecorationRunner {
             let mut positions_in_direction = Vec::new();
             if !Self::simulate_mangrove_tree_roots(
                 region,
-                registry,
                 random,
                 root_pos,
                 direction,
@@ -97,7 +96,6 @@ impl FeatureDecorationRunner {
 
     fn simulate_mangrove_tree_roots(
         region: &WorldGenRegion<'_>,
-        registry: &Registry,
         random: &mut WorldgenRandom,
         root_pos: BlockPos,
         direction: Direction,
@@ -124,7 +122,6 @@ impl FeatureDecorationRunner {
                 root_positions.push(pos);
                 if !Self::simulate_mangrove_tree_roots(
                     region,
-                    registry,
                     random,
                     pos,
                     direction,
