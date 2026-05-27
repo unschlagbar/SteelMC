@@ -56,10 +56,7 @@ pub(crate) fn build() -> TokenStream {
         static_array.extend(quote! {
             static #tag_ident_array: &[&str] = &[#(#block_strs),*];
         });
-        let tag_ident = Ident::new(
-            &format!("{}", tag_name.to_shouty_snake_case()),
-            Span::call_site(),
-        );
+        let tag_ident = Ident::new(&tag_name.to_shouty_snake_case(), Span::call_site());
         let tag_key = tag_name.clone();
 
         if let Some(key) = tag_key.strip_prefix("c:") {

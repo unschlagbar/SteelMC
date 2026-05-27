@@ -50,10 +50,7 @@ pub(crate) fn build() -> TokenStream {
             &format!("{}_TAG_LIST", tag_name.to_shouty_snake_case()),
             Span::call_site(),
         );
-        let tag_ident = Ident::new(
-            &format!("{}", tag_name.to_shouty_snake_case()),
-            Span::call_site(),
-        );
+        let tag_ident = Ident::new(&tag_name.to_shouty_snake_case(), Span::call_site());
 
         let item_strs = items.iter().map(|s| s.as_str());
 
