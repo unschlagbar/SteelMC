@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use crate::behavior::blocks::ChorusPlantBlock;
 
@@ -15,7 +15,7 @@ impl FeatureDecorationRunner {
             || !region
                 .block_state(origin.below())
                 .get_block()
-                .has_tag(&Tag::SUPPORTS_CHORUS_PLANT)
+                .has_tag(&BlockTag::SUPPORTS_CHORUS_PLANT)
         {
             return false;
         }

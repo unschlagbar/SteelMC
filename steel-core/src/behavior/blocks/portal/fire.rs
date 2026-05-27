@@ -7,7 +7,7 @@ use std::sync::Arc;
 use steel_macros::block_behavior;
 use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_registry::vanilla_dimension_types;
 use steel_utils::math::Axis;
@@ -169,7 +169,7 @@ impl SoulFireBlock {
 
     fn can_survive_at(world: &dyn LevelReader, pos: BlockPos) -> bool {
         let block_below = world.get_block_state(pos.below()).get_block();
-        block_below.has_tag(&Tag::SOUL_FIRE_BASE_BLOCKS)
+        block_below.has_tag(&BlockTag::SOUL_FIRE_BASE_BLOCKS)
     }
 }
 

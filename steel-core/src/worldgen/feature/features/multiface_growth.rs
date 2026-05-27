@@ -6,7 +6,7 @@
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
 use smallvec::SmallVec;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 #[derive(Clone, Copy)]
 enum MultifaceSpreadType {
@@ -318,7 +318,7 @@ impl FeatureDecorationRunner {
             return false;
         }
 
-        if existing_state.get_block().has_tag(&Tag::FIRE) {
+        if existing_state.get_block().has_tag(&BlockTag::FIRE) {
             return false;
         }
 

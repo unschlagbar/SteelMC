@@ -1,5 +1,5 @@
 use steel_macros::block_behavior;
-use steel_registry::{vanilla_block_tags::Tag, vanilla_blocks};
+use steel_registry::{vanilla_block_tags::BlockTag, vanilla_blocks};
 use steel_utils::{BlockPos, BlockStateId};
 
 use crate::behavior::block::BlockBehavior;
@@ -24,9 +24,9 @@ impl NetherRootsBlock {
 
     fn support_tag(&self) -> steel_utils::Identifier {
         if self.block == &vanilla_blocks::WARPED_ROOTS {
-            Tag::SUPPORTS_WARPED_ROOTS
+            BlockTag::SUPPORTS_WARPED_ROOTS
         } else {
-            Tag::SUPPORTS_CRIMSON_ROOTS
+            BlockTag::SUPPORTS_CRIMSON_ROOTS
         }
     }
 }

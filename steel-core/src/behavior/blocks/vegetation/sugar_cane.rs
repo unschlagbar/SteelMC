@@ -9,7 +9,7 @@ use steel_macros::block_behavior;
 use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, Direction};
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_registry::vanilla_fluid_tags;
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
@@ -133,7 +133,7 @@ impl BlockBehavior for SugarCaneBlock {
             return true;
         }
 
-        let is_valid_ground = below_block.has_tag(&Tag::SUPPORTS_SUGAR_CANE);
+        let is_valid_ground = below_block.has_tag(&BlockTag::SUPPORTS_SUGAR_CANE);
 
         if !is_valid_ground {
             return false;
@@ -150,11 +150,11 @@ impl BlockBehavior for SugarCaneBlock {
 
             if neighbor_state
                 .get_block()
-                .has_tag(&Tag::SUPPORTS_SUGAR_CANE_ADJACENTLY)
+                .has_tag(&BlockTag::SUPPORTS_SUGAR_CANE_ADJACENTLY)
                 || neighbor_state
                     .get_fluid_state()
                     .fluid_id
-                    .has_tag(&vanilla_fluid_tags::Tag::SUPPORTS_SUGAR_CANE_ADJACENTLY)
+                    .has_tag(&vanilla_fluid_tags::FluidTag::SUPPORTS_SUGAR_CANE_ADJACENTLY)
             {
                 return true;
             }

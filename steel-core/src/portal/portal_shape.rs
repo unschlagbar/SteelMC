@@ -4,7 +4,7 @@ use std::sync::Arc;
 use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::BlockStateProperties;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::math::Axis;
 use steel_utils::types::UpdateFlags;
@@ -68,7 +68,7 @@ fn is_empty(world: &dyn LevelReader, pos: BlockPos, config: &PortalFrameConfig) 
         return true;
     }
     let block = state.get_block();
-    block.has_tag(&Tag::FIRE) || block == config.portal
+    block.has_tag(&BlockTag::FIRE) || block == config.portal
 }
 
 impl PortalShape {

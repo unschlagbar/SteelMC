@@ -1,6 +1,6 @@
 use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_utils::{BlockPos, BlockStateId, Direction};
 
 use crate::behavior::block::BlockBehavior;
@@ -39,7 +39,7 @@ impl BlockBehavior for ChorusFlowerBlock {
         if below_state.get_block() == self.plant
             || below_state
                 .get_block()
-                .has_tag(&Tag::SUPPORTS_CHORUS_FLOWER)
+                .has_tag(&BlockTag::SUPPORTS_CHORUS_FLOWER)
         {
             return true;
         }

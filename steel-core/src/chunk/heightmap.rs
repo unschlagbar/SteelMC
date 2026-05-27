@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 use steel_registry::{
     REGISTRY,
     blocks::{BlockRef, block_state_ext::BlockStateExt},
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
 };
 use steel_utils::BlockStateId;
 
@@ -74,7 +74,7 @@ impl HeightmapType {
 
     /// Checks if a block is in the leaves tag.
     fn is_leaves(block: BlockRef) -> bool {
-        block.has_tag(&Tag::LEAVES)
+        block.has_tag(&BlockTag::LEAVES)
     }
 
     const fn mask(self) -> u8 {

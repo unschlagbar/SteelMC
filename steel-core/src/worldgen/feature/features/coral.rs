@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -10,7 +10,8 @@ impl FeatureDecorationRunner {
         random: &mut WorldgenRandom,
         origin: BlockPos,
     ) -> bool {
-        let Some(coral) = Self::random_block_from_tag(registry, random, &Tag::CORAL_BLOCKS) else {
+        let Some(coral) = Self::random_block_from_tag(registry, random, &BlockTag::CORAL_BLOCKS)
+        else {
             return false;
         };
 
@@ -78,7 +79,8 @@ impl FeatureDecorationRunner {
         random: &mut WorldgenRandom,
         origin: BlockPos,
     ) -> bool {
-        let Some(coral) = Self::random_block_from_tag(registry, random, &Tag::CORAL_BLOCKS) else {
+        let Some(coral) = Self::random_block_from_tag(registry, random, &BlockTag::CORAL_BLOCKS)
+        else {
             return false;
         };
 
@@ -112,7 +114,8 @@ impl FeatureDecorationRunner {
         random: &mut WorldgenRandom,
         origin: BlockPos,
     ) -> bool {
-        let Some(coral) = Self::random_block_from_tag(registry, random, &Tag::CORAL_BLOCKS) else {
+        let Some(coral) = Self::random_block_from_tag(registry, random, &BlockTag::CORAL_BLOCKS)
+        else {
             return false;
         };
 
@@ -163,7 +166,7 @@ impl FeatureDecorationRunner {
         if target_state.get_block() != &vanilla_blocks::WATER
             && !registry
                 .blocks
-                .is_in_tag(target_state.get_block(), &Tag::CORAL_BLOCKS)
+                .is_in_tag(target_state.get_block(), &BlockTag::CORAL_BLOCKS)
         {
             return false;
         }
@@ -174,7 +177,9 @@ impl FeatureDecorationRunner {
 
         let _ = region.set_block_state(pos, state, UpdateFlags::UPDATE_ALL);
         if random.next_f32() < 0.25 {
-            if let Some(coral) = Self::random_block_from_tag(registry, random, &Tag::CORAL_BLOCKS) {
+            if let Some(coral) =
+                Self::random_block_from_tag(registry, random, &BlockTag::CORAL_BLOCKS)
+            {
                 let _ = region.set_block_state(
                     above,
                     coral.default_state(),
@@ -199,7 +204,9 @@ impl FeatureDecorationRunner {
                 continue;
             }
 
-            if let Some(coral) = Self::random_block_from_tag(registry, random, &Tag::WALL_CORALS) {
+            if let Some(coral) =
+                Self::random_block_from_tag(registry, random, &BlockTag::WALL_CORALS)
+            {
                 let mut coral_fan_state = coral.default_state();
                 if coral_fan_state
                     .try_get_value(&BlockStateProperties::HORIZONTAL_FACING)

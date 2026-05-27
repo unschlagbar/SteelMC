@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -147,7 +147,7 @@ impl FeatureDecorationRunner {
                     if state.is_solid()
                         && !state
                             .get_block()
-                            .has_tag(&Tag::LAVA_POOL_STONE_CANNOT_REPLACE)
+                            .has_tag(&BlockTag::LAVA_POOL_STONE_CANNOT_REPLACE)
                     {
                         let _ = region.set_block_state(pos, barrier, UpdateFlags::UPDATE_CLIENTS);
                         Self::mark_above_for_postprocessing(region, pos);
@@ -187,7 +187,9 @@ impl FeatureDecorationRunner {
     }
 
     fn lake_can_replace_block(state: BlockStateId) -> bool {
-        !state.get_block().has_tag(&Tag::FEATURES_CANNOT_REPLACE)
+        !state
+            .get_block()
+            .has_tag(&BlockTag::FEATURES_CANNOT_REPLACE)
     }
 
     const fn lake_index(x: i32, y: i32, z: i32) -> usize {

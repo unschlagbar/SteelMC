@@ -3,7 +3,7 @@ use std::sync::Arc;
 use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, DoubleBlockHalf};
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
 
 use crate::behavior::block::BlockBehavior;
@@ -42,10 +42,12 @@ impl BlockBehavior for SmallDripleafBlock {
         let below_pos = pos.below();
         let below = world.get_block_state(below_pos);
         let fluid = get_fluid_state_from_block(world.get_block_state(pos));
-        below.get_block().has_tag(&Tag::SUPPORTS_SMALL_DRIPLEAF)
+        below
+            .get_block()
+            .has_tag(&BlockTag::SUPPORTS_SMALL_DRIPLEAF)
             || (fluid.is_source()
                 && fluid.is_water()
-                && below.get_block().has_tag(&Tag::SUPPORTS_VEGETATION))
+                && below.get_block().has_tag(&BlockTag::SUPPORTS_VEGETATION))
     }
 
     fn get_state_for_placement(&self, context: &BlockPlaceContext<'_>) -> Option<BlockStateId> {

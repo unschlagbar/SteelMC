@@ -11,7 +11,7 @@ use steel_macros::block_behavior;
 use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, BoolProperty, Direction};
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_utils::{BlockPos, BlockStateId};
 
 /// Behavior for fence blocks.
@@ -49,12 +49,12 @@ impl FenceBlock {
         let neighbor_block = neighbor_state.get_block();
 
         // Check if it's a fence (same tag)
-        if neighbor_block.has_tag(&Tag::FENCES) {
+        if neighbor_block.has_tag(&BlockTag::FENCES) {
             return true;
         }
 
         // Check if it's a fence gate facing the right direction
-        if neighbor_block.has_tag(&Tag::FENCE_GATES) {
+        if neighbor_block.has_tag(&BlockTag::FENCE_GATES) {
             // Fence gates connect perpendicular to their facing direction
             // A gate facing north/south connects to fences to its east/west
             // A gate facing east/west connects to fences to its north/south

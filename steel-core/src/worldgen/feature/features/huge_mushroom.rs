@@ -3,7 +3,7 @@
     reason = "mushroom cap side flags mirror vanilla block properties"
 )]
 
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -120,7 +120,7 @@ impl FeatureDecorationRunner {
             for dx in -radius..=radius {
                 for dz in -radius..=radius {
                     let state = region.block_state(origin.offset(dx, dy, dz));
-                    if !state.is_air() && !state.get_block().has_tag(&Tag::LEAVES) {
+                    if !state.is_air() && !state.get_block().has_tag(&BlockTag::LEAVES) {
                         return false;
                     }
                 }
@@ -260,7 +260,7 @@ impl FeatureDecorationRunner {
         if current_state.is_air()
             || current_state
                 .get_block()
-                .has_tag(&Tag::REPLACEABLE_BY_MUSHROOMS)
+                .has_tag(&BlockTag::REPLACEABLE_BY_MUSHROOMS)
         {
             let _ = region.set_block_state(pos, state, UpdateFlags::UPDATE_ALL);
         }

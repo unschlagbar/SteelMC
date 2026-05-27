@@ -1,5 +1,5 @@
 use steel_macros::block_behavior;
-use steel_registry::{vanilla_block_tags::Tag, vanilla_blocks};
+use steel_registry::{vanilla_block_tags::BlockTag, vanilla_blocks};
 use steel_utils::{BlockPos, BlockStateId};
 
 use crate::behavior::block::BlockBehavior;
@@ -24,9 +24,9 @@ impl NetherFungusBlock {
 
     fn support_tag(&self) -> steel_utils::Identifier {
         if self.block == &vanilla_blocks::WARPED_FUNGUS {
-            Tag::SUPPORTS_WARPED_FUNGUS
+            BlockTag::SUPPORTS_WARPED_FUNGUS
         } else {
-            Tag::SUPPORTS_CRIMSON_FUNGUS
+            BlockTag::SUPPORTS_CRIMSON_FUNGUS
         }
     }
 }

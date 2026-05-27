@@ -1,7 +1,7 @@
 use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::BlockStateProperties;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::{BlockPos, BlockStateId, Direction};
 
@@ -50,7 +50,7 @@ impl ChorusPlantBlock {
             &BlockStateProperties::DOWN,
             down.get_block() == block
                 || down.get_block() == &vanilla_blocks::CHORUS_FLOWER
-                || down.get_block().has_tag(&Tag::SUPPORTS_CHORUS_PLANT),
+                || down.get_block().has_tag(&BlockTag::SUPPORTS_CHORUS_PLANT),
         );
         state = state.set_value(
             &BlockStateProperties::UP,
@@ -91,7 +91,7 @@ impl BlockBehavior for ChorusPlantBlock {
 
                 let below = world.get_block_state(neighbor_pos.below());
                 if below.get_block() == self.block
-                    || below.get_block().has_tag(&Tag::SUPPORTS_CHORUS_PLANT)
+                    || below.get_block().has_tag(&BlockTag::SUPPORTS_CHORUS_PLANT)
                 {
                     return true;
                 }
@@ -99,7 +99,9 @@ impl BlockBehavior for ChorusPlantBlock {
         }
 
         below_state.get_block() == self.block
-            || below_state.get_block().has_tag(&Tag::SUPPORTS_CHORUS_PLANT)
+            || below_state
+                .get_block()
+                .has_tag(&BlockTag::SUPPORTS_CHORUS_PLANT)
     }
 
     fn get_state_for_placement(&self, context: &BlockPlaceContext<'_>) -> Option<BlockStateId> {

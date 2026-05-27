@@ -8,7 +8,7 @@ use steel_registry::{
         block_state_ext::BlockStateExt,
         properties::{BlockStateProperties, DoubleBlockHalf, EnumProperty, IntProperty},
     },
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
     vanilla_blocks, vanilla_entities, vanilla_game_rules,
 };
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
@@ -58,7 +58,7 @@ impl PitcherCropBlock {
                 let block_state = world.get_block_state(check_pos);
                 let mut block_speed = 0.0f32;
 
-                if block_state.get_block().has_tag(&Tag::GROWS_CROPS) {
+                if block_state.get_block().has_tag(&BlockTag::GROWS_CROPS) {
                     block_speed = 1.0;
                     // Check moisture level (defaults to 0 for non-farmland blocks)
                     let moisture = block_state
@@ -236,7 +236,7 @@ impl BlockBehavior for PitcherCropBlock {
 
 impl Vegetation for PitcherCropBlock {
     fn may_place_on(&self, state: BlockStateId, _world: &dyn LevelReader, _pos: BlockPos) -> bool {
-        state.get_block().has_tag(&Tag::SUPPORTS_CROPS)
+        state.get_block().has_tag(&BlockTag::SUPPORTS_CROPS)
     }
 }
 

@@ -1,7 +1,7 @@
 use steel_macros::block_behavior;
 use steel_registry::{
     blocks::{BlockRef, block_state_ext::BlockStateExt},
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
 };
 use steel_utils::{BlockPos, BlockStateId, Direction};
 
@@ -54,6 +54,6 @@ impl BlockBehavior for AzaleaBlock {
 
 impl Vegetation for AzaleaBlock {
     fn may_place_on(&self, state: BlockStateId, _world: &dyn LevelReader, _pos: BlockPos) -> bool {
-        state.get_block().has_tag(&Tag::SUPPORTS_AZALEA)
+        state.get_block().has_tag(&BlockTag::SUPPORTS_AZALEA)
     }
 }

@@ -3,7 +3,7 @@
     reason = "tree shape scanning mirrors vanilla neighbor update state"
 )]
 
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
@@ -208,7 +208,7 @@ impl FeatureDecorationRunner {
         state: BlockStateId,
         neighbor_state: BlockStateId,
     ) {
-        if !state.get_block().has_tag(&Tag::LEAVES) {
+        if !state.get_block().has_tag(&BlockTag::LEAVES) {
             return;
         }
 
@@ -231,7 +231,10 @@ impl FeatureDecorationRunner {
     }
 
     fn tree_optional_leaf_distance_at(state: BlockStateId) -> Option<u8> {
-        if state.get_block().has_tag(&Tag::PREVENTS_NEARBY_LEAF_DECAY) {
+        if state
+            .get_block()
+            .has_tag(&BlockTag::PREVENTS_NEARBY_LEAF_DECAY)
+        {
             return Some(0);
         }
 

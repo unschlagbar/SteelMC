@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -167,7 +167,7 @@ impl FeatureDecorationRunner {
 
     fn tree_valid_pos(region: &WorldGenRegion<'_>, pos: BlockPos) -> bool {
         let state = region.block_state(pos);
-        state.is_air() || state.get_block().has_tag(&Tag::REPLACEABLE_BY_TREES)
+        state.is_air() || state.get_block().has_tag(&BlockTag::REPLACEABLE_BY_TREES)
     }
 
     fn tree_trunk_placer_is_free(
@@ -177,7 +177,7 @@ impl FeatureDecorationRunner {
     ) -> bool {
         let state = region.block_state(pos);
         Self::tree_valid_pos_for_trunk_placer(region, pos, trunk_placer)
-            || state.get_block().has_tag(&Tag::LOGS)
+            || state.get_block().has_tag(&BlockTag::LOGS)
     }
 
     fn tree_valid_pos_for_trunk_placer(
@@ -203,12 +203,12 @@ impl FeatureDecorationRunner {
     fn tree_valid_pos_or_tag(region: &WorldGenRegion<'_>, pos: BlockPos, tag: &Identifier) -> bool {
         let state = region.block_state(pos);
         let block = state.get_block();
-        state.is_air() || block.has_tag(&Tag::REPLACEABLE_BY_TREES) || block.has_tag(tag)
+        state.is_air() || block.has_tag(&BlockTag::REPLACEABLE_BY_TREES) || block.has_tag(tag)
     }
 
     fn tree_is_air_or_leaves(region: &WorldGenRegion<'_>, pos: BlockPos) -> bool {
         let state = region.block_state(pos);
-        state.is_air() || state.get_block().has_tag(&Tag::LEAVES)
+        state.is_air() || state.get_block().has_tag(&BlockTag::LEAVES)
     }
 
     fn tree_is_vine(region: &WorldGenRegion<'_>, pos: BlockPos) -> bool {

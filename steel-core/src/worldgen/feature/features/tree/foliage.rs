@@ -5,7 +5,7 @@
     reason = "foliage dispatch keeps vanilla variant behavior explicit"
 )]
 
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
@@ -963,7 +963,7 @@ impl FeatureDecorationRunner {
         let valid_tree_pos = current_state.is_air()
             || current_state
                 .get_block()
-                .has_tag(&Tag::REPLACEABLE_BY_TREES);
+                .has_tag(&BlockTag::REPLACEABLE_BY_TREES);
         if is_persistent || !valid_tree_pos {
             return false;
         }

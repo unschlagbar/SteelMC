@@ -47,8 +47,8 @@ pub(crate) fn build() -> TokenStream {
     }
 
     stream.extend(quote! {
-        pub struct Tag {}
-        impl Tag {
+        pub struct FluidTag {}
+        impl FluidTag {
             #tag_stream
             pub fn register_fluid_tags(registry: &mut FluidRegistry) {
                 #register_stream

@@ -1,7 +1,7 @@
 use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::Direction;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::{BlockPos, BlockStateId};
 
@@ -48,7 +48,7 @@ impl BlockBehavior for MushroomBlock {
         let below = world.get_block_state(below_pos);
         if below
             .get_block()
-            .has_tag(&Tag::OVERRIDES_MUSHROOM_LIGHT_REQUIREMENT)
+            .has_tag(&BlockTag::OVERRIDES_MUSHROOM_LIGHT_REQUIREMENT)
         {
             return true;
         }

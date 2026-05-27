@@ -3,7 +3,7 @@ use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, BoolProperty};
 use steel_registry::blocks::shapes;
 use steel_registry::structure::RuinedPortalPlacementData;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::random::Random;
 use steel_utils::random::worldgen_random::WorldgenRandom;
@@ -227,7 +227,7 @@ impl StructurePiecePlacer {
     ) -> bool {
         block != &vanilla_blocks::AIR
             && block != &vanilla_blocks::OBSIDIAN
-            && !block.has_tag(&Tag::FEATURES_CANNOT_REPLACE)
+            && !block.has_tag(&BlockTag::FEATURES_CANNOT_REPLACE)
             && (vertical_placement == RuinedPortalPlacementData::InNether
                 || block != &vanilla_blocks::LAVA)
     }

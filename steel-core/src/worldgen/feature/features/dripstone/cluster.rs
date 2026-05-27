@@ -3,7 +3,7 @@
     reason = "dripstone cluster placement follows vanilla's linear algorithm"
 )]
 
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
@@ -318,7 +318,7 @@ impl FeatureDecorationRunner {
 
     fn can_be_adjacent_to_dripstone_pool_water(region: &WorldGenRegion<'_>, pos: BlockPos) -> bool {
         let state = region.block_state(pos);
-        state.get_block().has_tag(&Tag::BASE_STONE_OVERWORLD)
+        state.get_block().has_tag(&BlockTag::BASE_STONE_OVERWORLD)
             || get_fluid_state_from_block(state).is_water()
     }
 

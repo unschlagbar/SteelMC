@@ -1,7 +1,7 @@
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
 use std::f32::consts::{PI, TAU};
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_utils::math::mth;
 use steel_utils::value_providers::FloatProvider;
 
@@ -252,7 +252,7 @@ impl LargeDripstone {
                             UpdateFlags::UPDATE_CLIENTS,
                         );
                     } else if has_been_out_of_stone
-                        && state.get_block().has_tag(&Tag::BASE_STONE_OVERWORLD)
+                        && state.get_block().has_tag(&BlockTag::BASE_STONE_OVERWORLD)
                     {
                         break;
                     }

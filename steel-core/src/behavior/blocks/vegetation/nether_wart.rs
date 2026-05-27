@@ -8,7 +8,7 @@ use steel_registry::{
         properties::{BlockStateProperties, IntProperty},
     },
     item_stack::ItemStack,
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
     vanilla_items,
 };
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
@@ -99,6 +99,6 @@ impl BlockBehavior for NetherWartBlock {
 
 impl Vegetation for NetherWartBlock {
     fn may_place_on(&self, state: BlockStateId, _world: &dyn LevelReader, _pos: BlockPos) -> bool {
-        state.get_block().has_tag(&Tag::SUPPORTS_NETHER_WART)
+        state.get_block().has_tag(&BlockTag::SUPPORTS_NETHER_WART)
     }
 }

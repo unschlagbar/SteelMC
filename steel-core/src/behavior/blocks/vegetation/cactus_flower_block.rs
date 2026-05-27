@@ -8,7 +8,7 @@ use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::Direction;
 use steel_registry::blocks::shapes::SupportType;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::{BlockPos, BlockStateId};
 
@@ -39,7 +39,7 @@ impl BlockBehavior for CactusFlowerBlock {
         let below = world.get_block_state(pos.below());
         below
             .get_block()
-            .has_tag(&Tag::SUPPORT_OVERRIDE_CACTUS_FLOWER)
+            .has_tag(&BlockTag::SUPPORT_OVERRIDE_CACTUS_FLOWER)
             || below.is_face_sturdy_for(Direction::Up, SupportType::Center)
     }
 

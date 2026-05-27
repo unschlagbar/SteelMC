@@ -8,7 +8,7 @@ use steel_registry::{
         block_state_ext::BlockStateExt,
         properties::{BambooLeaves, BlockStateProperties, EnumProperty, IntProperty},
     },
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
     vanilla_blocks,
 };
 use steel_utils::{BlockPos, BlockStateId, Direction, types::UpdateFlags};
@@ -38,7 +38,7 @@ impl BambooStalkBlock {
     /// Checks if the Block below is in the tag `BAMBOO_PLANTABLE_ON`
     pub fn can_survive(world: &dyn LevelReader, pos: BlockPos) -> bool {
         let block_below = world.get_block_state(pos.below()).get_block();
-        block_below.has_tag(&Tag::SUPPORTS_BAMBOO)
+        block_below.has_tag(&BlockTag::SUPPORTS_BAMBOO)
     }
 
     fn stalk_segments_below(world: &dyn LevelReader, pos: BlockPos) -> i32 {
@@ -187,7 +187,7 @@ impl BlockBehavior for BambooStalkBlock {
         let state_below = context.world.get_block_state(context.relative_pos.below());
         let block_below = state_below.get_block();
 
-        if !block_below.has_tag(&Tag::SUPPORTS_BAMBOO) {
+        if !block_below.has_tag(&BlockTag::SUPPORTS_BAMBOO) {
             return None;
         }
 

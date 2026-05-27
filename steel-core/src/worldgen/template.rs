@@ -15,7 +15,7 @@ use steel_registry::blocks::properties::Direction as BlockPropertyDirection;
 use steel_registry::blocks::properties::{BlockStateProperties, Half};
 use steel_registry::blocks::{self};
 use steel_registry::blocks::{BlockRef, block_state_ext::BlockStateExt as _};
-use steel_registry::entity_types::EntityTypeRef;
+use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::fluid::FluidState;
 use steel_registry::shared_structs::BlockStateData;
 use steel_registry::structure::LiquidSettingsData;
@@ -24,7 +24,7 @@ use steel_registry::structure_processor::{
     StructureProcessorKind, StructureRuleTestData,
 };
 use steel_registry::template_pool::Projection;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::{
     Registry, RegistryExt, TaggedRegistryExt, vanilla_block_entity_types, vanilla_blocks,
     vanilla_template_pools,
@@ -1301,11 +1301,11 @@ impl StructureTemplate {
             || block == &vanilla_blocks::CHISELED_STONE_BRICKS
         {
             Self::maybe_replace_full_stone_block(registry, mossiness, random)
-        } else if block.has_tag(&Tag::STAIRS) {
+        } else if block.has_tag(&BlockTag::STAIRS) {
             Self::maybe_replace_stairs(registry, current.state, mossiness, random)
-        } else if block.has_tag(&Tag::SLABS) {
+        } else if block.has_tag(&BlockTag::SLABS) {
             Self::maybe_replace_slab(registry, current.state, mossiness, random)
-        } else if block.has_tag(&Tag::WALLS) {
+        } else if block.has_tag(&BlockTag::WALLS) {
             Self::maybe_replace_wall(registry, current.state, mossiness, random)
         } else if block == &vanilla_blocks::OBSIDIAN {
             Self::maybe_replace_obsidian(registry, random)

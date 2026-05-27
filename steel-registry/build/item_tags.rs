@@ -78,8 +78,8 @@ pub(crate) fn build() -> TokenStream {
 
     stream.extend(quote! {
        #static_array
-       pub struct Tag {}
-       impl Tag {
+       pub struct ItemTag {}
+       impl ItemTag {
            #const_identifier
            pub fn register_item_tags(registry: &mut ItemRegistry) {
                #register_stream

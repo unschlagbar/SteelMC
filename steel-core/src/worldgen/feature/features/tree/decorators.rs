@@ -3,7 +3,7 @@
     reason = "tree decorators mirror vanilla decorator context"
 )]
 
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
@@ -678,7 +678,7 @@ impl FeatureDecorationRunner {
                 region
                     .block_state(pos.relative(*direction))
                     .get_block()
-                    .has_tag(&Tag::LOGS)
+                    .has_tag(&BlockTag::LOGS)
             })
         }) else {
             return;

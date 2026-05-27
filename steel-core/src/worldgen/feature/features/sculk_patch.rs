@@ -7,7 +7,7 @@ use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
 use core::mem;
 use steel_registry::vanilla_block_entity_types;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 const SCULK_DEFAULT_SPREAD_TYPES: [SculkSpreadType; 3] = [
     SculkSpreadType::SamePosition,
@@ -52,7 +52,7 @@ impl SculkSpreader {
     const fn worldgen() -> Self {
         Self {
             is_world_generation: true,
-            replaceable_blocks: Tag::SCULK_REPLACEABLE_WORLD_GEN,
+            replaceable_blocks: BlockTag::SCULK_REPLACEABLE_WORLD_GEN,
             growth_spawn_cost: 50,
             no_growth_radius: 1,
             charge_decay_rate: 5,
@@ -646,7 +646,7 @@ impl FeatureDecorationRunner {
             return false;
         }
 
-        if existing_state.get_block().has_tag(&Tag::FIRE) {
+        if existing_state.get_block().has_tag(&BlockTag::FIRE) {
             return false;
         }
 
@@ -877,7 +877,7 @@ impl FeatureDecorationRunner {
                 && region
                     .block_state(pos.relative(direction))
                     .get_block()
-                    .has_tag(&Tag::SCULK_REPLACEABLE)
+                    .has_tag(&BlockTag::SCULK_REPLACEABLE)
         })
     }
 

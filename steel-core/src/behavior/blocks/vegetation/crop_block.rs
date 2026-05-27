@@ -8,7 +8,7 @@ use steel_registry::blocks::BlockRef;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, IntProperty};
 use steel_registry::item_stack::ItemStack;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::{vanilla_entities, vanilla_game_rules, vanilla_items};
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
 
@@ -81,7 +81,7 @@ pub trait CropLike {
                 let block_state = world.get_block_state(check_pos);
                 let mut block_speed = 0.0;
 
-                if block_state.get_block().has_tag(&Tag::GROWS_CROPS) {
+                if block_state.get_block().has_tag(&BlockTag::GROWS_CROPS) {
                     block_speed = 1.0;
                     // Check moisture level (defaults to 0 for non-farmland blocks)
                     let moisture = block_state
@@ -285,7 +285,7 @@ impl<T: CropLike + Bonemealable + Send + Sync> BlockBehavior for T {
 
 impl<T: CropLike> Vegetation for T {
     fn may_place_on(&self, state: BlockStateId, _world: &dyn LevelReader, _pos: BlockPos) -> bool {
-        state.get_block().has_tag(&Tag::SUPPORTS_CROPS)
+        state.get_block().has_tag(&BlockTag::SUPPORTS_CROPS)
     }
 }
 

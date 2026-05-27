@@ -4,7 +4,7 @@ use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, Direction, DoubleBlockHalf};
 use steel_registry::fluid::{FluidRef, FluidState};
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::{vanilla_blocks, vanilla_fluids};
 use steel_utils::{BlockPos, BlockStateId, types::UpdateFlags};
 
@@ -56,7 +56,9 @@ impl BlockBehavior for SeagrassBlock {
     fn can_survive(&self, _state: BlockStateId, world: &dyn LevelReader, pos: BlockPos) -> bool {
         let below = world.get_block_state(pos.below());
         below.is_face_sturdy(Direction::Up)
-            && !below.get_block().has_tag(&Tag::CANNOT_SUPPORT_SEAGRASS)
+            && !below
+                .get_block()
+                .has_tag(&BlockTag::CANNOT_SUPPORT_SEAGRASS)
     }
 
     fn get_state_for_placement(&self, context: &BlockPlaceContext<'_>) -> Option<BlockStateId> {

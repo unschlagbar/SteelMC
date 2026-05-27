@@ -1,7 +1,7 @@
 use steel_macros::block_behavior;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::BlockStateProperties;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_utils::{BlockPos, BlockStateId};
 
 use crate::behavior::block::BlockBehavior;
@@ -35,11 +35,13 @@ impl BlockBehavior for MangrovePropaguleBlock {
             let above = world.get_block_state(pos.above());
             return above
                 .get_block()
-                .has_tag(&Tag::SUPPORTS_HANGING_MANGROVE_PROPAGULE);
+                .has_tag(&BlockTag::SUPPORTS_HANGING_MANGROVE_PROPAGULE);
         }
 
         let below = world.get_block_state(pos.below());
-        below.get_block().has_tag(&Tag::SUPPORTS_MANGROVE_PROPAGULE)
+        below
+            .get_block()
+            .has_tag(&BlockTag::SUPPORTS_MANGROVE_PROPAGULE)
     }
 
     fn get_state_for_placement(&self, context: &BlockPlaceContext<'_>) -> Option<BlockStateId> {

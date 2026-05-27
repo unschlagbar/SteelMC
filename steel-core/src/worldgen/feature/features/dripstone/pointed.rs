@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::super::prelude::*;
 use super::super::super::runner::FeatureDecorationRunner;
@@ -153,7 +153,7 @@ impl FeatureDecorationRunner {
         let state = region.block_state(pos);
         if !state
             .get_block()
-            .has_tag(&Tag::DRIPSTONE_REPLACEABLE_BLOCKS)
+            .has_tag(&BlockTag::DRIPSTONE_REPLACEABLE_BLOCKS)
         {
             return false;
         }
@@ -178,7 +178,7 @@ impl FeatureDecorationRunner {
     pub(in crate::worldgen::feature) fn is_dripstone_base(state: BlockStateId) -> bool {
         let block = state.get_block();
         block == &vanilla_blocks::DRIPSTONE_BLOCK
-            || block.has_tag(&Tag::DRIPSTONE_REPLACEABLE_BLOCKS)
+            || block.has_tag(&BlockTag::DRIPSTONE_REPLACEABLE_BLOCKS)
     }
 
     pub(in crate::worldgen::feature) fn is_empty_or_water(state: BlockStateId) -> bool {

@@ -5,7 +5,7 @@ use steel_registry::{
         block_state_ext::BlockStateExt,
         properties::{BlockStateProperties, BoolProperty},
     },
-    vanilla_block_tags::Tag,
+    vanilla_block_tags::BlockTag,
     vanilla_blocks, vanilla_game_events,
 };
 use steel_utils::Direction;
@@ -69,7 +69,7 @@ impl ItemBehavior for ShovelItem {
         }
 
         // Campfire extinguishing
-        if block.has_tag(&Tag::CAMPFIRES) {
+        if block.has_tag(&BlockTag::CAMPFIRES) {
             if !block_state.get_value(&LIT_PROPERTY) {
                 return InteractionResult::Pass;
             }

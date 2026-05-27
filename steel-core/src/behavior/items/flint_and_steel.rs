@@ -4,7 +4,7 @@ use crate::behavior::blocks::FireBlock;
 use crate::behavior::context::{InteractionResult, UseOnContext};
 use crate::behavior::item::ItemBehavior;
 use steel_macros::item_behavior;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::{
     blocks::{block_state_ext::BlockStateExt, properties::BlockStateProperties},
     sound_events, vanilla_game_events,
@@ -161,15 +161,15 @@ fn can_light(state: BlockStateId) -> bool {
     }
 
     let block = state.get_block();
-    if block.has_tag(&Tag::CAMPFIRES) {
+    if block.has_tag(&BlockTag::CAMPFIRES) {
         return state.try_get_value(&BlockStateProperties::WATERLOGGED) == Some(false);
     }
 
-    if block.has_tag(&Tag::CANDLES) {
+    if block.has_tag(&BlockTag::CANDLES) {
         return state.try_get_value(&BlockStateProperties::WATERLOGGED) == Some(false);
     }
 
-    block.has_tag(&Tag::CANDLE_CAKES)
+    block.has_tag(&BlockTag::CANDLE_CAKES)
 }
 
 fn flint_and_steel_pitch() -> f32 {

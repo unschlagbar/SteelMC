@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -77,7 +77,7 @@ impl FeatureDecorationRunner {
                 let state = region.block_state(pos);
                 if state
                     .get_block()
-                    .has_tag(&Tag::BENEATH_BAMBOO_PODZOL_REPLACEABLE)
+                    .has_tag(&BlockTag::BENEATH_BAMBOO_PODZOL_REPLACEABLE)
                 {
                     let _ = region.set_block_state(
                         pos,

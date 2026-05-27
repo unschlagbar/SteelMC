@@ -13,7 +13,7 @@ use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::BlockStateProperties;
 use steel_registry::blocks::properties::Direction;
 use steel_registry::fluid::FluidRef;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_utils::{BlockPos, BlockStateId};
 
@@ -82,8 +82,8 @@ fn is_fluid_excluded_block(block: BlockRef) -> bool {
         || block == &vanilla_blocks::END_PORTAL
         || block == &vanilla_blocks::END_GATEWAY
         || block == &vanilla_blocks::STRUCTURE_VOID
-        || block.has_tag(&Tag::SIGNS)
-        || block.has_tag(&Tag::DOORS)
+        || block.has_tag(&BlockTag::SIGNS)
+        || block.has_tag(&BlockTag::DOORS)
 }
 
 /// Vanilla equivalent: `FlowingFluid.canHoldSpecificFluid(BlockGetter, BlockPos, BlockState, Fluid)`.

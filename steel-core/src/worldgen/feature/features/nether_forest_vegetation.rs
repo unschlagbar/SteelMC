@@ -1,4 +1,4 @@
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
@@ -12,7 +12,7 @@ impl FeatureDecorationRunner {
         origin: BlockPos,
     ) -> bool {
         let below_state = region.block_state(origin.below());
-        if !below_state.get_block().has_tag(&Tag::NYLIUM) {
+        if !below_state.get_block().has_tag(&BlockTag::NYLIUM) {
             return false;
         }
 

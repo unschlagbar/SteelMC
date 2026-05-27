@@ -4,9 +4,9 @@ use glam::DVec3;
 use simdnbt::owned::NbtCompound;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::BlockStateProperties;
-use steel_registry::entity_types::EntityTypeRef;
+use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::item_stack::ItemStack;
-use steel_registry::vanilla_block_tags::Tag;
+use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::{
     Registry, vanilla_block_entity_types, vanilla_blocks, vanilla_entities, vanilla_items,
 };
@@ -299,7 +299,7 @@ impl StructurePiecePlacer {
                 let mut state = region.block_state(pos);
                 while (state.is_air()
                     || Self::is_water_state(state)
-                    || state.get_block().has_tag(&Tag::ICE))
+                    || state.get_block().has_tag(&BlockTag::ICE))
                     && floor_y > region.min_y() + 1
                 {
                     floor_y -= 1;
