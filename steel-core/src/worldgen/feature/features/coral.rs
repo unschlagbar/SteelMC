@@ -166,7 +166,7 @@ impl FeatureDecorationRunner {
         if target_state.get_block() != &vanilla_blocks::WATER
             && !registry
                 .blocks
-                .is_in_tag(target_state.get_block(), &BlockTag::CORAL_BLOCKS)
+                .is_in_tag(target_state.get_block(), &BlockTag::CORALS)
         {
             return false;
         }
@@ -177,9 +177,7 @@ impl FeatureDecorationRunner {
 
         let _ = region.set_block_state(pos, state, UpdateFlags::UPDATE_ALL);
         if random.next_f32() < 0.25 {
-            if let Some(coral) =
-                Self::random_block_from_tag(registry, random, &BlockTag::CORAL_BLOCKS)
-            {
+            if let Some(coral) = Self::random_block_from_tag(registry, random, &BlockTag::CORALS) {
                 let _ = region.set_block_state(
                     above,
                     coral.default_state(),

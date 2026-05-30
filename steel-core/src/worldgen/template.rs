@@ -2354,7 +2354,13 @@ impl StructureBlockIgnore {
 mod tests {
     use super::*;
     use steel_registry::blocks::properties::{DoorHingeSide, SlabType};
+    use steel_registry::test_support::init_test_registry;
     use steel_registry::vanilla_entities;
+
+    fn test_registry() -> Registry {
+        init_test_registry();
+        Registry::new_vanilla()
+    }
 
     #[test]
     fn zero_position_with_transform_matches_vanilla_rotation_offsets() {
@@ -2421,7 +2427,7 @@ mod tests {
 
     #[test]
     fn village_template_loads_entity_payloads() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let template = StructureTemplate::load_vanilla(
             &registry,
             &Identifier::vanilla_static("village/plains/villagers/unemployed"),
@@ -2439,7 +2445,7 @@ mod tests {
 
     #[test]
     fn brushable_append_loot_infers_block_entity_without_container_reseed() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let suspicious_sand = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::SUSPICIOUS_SAND);
@@ -2533,7 +2539,7 @@ mod tests {
 
     #[test]
     fn mirrored_door_transform_toggles_hinge() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let door = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::SPRUCE_DOOR);
@@ -2571,7 +2577,7 @@ mod tests {
 
     #[test]
     fn jigsaw_replacement_uses_final_state_and_removes_nbt() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let mut nbt = NbtCompound::new();
         nbt.insert(
             "final_state",
@@ -2602,7 +2608,7 @@ mod tests {
 
     #[test]
     fn jigsaw_replacement_accepts_trailing_text_like_vanilla_parser() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let final_state = "minecraft:acacia_fence[east=false,north=false,south=false,waterlogged=false,west=false]]";
         let expected = "minecraft:acacia_fence[east=false,north=false,south=false,waterlogged=false,west=false]";
 
@@ -2614,7 +2620,7 @@ mod tests {
 
     #[test]
     fn jigsaw_replacement_drops_structure_void_final_state() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let mut nbt = NbtCompound::new();
         nbt.insert(
             "final_state",
@@ -2634,7 +2640,7 @@ mod tests {
 
     #[test]
     fn structure_block_ignore_modes_match_vanilla_single_variants() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let structure_block = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::STRUCTURE_BLOCK);
@@ -2650,7 +2656,7 @@ mod tests {
 
     #[test]
     fn block_age_processor_preserves_slab_properties() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let slab = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::STONE_BRICK_SLAB);
@@ -2683,7 +2689,7 @@ mod tests {
 
     #[test]
     fn lava_submerged_processor_keeps_non_full_blocks_as_lava() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let slab = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::STONE_BRICK_SLAB);
@@ -2705,7 +2711,7 @@ mod tests {
 
     #[test]
     fn blackstone_replace_processor_preserves_stair_orientation() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let stairs = registry
             .blocks
             .get_default_state_id(&vanilla_blocks::STONE_BRICK_STAIRS);
@@ -2745,7 +2751,7 @@ mod tests {
 
     #[test]
     fn data_markers_read_shipwreck_structure_blocks() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let template = StructureTemplate::load_vanilla(
             &registry,
             &Identifier::vanilla_static("shipwreck/with_mast"),
@@ -2778,7 +2784,7 @@ mod tests {
 
     #[test]
     fn data_markers_read_igloo_chest_structure_block() {
-        let registry = Registry::new_vanilla();
+        let registry = test_registry();
         let template =
             StructureTemplate::load_vanilla(&registry, &Identifier::vanilla_static("igloo/bottom"))
                 .expect("igloo bottom template should be bundled");

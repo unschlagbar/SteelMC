@@ -279,14 +279,13 @@ impl StructurePiecePlacer {
 
 #[cfg(test)]
 mod tests {
-    use steel_registry::Registry;
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
 
     #[test]
     fn ruined_portal_netherrack_replacement_matches_vanilla_air_checks() {
-        let mut registry = Registry::new_vanilla();
-        registry.freeze();
+        init_test_registry();
 
         assert!(
             StructurePiecePlacer::can_block_be_replaced_with_ruined_portal_netherrack_or_magma(
