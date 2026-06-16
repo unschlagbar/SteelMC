@@ -33,15 +33,15 @@ impl Goal for InteractGoal {
         self.look_at.can_continue_to_use(mob)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_at.start(mob);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_at.stop(mob);
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_at.tick(mob);
     }
 }

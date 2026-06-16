@@ -139,7 +139,7 @@ impl BlockBehavior for PowderSnowBlock {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {

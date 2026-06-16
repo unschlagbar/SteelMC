@@ -1,5 +1,6 @@
 //! Handler for the "flyspeed" command.
 use std::slice;
+use steel_utils::locks::SyncMutex;
 use std::sync::Arc;
 
 use crate::command::arguments::bool::BoolArgument;
@@ -35,13 +36,13 @@ pub fn command_handler() -> impl CommandHandlerDyn {
     .then(
         argument("target", PlayerArgument::multiple())
             .executes(
-                |((), targets): ((), Vec<Arc<Player>>), _ctx: &mut CommandContext| {
+                |((), targets): ((), Vec<Arc<SyncMutex<Player>>>), _ctx: &mut CommandContext| {
                     toggle_fly(&targets);
                     Ok(())
                 },
             )
             .then(argument("value", BoolArgument).executes(
-                |(((), targets), value): (((), Vec<Arc<Player>>), bool),
+                |(((), targets), value): (((), Vec<Arc<SyncMutex<Player>>>), bool),
                  _ctx: &mut CommandContext| {
                     set_fly(&targets, value);
                     Ok(())
@@ -50,7 +51,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             .then(
                 literal("speed")
                     .executes(
-                        |((), targets): ((), Vec<Arc<Player>>), ctx: &mut CommandContext| {
+                        |((), targets): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
                             query_flying_speed(&targets, &ctx.sender);
                             Ok(())
                         },
@@ -61,7 +62,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                             FloatArgument::bounded(Some(0.0), Some(MAX_FLY_SPEED)),
                         )
                         .executes(
-                            |(((), targets), speed): (((), Vec<Arc<Player>>), f32),
+                            |(((), targets), speed): (((), Vec<Arc<SyncMutex<Player>>>), f32),
                              ctx: &mut CommandContext| {
                                 set_flying_speed(&targets, speed, &ctx.sender);
 
@@ -100,52 +101,57 @@ pub fn command_handler() -> impl CommandHandlerDyn {
     )
 }
 
-fn toggle_fly(targets: &[Arc<Player>]) {
+fn toggle_fly(targets: &[Arc<SyncMutex<Player>>]) {
     for target in targets {
         {
-            let mut lock = target.abilities.lock();
+            let target_guard = target.lock();
+            let mut lock = target_guard.abilities.lock();
             lock.may_fly = !lock.may_fly;
             if !lock.may_fly {
                 lock.flying = false;
             }
         }
-        target.send_abilities();
+        target.lock().send_abilities();
     }
 }
 
-fn set_fly(targets: &[Arc<Player>], value: bool) {
+fn set_fly(targets: &[Arc<SyncMutex<Player>>], value: bool) {
     for target in targets {
         {
-            let mut lock = target.abilities.lock();
+            let target_guard = target.lock();
+            let mut lock = target_guard.abilities.lock();
             lock.may_fly = value;
             if !value {
                 lock.flying = false;
             }
         }
-        target.send_abilities();
+        target.lock().send_abilities();
     }
 }
 
-fn set_flying_speed(targets: &[Arc<Player>], multiplier: f32, sender: &CommandSender) {
+fn set_flying_speed(targets: &[Arc<SyncMutex<Player>>], multiplier: f32, sender: &CommandSender) {
     let speed = multiplier * 0.05;
     for target in targets {
-        target.set_flying_speed(speed);
-        target.send_abilities();
+        {
+            let guard = target.lock();
+            guard.set_flying_speed(speed);
+            guard.send_abilities();
+        }
         sender.send_message(&TextComponent::from(format!(
             "Set flying speed for player '{}' to {multiplier:.1}x ({speed:.3})",
-            target.gameprofile.name.clone()
+            target.lock().gameprofile.name.clone()
         )));
     }
 }
 
-fn query_flying_speed(targets: &[Arc<Player>], sender: &CommandSender) {
+fn query_flying_speed(targets: &[Arc<SyncMutex<Player>>], sender: &CommandSender) {
     for target in targets {
-        let speed = target.get_flying_speed();
+        let speed = target.lock().get_flying_speed();
         let multiplier = speed / 0.05; // Show as multiplier of default speed
 
         sender.send_message(&TextComponent::from(format!(
             "Current flying speed for player '{}': {multiplier:.1}x ({speed:.3})",
-            target.gameprofile.name.clone()
+            target.lock().gameprofile.name.clone()
         )));
     }
 }

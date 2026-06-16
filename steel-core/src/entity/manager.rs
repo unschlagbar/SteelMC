@@ -14,8 +14,8 @@ use steel_utils::{ChunkPos, SectionPos, WorldAabb};
 use uuid::Uuid;
 
 use super::{
-    Entity, NullEntityCallback, RemovalReason, SharedEntity, snapshot_old_pos_and_rot_for_tick,
-    tick_vehicle_passengers_with_ticked_if,
+    Entity, EntityBase, NullEntityCallback, RemovalReason, SharedEntity,
+    snapshot_old_pos_and_rot_for_tick, tick_vehicle_passengers_with_ticked_if,
 };
 
 /// Error returned when adding an entity to the runtime world fails.
@@ -760,7 +760,7 @@ impl WorldEntityManager {
     ) -> Vec<SharedEntity> {
         self.get_entities_in_aabb(aabb)
             .into_iter()
-            .filter(|entity| predicate(entity.as_ref()))
+            .filter(|entity| entity.with_entity_ref(|e| predicate(e)).unwrap_or(false))
             .collect()
     }
 
@@ -774,7 +774,7 @@ impl WorldEntityManager {
     ) -> Option<SharedEntity> {
         self.get_entities_in_aabb(aabb)
             .into_iter()
-            .filter(|entity| predicate(entity.as_ref()))
+            .filter(|entity| entity.with_entity_ref(|e| predicate(e)).unwrap_or(false))
             .min_by(|first, second| {
                 first
                     .position()
@@ -959,7 +959,7 @@ impl WorldEntityManager {
         let mut ticked_entities = FxHashSet::default();
         ticked_entities.insert(vehicle.id());
         self.tick_vehicle_passengers_with_ticked(
-            vehicle,
+            &vehicle.base(),
             &mut ticked_entities,
             tickable_chunks,
             &mut dirty_chunks,
@@ -1058,12 +1058,12 @@ impl WorldEntityManager {
         tickable_chunks: &FxHashSet<ChunkPos>,
         dirty_chunks: &mut FxHashSet<ChunkPos>,
     ) {
-        snapshot_old_pos_and_rot_for_tick(entity.as_ref());
+        snapshot_old_pos_and_rot_for_tick(entity);
         entity.advance_tick_count();
-        entity.tick();
+        entity.tick_entity();
         dirty_chunks.insert(ChunkPos::from_entity_pos(entity.position()));
         self.tick_vehicle_passengers_with_ticked(
-            entity.as_ref(),
+            entity,
             ticked_entities,
             tickable_chunks,
             dirty_chunks,
@@ -1072,7 +1072,7 @@ impl WorldEntityManager {
 
     fn tick_vehicle_passengers_with_ticked(
         &self,
-        vehicle: &dyn Entity,
+        vehicle: &EntityBase,
         ticked_entities: &mut FxHashSet<i32>,
         tickable_chunks: &FxHashSet<ChunkPos>,
         dirty_chunks: &mut FxHashSet<ChunkPos>,
@@ -1238,30 +1238,34 @@ mod tests {
     use steel_registry::vanilla_entities;
     use uuid::Uuid;
 
+    use steel_utils::locks::SyncMutex;
+
     use crate::entity::{Entity, EntityBase};
 
     use super::*;
 
     struct ManagerTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
     }
 
     impl ManagerTestEntity {
         fn shared(id: i32, uuid: Uuid, position: DVec3) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::with_uuid(
+            Arc::new_cyclic(|weak| {
+                let base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
-                ),
+                );
+                base.attach_entity(Arc::new(SyncMutex::new(Self { base: weak.clone() })));
+                base
             })
         }
     }
 
     struct MovingTickTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         tick_position: DVec3,
         tick_rotation: (f32, f32),
     }
@@ -1274,22 +1278,26 @@ mod tests {
             tick_position: DVec3,
             tick_rotation: (f32, f32),
         ) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::with_uuid(
+            Arc::new_cyclic(|weak| {
+                let base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
-                ),
-                tick_position,
-                tick_rotation,
+                );
+                base.attach_entity(Arc::new(SyncMutex::new(Self {
+                    base: weak.clone(),
+                    tick_position,
+                    tick_rotation,
+                })));
+                base
             })
         }
     }
 
     impl Entity for MovingTickTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -1297,7 +1305,7 @@ mod tests {
             &vanilla_entities::ITEM
         }
 
-        fn tick(&self) {
+        fn tick(&mut self) {
             self.default_tick();
             if let Err(error) = self.try_set_position(self.tick_position) {
                 panic!("moving tick test entity failed to move during tick: {error}");
@@ -1339,7 +1347,7 @@ mod tests {
     }
 
     impl Entity for ManagerTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -1545,7 +1553,7 @@ mod tests {
 
         let new_position = DVec3::new(17.0, 64.0, 1.0);
         assert!(manager.validate_move(entity.id(), new_position).is_ok());
-        entity.base().set_position_local(new_position);
+        entity.set_position_local(new_position);
         let update = match manager.commit_move(entity.id(), new_position) {
             Ok(update) => update,
             Err(error) => panic!("move into unloaded chunk should commit: {error}"),
@@ -1609,7 +1617,7 @@ mod tests {
         let unload = manager.begin_chunk_unload(ChunkPos::new(1, 0));
         assert!(unload.retained.is_empty());
         assert!(unload.tracking_stopped.is_empty());
-        entity.base().set_position_local(new_position);
+        entity.set_position_local(new_position);
 
         assert!(matches!(
             manager.commit_move(entity.id(), new_position),
@@ -1793,7 +1801,7 @@ mod tests {
 
         let new_position = DVec3::new(18.0, 64.0, 1.0);
         assert!(manager.validate_move(passenger.id(), new_position).is_ok());
-        passenger.base().set_position_local(new_position);
+        passenger.set_position_local(new_position);
         let update = match manager.commit_move(passenger.id(), new_position) {
             Ok(update) => update,
             Err(error) => panic!("attached passenger move should commit: {error}"),
@@ -1833,7 +1841,7 @@ mod tests {
 
         let new_position = DVec3::new(2.0, 64.0, 1.0);
         assert!(manager.validate_move(passenger.id(), new_position).is_ok());
-        passenger.base().set_position_local(new_position);
+        passenger.set_position_local(new_position);
         let update = match manager.commit_move(passenger.id(), new_position) {
             Ok(update) => update,
             Err(error) => panic!("attached passenger move should commit: {error}"),
@@ -1875,7 +1883,7 @@ mod tests {
 
         let new_position = DVec3::new(17.0, 64.0, 1.0);
         assert!(manager.validate_move(passenger.id(), new_position).is_ok());
-        passenger.base().set_position_local(new_position);
+        passenger.set_position_local(new_position);
         let update = match manager.commit_move(passenger.id(), new_position) {
             Ok(update) => update,
             Err(error) => panic!("attached passenger move should commit: {error}"),
@@ -1941,7 +1949,7 @@ mod tests {
         );
         entity.set_rotation((45.0, 10.0));
         entity.set_old_position(DVec3::new(-1.0, 64.0, -1.0));
-        entity.base().set_old_rotation((-30.0, -10.0));
+        entity.set_old_rotation((-30.0, -10.0));
         assert!(
             manager
                 .add_live_entity(entity.clone(), EntityOwnership::ManagerOwned)
@@ -1951,7 +1959,7 @@ mod tests {
         manager.tick_entities(0, &[chunk]);
 
         assert_eq!(entity.old_position(), start);
-        assert_eq!(entity.base().old_rotation(), (45.0, 10.0));
+        assert_eq!(entity.old_rotation(), (45.0, 10.0));
         assert_eq!(entity.position(), DVec3::new(2.0, 64.0, 1.0));
         assert_eq!(entity.rotation(), (90.0, 20.0));
     }
@@ -1973,7 +1981,7 @@ mod tests {
         );
         passenger.set_rotation((60.0, 5.0));
         passenger.set_old_position(DVec3::new(-1.0, 65.0, -1.0));
-        passenger.base().set_old_rotation((-60.0, -5.0));
+        passenger.set_old_rotation((-60.0, -5.0));
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);
         assert!(
             manager
@@ -1990,7 +1998,7 @@ mod tests {
 
         assert_eq!(passenger.tick_count(), 1);
         assert_eq!(passenger.old_position(), start);
-        assert_eq!(passenger.base().old_rotation(), (60.0, 5.0));
+        assert_eq!(passenger.old_rotation(), (60.0, 5.0));
         assert_eq!(passenger.rotation(), (135.0, 15.0));
     }
 

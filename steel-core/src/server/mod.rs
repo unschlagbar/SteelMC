@@ -25,7 +25,7 @@ use crate::player::chunk_sender::ChunkSender;
 use crate::player::connection::NetworkConnection;
 use crate::player::player_data::{PersistentPlayerData, PersistentRootVehicle};
 use crate::player::player_data_storage::{GlobalPlayerData, PlayerDataStorage};
-use crate::player::{Player, ResetReason};
+use crate::player::{Player, PlayerShared, ResetReason};
 use crate::portal::{TeleportTransition, WorldChangeRequest};
 use crate::server::jobs::{JobPoll, ServerJob, ServerJobContext, ServerJobQueue};
 use crate::server::registry_cache::RegistryCache;
@@ -67,7 +67,7 @@ const CHUNK_SENDING_TPS: u64 = 20;
 /// Tick rate for the chunk scheduling loop.
 const CHUNK_SCHEDULING_TPS: u64 = 20;
 
-fn apply_first_visit_defaults(player: &Arc<Player>, world: &Arc<World>) {
+fn apply_first_visit_defaults(player: &Arc<SyncMutex<Player>>, world: &Arc<World>) {
     let spawn = world.level_data.read().data().spawn.clone();
     player.base().set_position_local(DVec3::new(
         f64::from(spawn.x),
@@ -131,14 +131,14 @@ enum DomainPlayerData {
 }
 
 struct DomainSwitchRequest {
-    player: Arc<Player>,
+    player: Arc<SyncMutex<Player>>,
     target_domain: String,
     target_world: Option<Arc<World>>,
     restore_saved_location: bool,
 }
 
 struct PendingPlayerJoin {
-    player: Arc<Player>,
+    player: Arc<SyncMutex<Player>>,
     state: Result<DomainPlayerState, String>,
 }
 
@@ -171,7 +171,7 @@ impl PlayerJoinQueue {
 }
 
 struct RootVehicleRestoreJob {
-    player: Arc<Player>,
+    player: Arc<SyncMutex<Player>>,
     world: Arc<World>,
     request: ChunkRequestHandle,
     attach: [u8; 16],
@@ -180,7 +180,7 @@ struct RootVehicleRestoreJob {
 
 impl RootVehicleRestoreJob {
     fn new(
-        player: Arc<Player>,
+        player: Arc<SyncMutex<Player>>,
         world: Arc<World>,
         root_vehicle: &PersistentRootVehicle,
     ) -> Option<Self> {
@@ -250,7 +250,7 @@ fn root_vehicle_chunk(root_vehicle: &PersistentRootVehicle) -> Option<ChunkPos> 
 }
 
 fn restore_root_vehicle_for_player(
-    player: &Arc<Player>,
+    player: &Arc<SyncMutex<Player>>,
     world: &Arc<World>,
     root_vehicle: PersistentRootVehicle,
 ) {
@@ -475,7 +475,7 @@ impl Server {
     ///
     /// Persistent data is loaded asynchronously, then world insertion is finalized at the
     /// game tick safe point so the socket reader can enter play immediately.
-    pub fn queue_player_join(self: &Arc<Self>, player: Arc<Player>) {
+    pub fn queue_player_join(self: &Arc<Self>, player: Arc<SyncMutex<Player>>) {
         if player.connection.closed() {
             return;
         }
@@ -648,7 +648,7 @@ impl Server {
         true
     }
 
-    fn apply_domain_player_state(player: &Arc<Player>, state: &DomainPlayerState) {
+    fn apply_domain_player_state(player: &Arc<SyncMutex<Player>>, state: &DomainPlayerState) {
         match &state.data {
             DomainPlayerData::Saved {
                 data,
@@ -665,7 +665,11 @@ impl Server {
         }
     }
 
-    fn schedule_root_vehicle_restore(&self, player: &Arc<Player>, state: &DomainPlayerState) {
+    fn schedule_root_vehicle_restore(
+        &self,
+        player: &Arc<SyncMutex<Player>>,
+        state: &DomainPlayerState,
+    ) {
         let Some(root_vehicle) = Self::root_vehicle_to_restore(state) else {
             player.clear_pending_root_vehicle();
             return;
@@ -728,10 +732,10 @@ impl Server {
     }
 
     /// Gets all the players on the server
-    pub fn get_players(&self) -> Vec<Arc<Player>> {
+    pub fn get_players(&self) -> Vec<Arc<SyncMutex<Player>>> {
         let mut players = vec![];
         for world in self.worlds.values() {
-            world.players.iter_players(|_, p: &Arc<Player>| {
+            world.players.iter_players(|_, p: &Arc<SyncMutex<Player>>| {
                 players.push(p.clone());
                 true
             });
@@ -978,8 +982,8 @@ impl Server {
     fn tick_chunk_sending(&self) {
         for world in self.worlds.values() {
             let mut encode_cache = rustc_hash::FxHashMap::default();
-            world.players.iter_players(|_uuid, player| {
-                Self::send_chunks_for_player(player, world, &mut encode_cache);
+            world.players.iter_chunk_handles(|_uuid, shared| {
+                Self::send_chunks_for_player(shared, world, &mut encode_cache);
                 true
             });
         }
@@ -987,18 +991,21 @@ impl Server {
 
     /// Three-phase chunk send for a single player: prepare (lock briefly),
     /// encode (no lock), commit (lock briefly + generation check).
+    ///
+    /// Operates on the `Arc`-shared [`PlayerShared`] handle so the chunk-sending
+    /// loop never borrows `Arc<SyncMutex<Player>>`.
     fn send_chunks_for_player(
-        player: &Arc<Player>,
+        shared: &PlayerShared,
         world: &Arc<World>,
         encode_cache: &mut rustc_hash::FxHashMap<ChunkPos, EncodedPacket>,
     ) {
-        let chunk_pos = *player.last_chunk_pos.lock();
-        let connection = &player.connection;
+        let chunk_pos = shared.view.last_chunk_pos();
+        let connection = &shared.connection;
 
         // Phase 1: prepare (brief lock)
         let prepared = {
-            let mut sender = player.chunk_sender.lock();
-            sender.prepare_batch(world, chunk_pos, &player.chunk_send_epoch)
+            let mut sender = shared.chunk_sender.lock();
+            sender.prepare_batch(world, chunk_pos, shared.view.chunk_send_epoch())
         };
 
         let Some(batch) = prepared else {
@@ -1010,8 +1017,8 @@ impl Server {
         let encoded = ChunkSender::encode_batch(&batch, encode_cache, compression);
 
         // Phase 3: commit (brief lock + generation check)
-        let mut sender = player.chunk_sender.lock();
-        sender.commit_batch(&batch, encoded, connection, &player.chunk_send_epoch);
+        let mut sender = shared.chunk_sender.lock();
+        sender.commit_batch(&batch, encoded, connection, shared.view.chunk_send_epoch());
     }
 
     /// Executes one chunk scheduling tick across all worlds.
@@ -1066,7 +1073,7 @@ impl Server {
     /// Queues a player domain switch for processing at the server tick safe point.
     pub fn queue_domain_switch(
         &self,
-        player: Arc<Player>,
+        player: Arc<SyncMutex<Player>>,
         target_domain: String,
     ) -> Result<(), String> {
         if !self.worlds.has_domain(&target_domain) {
@@ -1098,7 +1105,7 @@ impl Server {
     /// Queues a cross-domain teleport using saved target-domain location or target-world spawn.
     pub fn queue_domain_switch_to_world(
         &self,
-        player: Arc<Player>,
+        player: Arc<SyncMutex<Player>>,
         target_world: Arc<World>,
     ) -> Result<(), String> {
         let target_domain = target_world.domain().to_owned();

@@ -36,7 +36,8 @@ pub(super) fn default_random_pos_towards(
     let restrict = mob_restricted(mob, f64::from(horizontal_dist));
     generate_random_pos(mob, || {
         let direction = {
-            let mut random = mob.base().random().lock();
+            let mob_base = mob.base();
+            let mut random = mob_base.random().lock();
             generate_random_direction_within_radians(
                 &mut *random,
                 0.0,
@@ -62,7 +63,8 @@ pub(super) fn default_random_pos_away(
     let restrict = mob_restricted(mob, f64::from(horizontal_dist));
     generate_random_pos(mob, || {
         let direction = {
-            let mut random = mob.base().random().lock();
+            let mob_base = mob.base();
+            let mut random = mob_base.random().lock();
             generate_random_direction_within_radians(
                 &mut *random,
                 0.0,
@@ -118,7 +120,8 @@ fn generate_random_direction(
     horizontal_dist: i32,
     vertical_dist: i32,
 ) -> BlockPos {
-    let mut random = mob.base().random().lock();
+    let mob_base = mob.base();
+    let mut random = mob_base.random().lock();
     BlockPos::new(
         random.next_i32_bounded(2 * horizontal_dist + 1) - horizontal_dist,
         random.next_i32_bounded(2 * vertical_dist + 1) - vertical_dist,
@@ -203,7 +206,8 @@ fn generate_random_pos_toward_direction(
     let position = mob.position();
     if mob.has_home() && horizontal_dist > 1.0 {
         let center = mob.home_position();
-        let mut random = mob.base().random().lock();
+        let mob_base = mob.base();
+        let mut random = mob_base.random().lock();
         if position.x > f64::from(center.x()) {
             xt -= random.next_f64() * horizontal_dist / 2.0;
         } else {

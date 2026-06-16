@@ -1,5 +1,6 @@
 //! Handler for the "clear" command.
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use steel_registry::{item_stack::ItemStack, items::ItemRef};
 use steel_utils::translations;
@@ -49,15 +50,11 @@ impl CommandExecutor<()> for ClearNoArgumentExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        let count = { player.inventory.lock().clear_content() };
+        let inventory = player.lock().inventory.clone();
+        let count = inventory.lock().clear_content();
+        let target_name = player.lock().gameprofile.name.clone();
 
-        clear_messages(
-            &context.sender,
-            count,
-            1,
-            Some(player.gameprofile.name.clone()),
-            false,
-        );
+        clear_messages(&context.sender, count, 1, Some(target_name), false);
 
         Ok(())
     }
@@ -65,24 +62,28 @@ impl CommandExecutor<()> for ClearNoArgumentExecutor {
 
 struct ClearMultipleArgumentExecutor;
 
-impl CommandExecutor<((), Vec<Arc<Player>>)> for ClearMultipleArgumentExecutor {
+impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for ClearMultipleArgumentExecutor {
     fn execute(
         &self,
-        args: ((), Vec<Arc<Player>>),
+        args: ((), Vec<Arc<SyncMutex<Player>>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((), targets) = args;
 
         let count = targets
             .iter()
-            .map(|player| player.inventory.lock().clear_content())
+            .map(|player| {
+                let inventory = player.lock().inventory.clone();
+                let count = inventory.lock().clear_content();
+                count
+            })
             .sum();
 
         clear_messages(
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.gameprofile.name.clone()),
+            targets.first().map(|it| it.lock().gameprofile.name.clone()),
             false,
         );
 
@@ -92,10 +93,10 @@ impl CommandExecutor<((), Vec<Arc<Player>>)> for ClearMultipleArgumentExecutor {
 
 struct ClearWithItemExecutor;
 
-impl CommandExecutor<(((), Vec<Arc<Player>>), ItemRef)> for ClearWithItemExecutor {
+impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), ItemRef)> for ClearWithItemExecutor {
     fn execute(
         &self,
-        args: (((), Vec<Arc<Player>>), ItemRef),
+        args: (((), Vec<Arc<SyncMutex<Player>>>), ItemRef),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let (((), targets), item) = args;
@@ -104,14 +105,18 @@ impl CommandExecutor<(((), Vec<Arc<Player>>), ItemRef)> for ClearWithItemExecuto
 
         let count: i32 = targets
             .iter()
-            .map(|it| it.inventory.lock().clear_content_matching(&mut filter))
+            .map(|it| {
+                let inventory = it.lock().inventory.clone();
+                let count = inventory.lock().clear_content_matching(&mut filter);
+                count
+            })
             .sum();
 
         clear_messages(
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.gameprofile.name.clone()),
+            targets.first().map(|it| it.lock().gameprofile.name.clone()),
             false,
         );
 
@@ -121,10 +126,12 @@ impl CommandExecutor<(((), Vec<Arc<Player>>), ItemRef)> for ClearWithItemExecuto
 
 struct ClearWithMaxAmountExecutor;
 
-impl CommandExecutor<((((), Vec<Arc<Player>>), ItemRef), i32)> for ClearWithMaxAmountExecutor {
+impl CommandExecutor<((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32)>
+    for ClearWithMaxAmountExecutor
+{
     fn execute(
         &self,
-        args: ((((), Vec<Arc<Player>>), ItemRef), i32),
+        args: ((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((((), targets), item), max_amount) = args;
@@ -133,7 +140,8 @@ impl CommandExecutor<((((), Vec<Arc<Player>>), ItemRef), i32)> for ClearWithMaxA
             .iter()
             .map(|it| {
                 let mut current_amount = max_amount;
-                let mut inventory = it.inventory.lock();
+                let inventory = it.lock().inventory.clone();
+                let mut inventory = inventory.lock();
                 let mut removed = 0;
                 for i in 0..inventory.get_container_size() {
                     if max_amount > 0 && current_amount == 0 {
@@ -163,7 +171,7 @@ impl CommandExecutor<((((), Vec<Arc<Player>>), ItemRef), i32)> for ClearWithMaxA
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.gameprofile.name.clone()),
+            targets.first().map(|it| it.lock().gameprofile.name.clone()),
             max_amount == 0,
         );
 

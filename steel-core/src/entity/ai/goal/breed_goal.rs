@@ -78,30 +78,32 @@ impl Goal for BreedGoal {
             return false;
         }
         if partner
-            .as_pathfinder_mob()
-            .is_some_and(PathfinderMob::is_panicking)
+            .with_pathfinder_mob(|partner_mob| partner_mob.is_panicking())
+            .unwrap_or(false)
         {
             return false;
         }
 
-        partner.as_animal().is_some_and(Animal::is_in_love)
+        partner
+            .with_animal(|partner_animal| partner_animal.is_in_love())
+            .unwrap_or(false)
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.partner = None;
         self.love_time = 0;
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(partner) = &self.partner else {
             return;
         };
-        let Some(animal) = mob.as_animal() else {
+        if mob.as_animal_mut().is_none() {
             return;
         };
-        let Some(partner_animal) = partner.as_animal() else {
+        if partner.with_animal(|_| ()).is_none() {
             return;
-        };
+        }
 
         let partner_position = partner.position();
         mob.mob_base().controls().lock().look_control.set_look_at(
@@ -121,7 +123,11 @@ impl Goal for BreedGoal {
         let Some(world) = mob.level() else {
             return;
         };
-        animal.spawn_child_from_breeding(&world, partner_animal);
+        let Some(animal) = mob.as_animal_mut() else {
+            return;
+        };
+        partner
+            .with_animal(|partner_animal| animal.spawn_child_from_breeding(&world, partner_animal));
     }
 }
 
@@ -145,7 +151,7 @@ mod tests {
     #[test]
     fn breed_goal_requires_love_mode() {
         init_test_registry();
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let mut goal = BreedGoal::new(1.0);
 
         assert!(!goal.can_use(&pig));

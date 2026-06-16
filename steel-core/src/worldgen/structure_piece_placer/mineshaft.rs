@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use glam::DVec3;
 use steel_registry::blocks::block_state_ext::BlockStateExt as _;
 use steel_registry::blocks::properties::{BlockStateProperties, RailShape};
@@ -13,7 +11,8 @@ use steel_utils::{BlockPos, BlockStateId, BoundingBox, Direction, Identifier, ty
 
 use super::StructurePiecePlacer;
 use crate::chunk::heightmap::HeightmapType;
-use crate::entity::{entities::ChestMinecartEntity, next_entity_id};
+use crate::entity::entities::ChestMinecartEntity;
+use crate::entity::next_entity_id;
 use crate::worldgen::generators::vanilla::fuzzed_biome_at_block;
 use crate::worldgen::region::WorldGenRegion;
 use steel_worldgen::structure::mineshaft::{
@@ -606,7 +605,7 @@ impl MineshaftPlacer<'_, '_> {
         let rail = Self::rail().set_value(&BlockStateProperties::RAIL_SHAPE, shape);
         self.place_block(rail, x, y, z);
         let loot_seed = random.next_i64();
-        let chest = Arc::new(ChestMinecartEntity::new(
+        let chest = ChestMinecartEntity::new(
             &vanilla_entities::CHEST_MINECART,
             next_entity_id(),
             DVec3::new(
@@ -614,10 +613,23 @@ impl MineshaftPlacer<'_, '_> {
                 f64::from(pos.y()) + 0.5,
                 f64::from(pos.z()) + 0.5,
             ),
-            self.region.weak_world(),
-        ));
-        chest.set_loot_table(ABANDONED_MINESHAFT_LOOT, loot_seed);
-        let _ = self.region.add_fresh_entity(chest);
+            std::sync::Weak::new(),
+        );
+
+        {
+            let mut chest = chest.lock_entity();
+            let chest: &mut ChestMinecartEntity = chest.downcast().unwrap();
+            chest.set_loot_table(ABANDONED_MINESHAFT_LOOT, loot_seed);
+        }
+
+        let _ = self.region.add_fresh_entity(
+            chest,
+            DVec3::new(
+                f64::from(pos.x()) + 0.5,
+                f64::from(pos.y()) + 0.5,
+                f64::from(pos.z()) + 0.5,
+            ),
+        );
         true
     }
 

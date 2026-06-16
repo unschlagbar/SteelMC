@@ -1,10 +1,12 @@
 //! A entity argument.
+use crate::command::arguments::CommandArgument;
 use crate::command::arguments::SuggestionContext;
 use crate::command::context::CommandContext;
 use crate::entity::Entity;
-use crate::{command::arguments::CommandArgument, entity::LivingEntity};
+use crate::player::Player;
 use rand::seq::IteratorRandom;
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 use steel_protocol::packets::game::{ArgumentType, SuggestionEntry, SuggestionType};
 use steel_utils::translations::{
     ARGUMENT_ENTITY_SELECTOR_ALL_ENTITIES, ARGUMENT_ENTITY_SELECTOR_ALL_PLAYERS,
@@ -33,7 +35,7 @@ impl EntityArgument {
 }
 
 impl CommandArgument for EntityArgument {
-    type Output = Vec<Arc<dyn LivingEntity + Send + Sync>>;
+    type Output = Vec<Arc<SyncMutex<Player>>>;
 
     fn parse<'a>(
         &self,
@@ -46,28 +48,24 @@ impl CommandArgument for EntityArgument {
         }
         let entities = match arg[0] {
             // TODO: Add getting entities
-            "@a" | "@e" => players
-                .into_iter()
-                .map(|p| p as Arc<dyn LivingEntity + Send + Sync>)
-                .collect(),
+            "@a" | "@e" => players,
             "@n" | "@p" => {
                 let position = context.position;
                 let mut near_dist = (f64::MAX, players[0].clone());
                 for player in players {
-                    let dist = player.position().distance_squared(position);
+                    let dist = player.lock().position().distance_squared(position);
                     if dist < near_dist.0 {
                         near_dist = (dist, player);
                     }
                 }
-                vec![near_dist.1 as Arc<dyn LivingEntity + Send + Sync>]
+                vec![near_dist.1]
             }
             "@r" => {
-                vec![players.into_iter().choose(&mut rand::rng())?
-                    as Arc<dyn LivingEntity + Send + Sync>]
+                vec![players.into_iter().choose(&mut rand::rng())?]
             }
             "@s" => {
                 if let Some(player) = &context.player {
-                    vec![player.clone() as Arc<dyn LivingEntity + Send + Sync>]
+                    vec![player.clone()]
                 } else {
                     vec![]
                 }
@@ -79,13 +77,13 @@ impl CommandArgument for EntityArgument {
                     Uuid::nil()
                 };
                 let player = players.into_iter().find_map(|p| {
-                    if p.gameprofile.name == name || p.uuid() == uuid {
-                        Some(p)
-                    } else {
-                        None
-                    }
+                    let matches = {
+                        let guard = p.lock();
+                        guard.gameprofile.name == name || guard.uuid() == uuid
+                    };
+                    if matches { Some(p) } else { None }
                 })?;
-                vec![player as Arc<dyn LivingEntity + Send + Sync>]
+                vec![player]
             }
         };
         // TODO: Add entity argiments. (e.g. @e[limit=1])
@@ -115,7 +113,7 @@ impl CommandArgument for EntityArgument {
                 .server
                 .get_players()
                 .iter()
-                .map(|p| SuggestionEntry::new(p.gameprofile.name.clone()))
+                .map(|p| SuggestionEntry::new(p.lock().gameprofile.name.clone()))
                 .collect(),
         );
         suggestions.retain(|s| s.text.starts_with(prefix));

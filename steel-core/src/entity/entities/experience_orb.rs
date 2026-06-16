@@ -60,50 +60,65 @@ impl ExperienceOrbState {
 }
 
 /// Vanilla experience orb entity.
-#[entity_behavior(class = "ExperienceOrb")]
+#[entity_behavior(class = "experience_orb")]
 pub struct ExperienceOrbEntity {
-    base: EntityBase,
+    base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
-    entity_data: SyncMutex<ExperienceOrbEntityData>,
+    entity_data: ExperienceOrbEntityData,
     state: SyncMutex<ExperienceOrbState>,
 }
 
 impl ExperienceOrbEntity {
-    /// Creates a new experience orb with value 0.
-    #[must_use]
-    pub fn new(entity_type: EntityTypeRef, id: i32, position: DVec3, world: Weak<World>) -> Self {
+    fn build(base: Weak<EntityBase>, entity_type: EntityTypeRef) -> Self {
         Self {
-            base: EntityBase::new(id, position, entity_type.dimensions, world),
+            base,
             entity_type,
-            entity_data: SyncMutex::new(ExperienceOrbEntityData::new()),
+            entity_data: ExperienceOrbEntityData::new(),
             state: SyncMutex::new(ExperienceOrbState::new()),
         }
+    }
+
+    /// Creates a new experience orb with value 0.
+    #[must_use]
+    pub fn new(
+        entity_type: EntityTypeRef,
+        id: i32,
+        position: DVec3,
+        world: Weak<World>,
+    ) -> SharedEntity {
+        EntityBase::pack_with(id, position, entity_type.dimensions, world, |base| {
+            Self::build(base, entity_type)
+        })
     }
 
     /// Creates a new experience orb with a value and vanilla spawn motion.
     #[must_use]
     pub fn with_value(
         entity_type: EntityTypeRef,
-        id: i32,
         position: DVec3,
         value: i32,
         world: Weak<World>,
-    ) -> Self {
-        let entity = Self::new(entity_type, id, position, world);
-        entity.set_value(value);
-        entity.initialize_spawn_movement();
-        entity
+    ) -> SharedEntity {
+        EntityBase::pack_with(
+            next_entity_id(),
+            position,
+            entity_type.dimensions,
+            world,
+            |base| {
+                let mut entity = Self::build(base, entity_type);
+                entity.set_value(value);
+                entity.initialize_spawn_movement();
+                entity
+            },
+        )
     }
 
     /// Creates an experience orb from saved base data.
     #[must_use]
-    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> Self {
-        Self {
-            base: EntityBase::from_load(load, entity_type.dimensions),
-            entity_type,
-            entity_data: SyncMutex::new(ExperienceOrbEntityData::new()),
-            state: SyncMutex::new(ExperienceOrbState::new()),
-        }
+    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> SharedEntity {
+        EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| {
+            Self::build(base, entity_type)
+        })
     }
 
     /// Spawns vanilla experience orbs for an XP amount.
@@ -115,13 +130,12 @@ impl ExperienceOrbEntity {
                 continue;
             }
 
-            let entity: SharedEntity = Arc::new(Self::with_value(
+            let entity: SharedEntity = Self::with_value(
                 &vanilla_entities::EXPERIENCE_ORB,
-                next_entity_id(),
                 position,
                 value,
                 Arc::downgrade(world),
-            ));
+            );
             if let Err(error) = world.try_add_entity(entity) {
                 log::debug!("failed to add experience orb: {error}");
             }
@@ -159,12 +173,12 @@ impl ExperienceOrbEntity {
     /// Returns this orb's XP value.
     #[must_use]
     pub fn value(&self) -> i32 {
-        *self.entity_data.lock().value.get()
+        *self.entity_data.value.get()
     }
 
     /// Sets this orb's XP value.
-    pub fn set_value(&self, value: i32) {
-        self.entity_data.lock().value.set(value);
+    pub fn set_value(&mut self, value: i32) {
+        self.entity_data.set_value(value);
     }
 
     /// Returns this orb's merge count.
@@ -192,7 +206,8 @@ impl ExperienceOrbEntity {
 
     fn initialize_spawn_movement(&self) {
         let (yaw, velocity) = {
-            let mut random = self.base.random().lock();
+            let base = self.base();
+            let mut random = base.random().lock();
             let yaw = random.next_f32() * 360.0;
             let velocity = DVec3::new(
                 (f64::from(random.next_f32()) * 0.2 - 0.1) * 2.0,
@@ -201,8 +216,8 @@ impl ExperienceOrbEntity {
             );
             (yaw, velocity)
         };
-        self.base.set_rotation((yaw, 0.0));
-        self.base.set_velocity(velocity);
+        self.set_rotation((yaw, 0.0));
+        self.set_velocity(velocity);
     }
 
     fn try_merge_to_existing(world: &Arc<World>, position: DVec3, value: i32) -> bool {
@@ -216,17 +231,21 @@ impl ExperienceOrbEntity {
         );
         let merge_id = world.random().lock().next_i32_bounded(ORB_GROUPS_PER_AREA);
         for entity in world.get_entities_in_aabb(&search_box) {
-            let Some(orb) = entity.as_experience_orb() else {
-                continue;
-            };
-            if !orb.can_merge_id(merge_id, value) {
-                continue;
-            }
+            let merged = entity
+                .with_entity_as::<Self, _>(|orb| {
+                    if !orb.can_merge_id(merge_id, value) {
+                        return false;
+                    }
 
-            let mut state = orb.state.lock();
-            state.count += 1;
-            state.age = 0;
-            return true;
+                    let mut state = orb.state.lock();
+                    state.count += 1;
+                    state.age = 0;
+                    true
+                })
+                .unwrap_or(false);
+            if merged {
+                return true;
+            }
         }
         false
     }
@@ -237,13 +256,11 @@ impl ExperienceOrbEntity {
             if entity.id() == self.id() {
                 continue;
             }
-            let Some(orb) = entity.as_experience_orb() else {
-                continue;
-            };
-            if !orb.can_merge_id(self.id(), self.value()) {
-                continue;
-            }
-            self.merge(&orb);
+            entity.with_entity_as::<Self, _>(|orb| {
+                if orb.can_merge_id(self.id(), self.value()) {
+                    self.merge(orb);
+                }
+            });
             if self.is_removed() {
                 return;
             }
@@ -282,7 +299,8 @@ impl ExperienceOrbEntity {
         }
 
         let velocity = {
-            let mut random = self.base.random().lock();
+            let base = self.base();
+            let mut random = base.random().lock();
             DVec3::new(
                 f64::from(random.next_f32() - random.next_f32()) * 0.2,
                 0.2,
@@ -369,7 +387,7 @@ impl ExperienceOrbEntity {
     }
 
     /// Attempts to have a player pick up this experience orb.
-    pub fn try_pickup(&self, player: &Arc<Player>) -> bool {
+    pub fn try_pickup(&self, player: &Arc<SyncMutex<Player>>) -> bool {
         if player.take_xp_delay() != 0 {
             return false;
         }
@@ -386,7 +404,8 @@ impl ExperienceOrbEntity {
 
         let remaining = {
             let mut inventory = player.inventory.lock();
-            let mut random = player.base().random().lock();
+            let player_base = player.base();
+            let mut random = player_base.random().lock();
             inventory.repair_random_equipped_item_with_xp(self.value(), &mut *random)
         };
         if remaining > 0 {
@@ -406,7 +425,7 @@ impl ExperienceOrbEntity {
 }
 
 impl Entity for ExperienceOrbEntity {
-    fn base(&self) -> &EntityBase {
+    fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
 
@@ -414,7 +433,7 @@ impl Entity for ExperienceOrbEntity {
         self.entity_type
     }
 
-    fn tick(&self) {
+    fn tick(&mut self) {
         self.default_tick();
         self.set_old_position_to_current();
 
@@ -496,15 +515,19 @@ impl Entity for ExperienceOrbEntity {
         Some(&self.entity_data)
     }
 
-    fn as_experience_orb(self: Arc<Self>) -> Option<Arc<ExperienceOrbEntity>> {
+    fn synced_data_mut(&mut self) -> Option<&mut dyn EntitySyncedData> {
+        Some(&mut self.entity_data)
+    }
+
+    fn as_experience_orb_ref(&self) -> Option<&ExperienceOrbEntity> {
         Some(self)
     }
 
-    fn player_touch(self: Arc<Self>, player: &Arc<Player>) {
+    fn player_touch(&mut self, player: &Arc<SyncMutex<Player>>) {
         self.try_pickup(player);
     }
 
-    fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+    fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
         if self.is_base_invulnerable_to(source) {
             return false;
         }
@@ -529,7 +552,7 @@ impl Entity for ExperienceOrbEntity {
         nbt.insert("Count", state.count);
     }
 
-    fn load_additional(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         let mut state = self.state.lock();
         state.health = i32::from(nbt.short("Health").unwrap_or(DEFAULT_HEALTH as i16));
         state.age = i32::from(nbt.short("Age").unwrap_or(0));
@@ -568,16 +591,25 @@ mod tests {
         assert_eq!(ExperienceOrbEntity::get_experience_value(2), 1);
     }
 
+    fn test_orb() -> ExperienceOrbEntity {
+        // Fixed id 1: merge grouping asserts depend on `id % ORB_GROUPS_PER_AREA`.
+        let base = Arc::new(EntityBase::new(
+            1,
+            DVec3::ZERO,
+            vanilla_entities::EXPERIENCE_ORB.dimensions,
+            Weak::new(),
+        ));
+        let base_weak = Arc::downgrade(&base);
+        // Leak the base so the weak back-reference stays upgradable.
+        std::mem::forget(base);
+        ExperienceOrbEntity::build(base_weak, &vanilla_entities::EXPERIENCE_ORB)
+    }
+
     #[test]
     fn merge_id_uses_vanilla_grouping_and_value() {
         init_test_registry();
 
-        let orb = ExperienceOrbEntity::new(
-            &vanilla_entities::EXPERIENCE_ORB,
-            41,
-            DVec3::ZERO,
-            Weak::new(),
-        );
+        let mut orb = test_orb();
         orb.set_value(7);
 
         assert!(orb.can_merge_id(1, 7));
@@ -589,12 +621,7 @@ mod tests {
     fn orb_damage_truncates_after_fractional_subtraction() {
         init_test_registry();
 
-        let orb = ExperienceOrbEntity::new(
-            &vanilla_entities::EXPERIENCE_ORB,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        );
+        let mut orb = test_orb();
 
         assert!(orb.hurt(
             &DamageSource::environment(&vanilla_damage_types::GENERIC),
@@ -608,12 +635,7 @@ mod tests {
     fn orb_saves_and_loads_vanilla_state() {
         init_test_registry();
 
-        let orb = ExperienceOrbEntity::new(
-            &vanilla_entities::EXPERIENCE_ORB,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        );
+        let mut orb = test_orb();
         orb.set_value(17);
         orb.set_age(42);
         {
@@ -630,12 +652,7 @@ mod tests {
         let borrowed = read_borrowed_compound(&mut Cursor::new(&bytes))
             .unwrap_or_else(|error| panic!("test nbt should reborrow: {error}"));
 
-        let loaded = ExperienceOrbEntity::new(
-            &vanilla_entities::EXPERIENCE_ORB,
-            2,
-            DVec3::ZERO,
-            Weak::new(),
-        );
+        let mut loaded = test_orb();
         loaded.load_additional((&borrowed).into());
 
         assert_eq!(loaded.value(), 17);

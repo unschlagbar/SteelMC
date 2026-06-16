@@ -4,6 +4,7 @@
 //! message validator, chat session, and message chain.
 
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use steel_crypto::{SignatureValidator, public_key_from_bytes, signature::NoValidation};
@@ -140,7 +141,7 @@ impl Player {
     }
 
     /// Handles a chat message from the player.
-    pub fn handle_chat(&self, packet: SChat, player: Arc<Player>) {
+    pub fn handle_chat(&self, packet: SChat, player: Arc<SyncMutex<Player>>) {
         let chat_message = packet.message.clone();
 
         let verification_result = if let Some(_signature) = &packet.signature {
@@ -181,7 +182,7 @@ impl Player {
         };
 
         let sender_index = {
-            let mut chat = player.chat.lock();
+            let mut chat = self.chat.lock();
             let idx = chat.messages_sent;
             chat.messages_sent += 1;
             idx
@@ -191,7 +192,7 @@ impl Player {
 
         let chat_packet = CPlayerChat::new(
             0,
-            player.gameprofile.id,
+            self.gameprofile.id,
             sender_index,
             signature.clone(),
             chat_message.clone(),
@@ -202,22 +203,22 @@ impl Player {
             FilterType::PassThrough,
             ChatTypeBound {
                 registry_id,
-                sender_name: TextComponent::plain(player.gameprofile.name.clone())
-                    .insertion(player.gameprofile.name.clone())
+                sender_name: TextComponent::plain(self.gameprofile.name.clone())
+                    .insertion(self.gameprofile.name.clone())
                     .click_event(ClickEvent::suggest_command(format!(
                         "/tell {} ",
-                        player.gameprofile.name
+                        self.gameprofile.name
                     )))
                     .hover_event(HoverEvent::show_entity(
                         "minecraft:player",
                         self.uuid(),
-                        Some(player.gameprofile.name.clone()),
+                        Some(self.gameprofile.name.clone()),
                     )),
                 target_name: None,
             },
         );
 
-        steel_utils::chat!(player.gameprofile.name.clone(), "{}", chat_message);
+        steel_utils::chat!(self.gameprofile.name.clone(), "{}", chat_message);
         if let Some(sig_box) = &signature
             && sig_box.len() == 256
         {

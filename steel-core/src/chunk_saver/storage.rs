@@ -7,7 +7,7 @@ use crate::chunk::proto_chunk::ProtoChunk;
 use crate::chunk::section::{ChunkSection, SectionHolder, Sections};
 use crate::chunk_saver::bit_pack::{bits_for_palette_len, pack_indices, unpack_indices};
 use crate::entity::{
-    ENTITIES, Entity, EntityBase, EntityBaseSaveData, EntityFireFreezeState, EntityLoadRequest,
+    ENTITIES, EntityBase, EntityBaseSaveData, EntityFireFreezeState, EntityLoadRequest,
     MAX_ENTITY_TAGS, RemovalReason, SharedEntity,
 };
 use crate::world::World;
@@ -649,12 +649,12 @@ impl ChunkStorage {
         })
     }
 
-    fn entity_position_is_finite(entity: &dyn Entity) -> bool {
+    fn entity_position_is_finite(entity: &EntityBase) -> bool {
         let pos = entity.position();
         pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite()
     }
 
-    fn warn_skipping_non_finite_entity(entity: &dyn Entity) {
+    fn warn_skipping_non_finite_entity(entity: &EntityBase) {
         tracing::warn!(
             uuid = ?entity.uuid(),
             "Entity has non-finite position {:?}, skipping save",
@@ -890,7 +890,7 @@ impl ChunkStorage {
         let vel = entity.velocity();
         let (yaw, pitch) = entity.rotation();
         let fire_freeze = entity.fire_freeze_state();
-        let save_data = entity.base().save_data();
+        let save_data = entity.save_data();
 
         if !stored_pos.x.is_finite() || !stored_pos.y.is_finite() || !stored_pos.z.is_finite() {
             tracing::warn!(
@@ -940,7 +940,7 @@ impl ChunkStorage {
         })
     }
 
-    fn entity_should_save(entity: &dyn Entity) -> bool {
+    fn entity_should_save(entity: &EntityBase) -> bool {
         (!entity.is_removed()
             || entity
                 .removal_reason()
@@ -2704,7 +2704,7 @@ mod tests {
     use crate::entity::{
         DEFAULT_MAX_AIR_SUPPLY, Entity, SharedEntity,
         entities::{EndCrystalEntity, RawEntity},
-        init_entities, next_entity_id,
+        init_entities,
     };
     use glam::DVec3;
     use rustc_hash::FxHashMap;
@@ -2965,22 +2965,29 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let entity_pos = DVec3::new(5.5, 6.0, 7.5);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
-        let crystal = Arc::new(EndCrystalEntity::new(
+        let crystal = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            entity_pos,
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
-        crystal.set_beam_target(Some(BlockPos::new(0, 64, 0)));
-        crystal.set_invulnerable(true);
-        crystal.set_fall_distance(3.75);
-        crystal.set_no_gravity(true);
-        crystal.set_air_supply(120);
-        crystal.set_portal_cooldown(9);
-        crystal.set_custom_name(Some(TextComponent::plain("End Test")));
-        crystal.set_custom_name_visible(true);
-        crystal.set_silent(true);
-        crystal.set_glowing_tag(true);
+        );
+        crystal.set_position_local(entity_pos);
+
+        {
+            let mut crystal = crystal.lock_entity();
+            let crystal: &mut EndCrystalEntity = crystal.downcast().unwrap();
+
+            crystal.set_beam_target(Some(BlockPos::new(0, 64, 0)));
+            crystal.set_invulnerable(true);
+            crystal.set_fall_distance(3.75);
+            crystal.set_no_gravity(true);
+            crystal.set_air_supply(120);
+            crystal.set_portal_cooldown(9);
+            crystal.set_custom_name(Some(TextComponent::plain("End Test")));
+            crystal.set_custom_name_visible(true);
+            crystal.set_silent(true);
+            crystal.set_glowing_tag(true);
+        }
         assert!(crystal.add_tag("steel:test".to_owned()));
         let mut custom_data = NbtCompound::new();
         custom_data.insert("marker", "roundtrip");
@@ -3023,17 +3030,23 @@ mod tests {
 
         let promoted = LevelChunk::from_proto(loaded_proto, 0, 16, Weak::new());
         assert_eq!(promoted.pending_entities.len(), 1);
-        assert!(promoted.pending_entities[0].is_no_gravity());
-        assert!(promoted.pending_entities[0].is_invulnerable());
+
+        promoted.pending_entities[0].with_entity(|entity| {
+            assert!(entity.is_no_gravity());
+            assert!(entity.is_invulnerable());
+        });
+
         assert_eq!(promoted.pending_entities[0].air_supply(), 120);
         assert_eq!(promoted.pending_entities[0].portal_cooldown(), 9);
         assert_eq!(
             promoted.pending_entities[0].custom_name(),
             Some(TextComponent::plain("End Test"))
         );
-        assert!(promoted.pending_entities[0].is_custom_name_visible());
-        assert!(promoted.pending_entities[0].is_silent());
-        assert!(promoted.pending_entities[0].has_glowing_tag());
+        promoted.pending_entities[0].with_entity(|entity| {
+            assert!(entity.is_custom_name_visible());
+            assert!(entity.is_silent());
+            assert!(entity.has_glowing_tag());
+        });
         assert_eq!(
             promoted.pending_entities[0].tags(),
             vec!["steel:test".to_owned()]
@@ -3054,12 +3067,13 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let entity: SharedEntity = Arc::new(EndCrystalEntity::new(
+        let entity: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            DVec3::new(5.5, 6.0, 7.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
+        );
+        entity.set_position_local(DVec3::new(5.5, 6.0, 7.5));
 
         let Some(prepared) =
             ChunkStorage::prepare_chunk_save(&chunk, slice::from_ref(&entity), true)
@@ -3078,12 +3092,13 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let entity: SharedEntity = Arc::new(EndCrystalEntity::new(
+        let entity: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            DVec3::new(5.5, 6.0, 7.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
+        );
+        entity.set_position_local(DVec3::new(5.5, 6.0, 7.5));
 
         let Some(prepared) =
             ChunkStorage::prepare_chunk_save(&chunk, slice::from_ref(&entity), true)
@@ -3113,18 +3128,23 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let vehicle: SharedEntity = Arc::new(EndCrystalEntity::new(
+
+        let vehicle: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            DVec3::new(5.5, 6.0, 7.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
-        let passenger: SharedEntity = Arc::new(EndCrystalEntity::new(
+        );
+        vehicle.set_position_local(DVec3::new(5.5, 6.0, 7.5));
+
+        let passenger: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            DVec3::new(5.5, 8.0, 7.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
+        );
+        passenger.set_position_local(DVec3::new(5.5, 8.0, 7.5));
+
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);
         let vehicle_uuid = vehicle.uuid();
         let passenger_uuid = passenger.uuid();
@@ -3177,18 +3197,18 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let vehicle: SharedEntity = Arc::new(EndCrystalEntity::new(
+
+        let vehicle: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            next_entity_id(),
-            DVec3::new(5.5, 6.0, 7.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
-        ));
-        let passenger: SharedEntity = Arc::new(RawEntity::new(
-            next_entity_id(),
-            DVec3::new(5.5, 8.0, 7.5),
-            Weak::new(),
-            &vanilla_entities::PLAYER,
-        ));
+        );
+        vehicle.set_position_local(DVec3::new(5.5, 6.0, 7.5));
+
+        let passenger: SharedEntity = RawEntity::new(&vanilla_entities::PLAYER);
+        passenger.set_position_local(DVec3::new(5.5, 8.0, 7.5));
+
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);
         let vehicle_uuid = vehicle.uuid();
 

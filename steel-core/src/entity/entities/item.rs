@@ -19,6 +19,7 @@ use crate::entity::damage::DamageSource;
 
 use crate::entity::{
     Entity, EntityBase, EntityBaseLoad, EntityBaseState, EntitySyncedData, RemovalReason,
+    SharedEntity,
 };
 use crate::inventory::container::Container;
 use crate::physics::MoverType;
@@ -94,27 +95,69 @@ impl ItemEntityState {
 /// - Applies friction when on ground (0.98)
 /// - Despawns after 5 minutes (6000 ticks)
 /// - Has pickup delay before players can collect it
-#[entity_behavior]
+#[entity_behavior(class = "item_entity", identifier = "item")]
 pub struct ItemEntity {
-    /// Common entity fields (id, uuid, position, etc.).
-    base: EntityBase,
+    /// Weak back-reference to the containing `EntityBase`.
+    base: Weak<EntityBase>,
 
     /// Vanilla entity type registered for this implementation.
     entity_type: EntityTypeRef,
 
     /// Entity data containing the `ItemStack`.
-    entity_data: SyncMutex<ItemEntityData>,
+    entity_data: ItemEntityData,
 
     /// Item-specific mutable state.
     item_state: SyncMutex<ItemEntityState>,
 }
 
 impl ItemEntity {
-    /// Creates a new item entity with an empty item.
-    ///
-    /// Use `set_item()` to set the actual item after creation, or use `with_item()`.
+    /// Creates a new item entity with an empty item. Returns a full `SharedEntity`.
     #[must_use]
-    pub fn new(entity_type: EntityTypeRef, id: i32, position: DVec3, world: Weak<World>) -> Self {
+    pub fn new(
+        entity_type: EntityTypeRef,
+        id: i32,
+        position: DVec3,
+        world: Weak<World>,
+    ) -> SharedEntity {
+        Self::with_item_and_velocity(
+            entity_type,
+            id,
+            position,
+            ItemStack::empty(),
+            DVec3::ZERO,
+            world,
+        )
+    }
+
+    /// Creates an item entity `SharedEntity` from saved data.
+    ///
+    /// Type-specific data (item, age, etc.) is restored via `load_additional()`
+    /// after this constructor.
+    #[must_use]
+    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> SharedEntity {
+        EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| {
+            Self::from_weak_base(base, entity_type)
+        })
+    }
+
+    #[must_use]
+    fn from_weak_base(base: Weak<EntityBase>, entity_type: EntityTypeRef) -> Self {
+        Self {
+            base,
+            entity_type,
+            entity_data: ItemEntityData::new(),
+            item_state: SyncMutex::new(ItemEntityState::new()),
+        }
+    }
+
+    /// Creates a new item entity with an empty item. Returns a full `SharedEntity`.
+    #[must_use]
+    pub fn create(
+        entity_type: EntityTypeRef,
+        id: i32,
+        position: DVec3,
+        world: Weak<World>,
+    ) -> SharedEntity {
         Self::with_item_and_velocity(
             entity_type,
             id,
@@ -133,7 +176,7 @@ impl ItemEntity {
         position: DVec3,
         item: ItemStack,
         world: Weak<World>,
-    ) -> Self {
+    ) -> SharedEntity {
         Self::with_item_and_velocity(
             entity_type,
             id,
@@ -155,25 +198,27 @@ impl ItemEntity {
         item: ItemStack,
         velocity: DVec3,
         world: Weak<World>,
-    ) -> Self {
-        // Random yaw rotation for visual variety
+    ) -> SharedEntity {
         let yaw = rand::random::<f32>() * 360.0;
-
-        let mut entity_data = ItemEntityData::new();
-        entity_data.item.set(item);
-
-        Self {
-            base: EntityBase::new_with_state(
+        std::sync::Arc::new_cyclic(|weak: &Weak<EntityBase>| {
+            let mut entity_data = ItemEntityData::new();
+            entity_data.set_item(item);
+            let inner = Self {
+                base: weak.clone(),
+                entity_type,
+                entity_data: entity_data,
+                item_state: SyncMutex::new(ItemEntityState::new()),
+            };
+            let base = EntityBase::new_with_state(
                 id,
                 EntityBaseState::new(position, entity_type.dimensions)
                     .with_velocity(velocity)
                     .with_rotation((yaw, 0.0)),
                 world,
-            ),
-            entity_type,
-            entity_data: SyncMutex::new(entity_data),
-            item_state: SyncMutex::new(ItemEntityState::new()),
-        }
+            );
+            base.attach_entity(std::sync::Arc::new(SyncMutex::new(inner)));
+            base
+        })
     }
 
     fn default_spawn_velocity() -> DVec3 {
@@ -198,15 +243,17 @@ impl ItemEntity {
         }
     }
 
+    // === Item Access ===
+
     /// Gets a clone of the item stack.
     #[must_use]
     pub fn get_item(&self) -> ItemStack {
-        self.entity_data.lock().item.get().clone()
+        self.entity_data.item.get().clone()
     }
 
     /// Sets the item stack.
-    pub fn set_item(&self, item: ItemStack) {
-        self.entity_data.lock().item.set(item);
+    pub fn set_item(&mut self, item: ItemStack) {
+        self.entity_data.set_item(item);
     }
 
     /// Gets the current age in ticks.
@@ -301,7 +348,7 @@ impl ItemEntity {
     /// `false` if pickup failed or was only partial.
     ///
     /// Mirrors vanilla's `ItemEntity.playerTouch(Player)`.
-    pub fn try_pickup(&self, player: &Arc<Player>) -> bool {
+    pub fn try_pickup(&mut self, player: &Arc<SyncMutex<Player>>) -> bool {
         // Check pickup delay
         if self.has_pickup_delay() {
             return false;
@@ -389,7 +436,7 @@ impl ItemEntity {
     ///
     /// Mirrors vanilla's `ItemEntity.tryToMerge()`.
     /// The item with fewer items is merged into the one with more.
-    fn try_to_merge(&self, other: &ItemEntity) {
+    fn try_to_merge(&mut self, other: &mut ItemEntity) {
         let this_stack = self.get_item();
         let other_stack = other.get_item();
 
@@ -414,9 +461,9 @@ impl ItemEntity {
     ///
     /// Mirrors vanilla's `ItemEntity.merge(ItemEntity, ItemStack, ItemEntity, ItemStack)`.
     fn merge_stacks(
-        to_item: &ItemEntity,
+        to_item: &mut ItemEntity,
         to_stack: &ItemStack,
-        from_item: &ItemEntity,
+        from_item: &mut ItemEntity,
         from_stack: &ItemStack,
     ) {
         // Calculate how many items to transfer
@@ -460,7 +507,7 @@ impl ItemEntity {
     /// Mirrors vanilla's `ItemEntity.mergeWithNeighbors()`.
     /// Searches for other mergeable item entities within 0.5 blocks horizontally
     /// and attempts to merge with them.
-    pub fn merge_with_neighbors(&self, world: &Arc<World>) {
+    pub fn merge_with_neighbors(&mut self, world: &Arc<World>) {
         if !self.is_mergeable() {
             return;
         }
@@ -475,17 +522,15 @@ impl ItemEntity {
                 continue;
             }
 
-            // Try to get as ItemEntity
-            if let Some(other_item) = entity.as_item_entity() {
+            entity.with_entity_as::<Self, _>(|other_item| {
                 // Double-check mergability (might have changed)
                 if other_item.is_mergeable() {
-                    self.try_to_merge(&other_item);
-
-                    // If we've been removed (merged into other), stop
-                    if self.is_removed() {
-                        break;
-                    }
+                    self.try_to_merge(other_item);
                 }
+            });
+            // If we've been removed (merged into other), stop
+            if self.is_removed() {
+                break;
             }
         }
     }
@@ -517,7 +562,7 @@ impl ItemEntity {
 }
 
 impl Entity for ItemEntity {
-    fn base(&self) -> &EntityBase {
+    fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
 
@@ -525,7 +570,7 @@ impl Entity for ItemEntity {
         self.entity_type
     }
 
-    fn tick(&self) {
+    fn tick(&mut self) {
         // Check if item is empty
         if self.get_item().is_empty() {
             self.set_removed(RemovalReason::Discarded);
@@ -661,6 +706,10 @@ impl Entity for ItemEntity {
         Some(&self.entity_data)
     }
 
+    fn synced_data_mut(&mut self) -> Option<&mut dyn EntitySyncedData> {
+        Some(&mut self.entity_data)
+    }
+
     fn block_pos_below_that_affects_movement(&self) -> Option<BlockPos> {
         self.on_pos(0.999_999)
     }
@@ -673,15 +722,15 @@ impl Entity for ItemEntity {
         self.get_health() <= 0 || self.tick_count() % 10 == 0
     }
 
-    fn as_item_entity(self: Arc<Self>) -> Option<Arc<ItemEntity>> {
+    fn as_item_entity_ref(&self) -> Option<&ItemEntity> {
         Some(self)
     }
 
-    fn player_touch(self: Arc<Self>, player: &Arc<Player>) {
+    fn player_touch(&mut self, player: &Arc<SyncMutex<Player>>) {
         self.try_pickup(player);
     }
 
-    fn hurt(&self, _source: &DamageSource, amount: f32) -> bool {
+    fn hurt(&mut self, _source: &DamageSource, amount: f32) -> bool {
         // TODO: Check isInvulnerableToBase and canBeHurtBy (damage resistance component)
         let new_health = {
             let mut state = self.item_state.lock();
@@ -716,7 +765,7 @@ impl Entity for ItemEntity {
         }
     }
 
-    fn load_additional(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         // Match vanilla's ItemEntity.readAdditionalSaveData
         let mut state = self.item_state.lock();
         if let Some(health) = nbt.short("Health") {
@@ -744,7 +793,7 @@ impl Entity for ItemEntity {
         if let Some(item_tag) = nbt.compound("Item")
             && let Some(item) = ItemStack::from_borrowed_compound(&item_tag)
         {
-            self.entity_data.lock().item.set(item);
+            self.entity_data.set_item(item);
         }
 
         // Vanilla behavior: discard if item is empty after load
@@ -771,7 +820,7 @@ mod tests {
 
     #[test]
     fn item_entities_do_not_obstruct_block_placement() {
-        let item = ItemEntity::new(
+        let item = ItemEntity::create(
             &vanilla_entities::ITEM,
             1,
             DVec3::ZERO,
@@ -783,25 +832,30 @@ mod tests {
 
     #[test]
     fn item_lava_hurt_sound_uses_vanilla_interval() {
-        let item = ItemEntity::new(
+        let item = ItemEntity::create(
             &vanilla_entities::ITEM,
             1,
             DVec3::ZERO,
             Weak::<World>::new(),
         );
 
-        assert!(item.should_play_lava_hurt_sound());
-        item.advance_tick_count();
-        assert!(!item.should_play_lava_hurt_sound());
+        {
+            let mut item = item.lock_entity();
+            let item: &mut ItemEntity = item.downcast().unwrap();
 
-        for _ in 1..10 {
+            assert!(item.should_play_lava_hurt_sound());
             item.advance_tick_count();
-        }
-        assert!(item.should_play_lava_hurt_sound());
+            assert!(!item.should_play_lava_hurt_sound());
 
-        item.set_health(0);
-        item.advance_tick_count();
-        assert!(item.should_play_lava_hurt_sound());
+            for _ in 1..10 {
+                item.advance_tick_count();
+            }
+            assert!(item.should_play_lava_hurt_sound());
+
+            item.set_health(0);
+            item.advance_tick_count();
+            assert!(item.should_play_lava_hurt_sound());
+        }
     }
 
     #[test]
@@ -824,7 +878,7 @@ mod tests {
 
     #[test]
     fn item_damage_truncates_after_fractional_subtraction() {
-        let item = ItemEntity::new(
+        let item = ItemEntity::create(
             &vanilla_entities::ITEM,
             1,
             DVec3::ZERO,
@@ -835,6 +889,9 @@ mod tests {
             &DamageSource::environment(&vanilla_damage_types::GENERIC),
             0.75
         ));
+
+        let mut item = item.lock_entity();
+        let item: &mut ItemEntity = item.downcast().unwrap();
 
         assert_eq!(item.get_health(), 4);
     }

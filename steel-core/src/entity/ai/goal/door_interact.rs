@@ -168,7 +168,7 @@ impl Goal for DoorInteractGoal {
         Self::can_continue_to_use(self)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         Self::start(self, mob);
     }
 
@@ -176,7 +176,7 @@ impl Goal for DoorInteractGoal {
         true
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         Self::tick(self, mob);
     }
 }
@@ -201,7 +201,7 @@ mod tests {
     use crate::entity::{Entity, EntityGroundContact, EntityMovementFlags};
 
     fn pig(position: DVec3) -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, 1, position, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, 1, position, Weak::new())
     }
 
     fn set_horizontal_collision(mob: &PigEntity) {

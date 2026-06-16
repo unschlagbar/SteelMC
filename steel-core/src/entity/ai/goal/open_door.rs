@@ -34,12 +34,12 @@ impl Goal for OpenDoorGoal {
         self.close_door && self.forget_time > 0 && self.door_interact.can_continue_to_use()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.forget_time = FORGET_TICKS;
         self.door_interact.set_open(mob, true);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.door_interact.set_open(mob, false);
     }
 
@@ -47,7 +47,7 @@ impl Goal for OpenDoorGoal {
         true
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.forget_time -= 1;
         self.door_interact.tick(mob);
     }
@@ -64,7 +64,7 @@ mod tests {
     use crate::entity::entities::PigEntity;
 
     fn pig() -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
     }
 
     #[test]
@@ -88,14 +88,14 @@ mod tests {
     fn open_door_goal_uses_vanilla_forget_time() {
         init_test_registry();
         let mut goal = OpenDoorGoal::new(true);
-        let mob = pig();
+        let mut mob = pig();
 
-        goal.start(&mob);
+        goal.start(&mut mob);
 
         assert_eq!(goal.forget_time, FORGET_TICKS);
         assert!(goal.can_continue_to_use(&mob));
 
-        goal.tick(&mob);
+        goal.tick(&mut mob);
 
         assert_eq!(goal.forget_time, FORGET_TICKS - 1);
     }

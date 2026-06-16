@@ -46,18 +46,18 @@ impl<'a> EnchantmentDamageContext<'a> {
 }
 
 pub(crate) struct EnchantmentPostAttackContext<'a> {
-    victim: &'a dyn Entity,
-    attacker: Option<&'a dyn Entity>,
-    direct_attacker: Option<&'a dyn Entity>,
+    victim: &'a mut dyn Entity,
+    attacker: Option<&'a mut dyn Entity>,
+    direct_attacker: Option<&'a mut dyn Entity>,
     damage_source: &'a DamageSource,
 }
 
 impl<'a> EnchantmentPostAttackContext<'a> {
     #[must_use]
     pub(crate) const fn new(
-        victim: &'a dyn Entity,
-        attacker: Option<&'a dyn Entity>,
-        direct_attacker: Option<&'a dyn Entity>,
+        victim: &'a mut dyn Entity,
+        attacker: Option<&'a mut dyn Entity>,
+        direct_attacker: Option<&'a mut dyn Entity>,
         damage_source: &'a DamageSource,
     ) -> Self {
         Self {
@@ -71,13 +71,13 @@ impl<'a> EnchantmentPostAttackContext<'a> {
     fn damage_context(&self) -> EnchantmentDamageContext<'a> {
         EnchantmentDamageContext::new(
             self.victim.entity_type(),
-            self.attacker.map(Entity::entity_type),
-            self.direct_attacker.map(Entity::entity_type),
+            self.attacker.as_deref().map(Entity::entity_type),
+            self.direct_attacker.as_deref().map(Entity::entity_type),
             self.damage_source,
         )
     }
 
-    fn affected_entity(&self, target: EnchantmentTarget) -> Option<&'a dyn Entity> {
+    fn affected_entity(&mut self, target: EnchantmentTarget) -> Option<&'a mut dyn Entity> {
         match target {
             EnchantmentTarget::Attacker => self.attacker,
             EnchantmentTarget::DamagingEntity => self.direct_attacker,
@@ -327,7 +327,11 @@ pub(crate) fn do_post_piercing_attack_effects(user: &dyn LivingEntity) {
     }
 }
 
-fn apply_entity_effect(effect: &EnchantmentEntityEffect, level: i32, entity: &dyn Entity) -> bool {
+fn apply_entity_effect(
+    effect: &EnchantmentEntityEffect,
+    level: i32,
+    entity: &mut dyn Entity,
+) -> bool {
     if !entity_effect_is_supported(effect) {
         return false;
     }
@@ -356,7 +360,7 @@ fn entity_effect_is_supported(effect: &EnchantmentEntityEffect) -> bool {
 fn apply_supported_entity_effect(
     effect: &EnchantmentEntityEffect,
     level: i32,
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
 ) {
     match effect {
         EnchantmentEntityEffect::AllOf(effects) => {
@@ -383,7 +387,8 @@ fn apply_supported_entity_effect(
             let min_amplifier = min_amplifier.calculate(level);
             let max_amplifier = max_amplifier.calculate(level);
             let (duration_seconds, amplifier) = {
-                let mut random = entity.base().random().lock();
+                let entity_base = entity.base();
+                let mut random = entity_base.random().lock();
                 (
                     random_between(&mut *random, min_duration, max_duration),
                     random_between(&mut *random, min_amplifier, max_amplifier),
@@ -729,7 +734,7 @@ fn damage_source_predicate_matches(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Weak;
+    use std::sync::{Arc, Weak};
 
     use glam::DVec3;
     use steel_registry::data_components::vanilla_components::{ENCHANTMENTS, ItemEnchantments};
@@ -746,16 +751,25 @@ mod tests {
     use crate::entity::{EntityBase, LivingEntity, LivingEntityBase};
 
     struct TestLivingEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         living_base: LivingEntityBase,
         health: SyncMutex<f32>,
         entity_type: EntityTypeRef,
     }
 
     impl TestLivingEntity {
-        fn new(id: i32, entity_type: EntityTypeRef) -> Self {
+        fn new(entity_type: EntityTypeRef) -> Self {
+            let base = Arc::new(EntityBase::new(
+                crate::entity::next_entity_id(),
+                DVec3::ZERO,
+                entity_type.dimensions,
+                Weak::new(),
+            ));
+            let base_weak = Arc::downgrade(&base);
+            // Leak the base so the weak back-reference stays upgradable.
+            std::mem::forget(base);
             Self {
-                base: EntityBase::new(id, DVec3::ZERO, entity_type.dimensions, Weak::new()),
+                base: base_weak,
                 living_base: LivingEntityBase::new(entity_type),
                 health: SyncMutex::new(20.0),
                 entity_type,
@@ -768,7 +782,7 @@ mod tests {
     }
 
     impl Entity for TestLivingEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -794,7 +808,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health.clamp(0.0, self.get_max_health());
         }
 
@@ -972,8 +986,8 @@ mod tests {
     fn post_attack_ignite_applies_to_direct_melee_victim() {
         init_test_registry();
 
-        let attacker = TestLivingEntity::new(1, &vanilla_entities::PLAYER);
-        let victim = TestLivingEntity::new(2, &vanilla_entities::ZOMBIE);
+        let mut attacker = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut victim = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let stack = enchanted_item(
             &vanilla_items::ITEMS.diamond_sword,
             Identifier::vanilla_static("fire_aspect"),
@@ -983,9 +997,9 @@ mod tests {
             .with_causing_entity(attacker.id())
             .with_direct_entity(attacker.id());
         let context = EnchantmentPostAttackContext::new(
-            &victim,
-            Some(&attacker),
-            Some(&attacker),
+            &mut victim,
+            Some(&mut attacker),
+            Some(&mut attacker),
             &damage_source,
         );
 
@@ -1047,9 +1061,9 @@ mod tests {
     fn post_attack_ignite_skips_indirect_damage_source() {
         init_test_registry();
 
-        let attacker = TestLivingEntity::new(1, &vanilla_entities::PLAYER);
-        let direct_entity = TestLivingEntity::new(2, &vanilla_entities::PLAYER);
-        let victim = TestLivingEntity::new(3, &vanilla_entities::ZOMBIE);
+        let mut attacker = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut direct_entity = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut victim = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let stack = enchanted_item(
             &vanilla_items::ITEMS.diamond_sword,
             Identifier::vanilla_static("fire_aspect"),
@@ -1059,9 +1073,9 @@ mod tests {
             .with_causing_entity(attacker.id())
             .with_direct_entity(direct_entity.id());
         let context = EnchantmentPostAttackContext::new(
-            &victim,
-            Some(&attacker),
-            Some(&direct_entity),
+            &mut victim,
+            Some(&mut attacker),
+            Some(&mut direct_entity),
             &damage_source,
         );
 
@@ -1074,9 +1088,9 @@ mod tests {
     fn post_attack_mob_effect_matches_victim_predicate() {
         init_test_registry();
 
-        let attacker = TestLivingEntity::new(1, &vanilla_entities::PLAYER);
-        let spider = TestLivingEntity::new(2, &vanilla_entities::SPIDER);
-        let zombie = TestLivingEntity::new(3, &vanilla_entities::ZOMBIE);
+        let mut attacker = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut spider = TestLivingEntity::new(&vanilla_entities::SPIDER);
+        let mut zombie = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let stack = enchanted_item(
             &vanilla_items::ITEMS.diamond_sword,
             Identifier::vanilla_static("bane_of_arthropods"),
@@ -1086,15 +1100,15 @@ mod tests {
             .with_causing_entity(attacker.id())
             .with_direct_entity(attacker.id());
         let spider_context = EnchantmentPostAttackContext::new(
-            &spider,
-            Some(&attacker),
-            Some(&attacker),
+            &mut spider,
+            Some(&mut attacker),
+            Some(&mut attacker),
             &damage_source,
         );
         let zombie_context = EnchantmentPostAttackContext::new(
-            &zombie,
-            Some(&attacker),
-            Some(&attacker),
+            &mut zombie,
+            Some(&mut attacker),
+            Some(&mut attacker),
             &damage_source,
         );
 

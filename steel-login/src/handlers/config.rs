@@ -14,6 +14,7 @@ use steel_protocol::packets::config::SSelectKnownPacks;
 use steel_protocol::packets::shared_implementation::KnownPack;
 use steel_protocol::utils::ConnectionProtocol;
 use steel_utils::Identifier;
+use steel_utils::locks::SyncMutex;
 
 use crate::tcp_client::{ConnectionAction, ConnectionUpdate, JavaTcpClient};
 
@@ -103,9 +104,11 @@ impl JavaTcpClient {
         let world = self.server.overworld().clone();
         let entity_id = next_entity_id();
 
+        let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
         let player = Arc::new_cyclic(|player_weak| {
             let java_connection = JavaConnection::new(
                 self.outgoing_queue.clone(),
+                inbound_tx,
                 self.cancel_token.clone(),
                 self.compression.load(),
                 self.network_writer.clone(),
@@ -114,7 +117,7 @@ impl JavaTcpClient {
             );
             let connection = Arc::new(PlayerConnection::Java(java_connection));
 
-            Player::new(
+            SyncMutex::new(Player::new(
                 gameprofile,
                 connection,
                 world,
@@ -123,13 +126,14 @@ impl JavaTcpClient {
                 entity_id,
                 player_weak,
                 client_info,
-            )
+                inbound_rx,
+            ))
         });
 
-        let connection = Arc::clone(&player.connection);
+        let connection = Arc::clone(&player.lock().connection);
         if self
             .connection_updates
-            .send(ConnectionUpdate::Upgrade(Arc::clone(&connection)))
+            .send(ConnectionUpdate::Upgrade(connection.clone()))
             .is_err()
         {
             self.kick("Failed to update connection state".into()).await;

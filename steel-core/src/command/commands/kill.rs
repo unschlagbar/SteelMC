@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use steel_utils::locks::SyncMutex;
 use text_components::TextComponent;
 
 use crate::command::arguments::entity::EntityArgument;
@@ -12,7 +13,6 @@ use crate::command::commands::{
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
 use crate::entity::damage::DamageSource;
-use crate::entity::{Entity, LivingEntity};
 use crate::player::Player;
 use steel_registry::vanilla_damage_types;
 use steel_utils::translations;
@@ -26,7 +26,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 }
 
 /// `LivingEntity.kill()` — hurt with `genericKill` at `Float.MAX_VALUE`.
-fn kill_player(player: &Player) {
+fn kill_player(player: &mut Player) {
     player.hurt(
         &DamageSource::environment(&vanilla_damage_types::GENERIC_KILL),
         f32::MAX,
@@ -42,12 +42,12 @@ impl CommandExecutor<()> for KillSelfExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        kill_player(player);
+        kill_player(&mut player.lock());
 
         // TODO: use getDisplayName() (team formatting, hover event, UUID insertion)
         context.sender.send_message(
             &translations::COMMANDS_KILL_SUCCESS_SINGLE
-                .message([TextComponent::plain(player.gameprofile.name.clone())])
+                .message([TextComponent::plain(player.lock().gameprofile.name.clone())])
                 .into(),
         );
 
@@ -57,10 +57,10 @@ impl CommandExecutor<()> for KillSelfExecutor {
 
 struct KillTargetsExecutor;
 
-impl CommandExecutor<((), Vec<Arc<dyn LivingEntity + Send + Sync>>)> for KillTargetsExecutor {
+impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for KillTargetsExecutor {
     fn execute(
         &self,
-        args: ((), Vec<Arc<dyn LivingEntity + Send + Sync>>),
+        args: ((), Vec<Arc<SyncMutex<Player>>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((), targets) = args;
@@ -71,17 +71,12 @@ impl CommandExecutor<((), Vec<Arc<dyn LivingEntity + Send + Sync>>)> for KillTar
             )));
         }
 
-        let players = context.server.get_players();
-
         let mut last_name = String::new();
         let mut victim_count = 0;
         for target in &targets {
-            let target_uuid = target.uuid();
-            if let Some(player) = players.iter().find(|p| p.uuid() == target_uuid) {
-                kill_player(player);
-                victim_count += 1;
-                last_name.clone_from(&player.gameprofile.name);
-            }
+            kill_player(&mut target.lock());
+            victim_count += 1;
+            last_name.clone_from(&target.lock().gameprofile.name);
             // TODO: non-player entities via Entity::kill() (remove with RemovalReason::KILLED)
         }
 

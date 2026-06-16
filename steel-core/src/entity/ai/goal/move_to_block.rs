@@ -176,17 +176,18 @@ impl Goal for MoveToBlockGoal {
             && (self.target_predicate)(world.as_ref(), self.block_pos)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.move_mob_to_block(mob);
         self.try_ticks = 0;
         self.max_stay_ticks = {
-            let mut random = mob.base().random().lock();
+            let mob_base = mob.base();
+            let mut random = mob_base.random().lock();
             let inner_bound = random.next_i32_bounded(STAY_TICKS) + STAY_TICKS;
             random.next_i32_bounded(inner_bound) + STAY_TICKS
         };
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let move_to_target = self.move_to_target();
         if !block_pos_closer_to_center_than(move_to_target, mob.position(), self.accepted_distance)
         {
@@ -273,7 +274,7 @@ mod tests {
     fn move_to_block_goal_requires_world_after_start_delay() {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mob));
     }
@@ -283,7 +284,7 @@ mod tests {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
         goal.next_start_tick = 2;
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mob));
 
@@ -319,14 +320,14 @@ mod tests {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| false);
         goal.block_pos = BlockPos::new(0, -1, 0);
-        let mob = PigEntity::new(
+        let mut mob = PigEntity::create(
             &vanilla_entities::PIG,
             1,
             DVec3::new(0.5, 0.5, 0.5),
             Weak::new(),
         );
 
-        goal.tick(&mob);
+        goal.tick(&mut mob);
 
         assert!(goal.is_reached_target());
         assert_eq!(goal.try_ticks, -1);

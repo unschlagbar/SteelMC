@@ -218,7 +218,7 @@ pub trait Animal: AgeableMob {
     fn play_eating_sound(&self) {}
 
     /// Handles vanilla `Animal.mobInteract`.
-    fn mob_interact_animal(&self, player: &Player, hand: InteractionHand) -> InteractionResult {
+    fn mob_interact_animal(&mut self, player: &Player, hand: InteractionHand) -> InteractionResult {
         let item_stack = {
             let inventory = player.inventory.lock();
             let item_stack = inventory.get_item_in_hand(hand);
@@ -266,59 +266,73 @@ pub trait Animal: AgeableMob {
     }
 
     /// Applies a breedable variant key to offspring that inherit one.
-    fn set_breed_variant_key(&self, _key: &Identifier) -> bool {
+    fn set_breed_variant_key(&mut self, _key: &Identifier) -> bool {
         false
     }
 
     /// Applies entity-specific state to freshly created breeding offspring.
-    fn initialize_breed_offspring(&self, _partner: &dyn Animal, _offspring: &dyn Animal) {}
+    fn initialize_breed_offspring(
+        &mut self,
+        _partner: &mut dyn Animal,
+        _offspring: &mut dyn Animal,
+    ) {
+    }
 
     /// Creates this animal's vanilla breeding offspring.
     fn get_breed_offspring(
-        &self,
+        &mut self,
         world: &Arc<World>,
-        partner: &dyn Animal,
+        partner: &mut dyn Animal,
     ) -> Option<SharedEntity> {
         let offspring = self.create_breed_offspring(world)?;
-        let Some(offspring_animal) = offspring.as_animal() else {
+        let initialized = offspring
+            .with_animal(|offspring_animal| {
+                self.initialize_breed_offspring(partner, offspring_animal)
+            })
+            .is_some();
+        if !initialized {
             log::error!(
                 "breeding entity type {} created non-animal offspring",
                 self.entity_type().key
             );
             return None;
-        };
+        }
 
-        self.initialize_breed_offspring(partner, offspring_animal);
         Some(offspring)
     }
 
     /// Creates, initializes, and inserts vanilla breeding offspring.
-    fn spawn_child_from_breeding(&self, world: &Arc<World>, partner: &dyn Animal) {
+    fn spawn_child_from_breeding(&mut self, world: &Arc<World>, partner: &mut dyn Animal) {
         let Some(offspring) = self.get_breed_offspring(world, partner) else {
             return;
         };
 
-        {
-            let Some(offspring_animal) = offspring.as_animal() else {
+        let prepared = offspring
+            .with_animal(|offspring_animal| {
+                offspring_animal.set_baby(true);
+                if let Err(error) = offspring_animal.try_set_position(self.position()) {
+                    log::error!(
+                        "failed to position breeding offspring {} at parent {}: {error}",
+                        offspring.id(),
+                        self.id()
+                    );
+                    return false;
+                }
+                offspring_animal.set_rotation((0.0, 0.0));
+                offspring_animal.set_old_position_to_current();
+
+                self.finalize_spawn_child_from_breeding(world, partner, Some(offspring_animal));
+                true
+            })
+            .unwrap_or_else(|| {
                 log::error!(
                     "breeding entity type {} created non-animal offspring",
                     self.entity_type().key
                 );
-                return;
-            };
-            offspring_animal.set_baby(true);
-            if let Err(error) = offspring_animal.try_set_position(self.position()) {
-                log::error!(
-                    "failed to position breeding offspring {} at parent {}: {error}",
-                    offspring.id(),
-                    self.id()
-                );
-                return;
-            }
-            offspring_animal.set_rotation((0.0, 0.0));
-            offspring_animal.set_old_position_to_current();
-
-            self.finalize_spawn_child_from_breeding(world, partner, Some(offspring_animal));
+                false
+            });
+        if !prepared {
+            return;
         }
 
         if let Err(error) = world.try_add_entity(offspring) {
@@ -331,9 +345,9 @@ pub trait Animal: AgeableMob {
 
     /// Applies vanilla breeding side effects after offspring creation.
     fn finalize_spawn_child_from_breeding(
-        &self,
+        &mut self,
         world: &Arc<World>,
-        partner: &dyn Animal,
+        partner: &mut dyn Animal,
         _offspring: Option<&dyn Animal>,
     ) {
         if self

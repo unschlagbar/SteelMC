@@ -5,17 +5,16 @@
 
 use std::sync::Weak;
 
-use glam::DVec3;
 use simdnbt::borrow::NbtCompound as BorrowedNbtCompoundView;
 use simdnbt::owned::NbtCompound;
 use steel_macros::entity_behavior;
 use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::vanilla_entity_data::BlockDisplayEntityData;
 use steel_utils::BlockStateId;
-use steel_utils::locks::SyncMutex;
-use uuid::Uuid;
 
-use crate::entity::{Entity, EntityBase, EntityBaseLoad, EntitySyncedData};
+use glam::DVec3;
+
+use crate::entity::{Entity, EntityBase, EntityBaseLoad, EntitySyncedData, SharedEntity};
 use crate::world::World;
 
 /// A block display entity that renders a block state at its position.
@@ -23,45 +22,36 @@ use crate::world::World;
 /// Block displays are purely visual entities with no collision.
 /// They support transformation (translation, rotation, scale) and
 /// interpolation for smooth animations.
-#[entity_behavior(class = "BlockDisplay")]
+#[entity_behavior(class = "block_display")]
 pub struct BlockDisplayEntity {
-    /// Common entity fields (id, uuid, position, etc.).
-    base: EntityBase,
+    /// Weak back-reference to the containing `EntityBase`.
+    base: Weak<EntityBase>,
     /// Vanilla entity type registered for this implementation.
     entity_type: EntityTypeRef,
     /// Synced entity data for network serialization.
-    entity_data: SyncMutex<BlockDisplayEntityData>,
+    entity_data: BlockDisplayEntityData,
 }
 
 impl BlockDisplayEntity {
-    /// Creates a new block display entity.
-    ///
-    /// The `id` should be obtained from `next_entity_id()`.
-    #[must_use]
-    pub fn new(entity_type: EntityTypeRef, id: i32, position: DVec3, world: Weak<World>) -> Self {
+    fn build(base: Weak<EntityBase>, entity_type: EntityTypeRef) -> Self {
         Self {
-            base: EntityBase::new(id, position, entity_type.dimensions, world),
+            base,
             entity_type,
-            entity_data: SyncMutex::new(BlockDisplayEntityData::new()),
+            entity_data: BlockDisplayEntityData::new(),
         }
     }
 
-    /// Creates a new block display entity with a specific UUID.
-    ///
-    /// The `id` should be obtained from `next_entity_id()`.
+    /// Creates a new block display entity.
     #[must_use]
-    pub fn with_uuid(
+    pub fn new(
         entity_type: EntityTypeRef,
         id: i32,
         position: DVec3,
-        uuid: Uuid,
         world: Weak<World>,
-    ) -> Self {
-        Self {
-            base: EntityBase::with_uuid(id, uuid, position, entity_type.dimensions, world),
-            entity_type,
-            entity_data: SyncMutex::new(BlockDisplayEntityData::new()),
-        }
+    ) -> SharedEntity {
+        EntityBase::pack_with(id, position, entity_type.dimensions, world, |base| {
+            Self::build(base, entity_type)
+        })
     }
 
     /// Creates a block display entity from saved data.
@@ -69,27 +59,25 @@ impl BlockDisplayEntity {
     /// Display entities have no physical collision, but vanilla base state is
     /// still persisted and should round-trip through the shared base.
     #[must_use]
-    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> Self {
-        Self {
-            base: EntityBase::from_load(load, entity_type.dimensions),
-            entity_type,
-            entity_data: SyncMutex::new(BlockDisplayEntityData::new()),
-        }
+    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> SharedEntity {
+        EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| {
+            Self::build(base, entity_type)
+        })
     }
 
     /// Gets a reference to the entity data for reading/modifying synced state.
-    pub const fn entity_data(&self) -> &SyncMutex<BlockDisplayEntityData> {
+    pub const fn entity_data(&self) -> &BlockDisplayEntityData {
         &self.entity_data
     }
 
     /// Sets the block state ID of this entity.
-    pub fn set_block_state_id(&self, id: BlockStateId) {
-        self.entity_data.lock().block_state.set(id);
+    pub fn set_block_state_id(&mut self, id: BlockStateId) {
+        self.entity_data.set_block_state(id);
     }
 }
 
 impl Entity for BlockDisplayEntity {
-    fn base(&self) -> &EntityBase {
+    fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
 
@@ -101,17 +89,20 @@ impl Entity for BlockDisplayEntity {
         Some(&self.entity_data)
     }
 
+    fn synced_data_mut(&mut self) -> Option<&mut dyn EntitySyncedData> {
+        Some(&mut self.entity_data)
+    }
+
     fn save_additional(&self, nbt: &mut NbtCompound) {
         // Save block state ID directly - these are deterministic in Minecraft
-        let block_state_id = *self.entity_data.lock().block_state.get();
+        let block_state_id = *self.entity_data.block_state.get();
         nbt.insert("block_state", i32::from(block_state_id.0));
     }
 
-    fn load_additional(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         // Load block state ID
         if let Some(state_id) = nbt.int("block_state") {
             self.entity_data
-                .lock()
                 .block_state
                 .set(BlockStateId(state_id as u16));
         }

@@ -278,7 +278,7 @@ impl<T: CropLike + Bonemealable + Send + Sync> BlockBehavior for T {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         effect_collector: &mut InsideBlockEffectCollector,
         is_precise: bool,
     ) {

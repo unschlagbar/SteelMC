@@ -24,11 +24,11 @@ impl Goal for RestrictSunGoal {
         world.is_bright_outside() && !mob.has_item_in_slot(EquipmentSlot::Head)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         mob.mob_base().navigation().lock().set_avoid_sun(true);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         mob.mob_base().navigation().lock().set_avoid_sun(false);
     }
 }
@@ -45,7 +45,7 @@ mod tests {
     use crate::entity::entities::PigEntity;
 
     fn pig() -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
     }
 
     #[test]
@@ -67,14 +67,14 @@ mod tests {
     fn restrict_sun_goal_toggles_navigation_avoid_sun() {
         init_test_registry();
         let mut goal = RestrictSunGoal::new();
-        let pig = pig();
+        let mut pig = pig();
 
         assert!(!pig.mob_base().navigation().lock().avoid_sun());
 
-        goal.start(&pig);
+        goal.start(&mut pig);
         assert!(pig.mob_base().navigation().lock().avoid_sun());
 
-        goal.stop(&pig);
+        goal.stop(&mut pig);
         assert!(!pig.mob_base().navigation().lock().avoid_sun());
     }
 }

@@ -535,9 +535,11 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
                 Some(source) => {
                     entity.id() != source.id()
                         && !entity.is_spectator()
-                        && source.can_collide_with(entity.as_ref())
+                        && entity
+                            .with_entity_ref(|e| source.can_collide_with(e))
+                            .unwrap_or(false)
                 }
-                None => !entity.is_spectator() && entity.can_be_collided_with(None),
+                None => !entity.is_spectator() && entity.can_be_collided_with(),
             })
             .map(|entity| entity.bounding_box())
             .collect()
@@ -561,9 +563,11 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
                         Some(source) => {
                             entity.id() != source.id()
                                 && !entity.is_spectator()
-                                && source.can_collide_with(entity.as_ref())
+                                && entity
+                                    .with_entity_ref(|e| source.can_collide_with(e))
+                                    .unwrap_or(false)
                         }
-                        None => !entity.is_spectator() && entity.can_be_collided_with(None),
+                        None => !entity.is_spectator() && entity.can_be_collided_with(),
                     }
             })
     }

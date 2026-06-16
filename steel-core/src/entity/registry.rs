@@ -1,7 +1,7 @@
 //! Entity registry for creating entity instances.
 
 use std::ops::Deref;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{OnceLock, Weak};
 
 use glam::DVec3;
 use simdnbt::borrow::{
@@ -171,7 +171,7 @@ impl EntityRegistry {
 
         let entity = load_factory(entity_type, load);
         let nbt: BorrowedNbtCompoundView<'_, '_> = nbt.into();
-        entity.load_additional(nbt);
+        entity.with_entity(|e| e.load_additional(nbt));
         entity.sync_base_entity_data();
         Some(entity)
     }
@@ -188,14 +188,14 @@ impl EntityRegistry {
         if let Some(load_factory) = self.entries.get(id).and_then(|entry| entry.load_factory) {
             let entity = load_factory(entity_type, load);
             let nbt: BorrowedNbtCompoundView<'_, '_> = nbt.into();
-            entity.load_additional(nbt);
+            entity.with_entity(|e| e.load_additional(nbt));
             entity.sync_base_entity_data();
             return entity;
         }
 
-        let entity: SharedEntity = Arc::new(RawEntity::from_saved(load, entity_type));
+        let entity: SharedEntity = RawEntity::from_saved(load, entity_type);
         let nbt: BorrowedNbtCompoundView<'_, '_> = nbt.into();
-        entity.load_additional(nbt);
+        entity.with_entity(|e| e.load_additional(nbt));
         entity
     }
 
@@ -316,8 +316,8 @@ mod tests {
         assert_eq!(entity.rotation(), (45.0, 10.0));
         assert!((entity.fall_distance() - 2.25).abs() <= f64::EPSILON);
         assert!(entity.on_ground());
-        assert!(entity.is_no_gravity());
-        assert!(entity.is_invulnerable());
+        assert!(entity.no_gravity());
+        assert!(entity.invulnerable());
 
         let mut saved = NbtCompound::new();
         entity.save_additional(&mut saved);
@@ -333,7 +333,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         registry.register(
             &vanilla_entities::OAK_BOAT,
-            |entity_type, id, pos, world| Arc::new(RawEntity::new(id, pos, world, entity_type)),
+            |entity_type, _d, _pos, _world| RawEntity::new(entity_type),
         );
 
         let Some(entity) =

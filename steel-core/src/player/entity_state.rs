@@ -131,7 +131,7 @@ impl Player {
         )
     }
 
-    pub(super) fn reset_entity_state(&self) {
+    pub(super) fn reset_entity_state(&mut self) {
         self.set_shared_swimming(false);
         self.set_shared_shift_key_down(false);
         self.clear_sleeping_pos();
@@ -146,7 +146,7 @@ impl Player {
     }
 
     /// Sets whether the player is shifting (sneaking).
-    pub fn set_crouching(&self, crouching: bool) {
+    pub fn set_crouching(&mut self, crouching: bool) {
         self.set_shared_shift_key_down(crouching);
     }
 
@@ -248,7 +248,7 @@ impl Player {
             actual_pose,
             <Self as Entity>::dimensions_for_pose(self, actual_pose),
         );
-        self.entity_data.lock().base_mut().pose.set(actual_pose);
+        self.entity_data.lock().base_mut().set_pose(actual_pose);
     }
 }
 

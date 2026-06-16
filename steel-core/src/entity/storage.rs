@@ -88,21 +88,13 @@ impl Default for EntityStorage {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
-
-    use glam::DVec3;
     use steel_registry::vanilla_entities;
 
     use super::*;
     use crate::entity::entities::RawEntity;
 
     fn raw_item(id: i32) -> SharedEntity {
-        Arc::new(RawEntity::new(
-            id,
-            DVec3::ZERO,
-            Weak::new(),
-            &vanilla_entities::ITEM,
-        ))
+        RawEntity::new_raw(id, &vanilla_entities::ITEM)
     }
 
     #[test]

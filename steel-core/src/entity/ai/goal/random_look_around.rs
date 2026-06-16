@@ -45,8 +45,9 @@ impl Goal for RandomLookAroundGoal {
         self.look_time >= 0
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
-        let mut random = mob.base().random().lock();
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
+        let mob_base = mob.base();
+        let mut random = mob_base.random().lock();
         let direction = TAU * random.next_f64();
         self.rel_x = direction.cos();
         self.rel_z = direction.sin();
@@ -57,7 +58,7 @@ impl Goal for RandomLookAroundGoal {
         true
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_time -= 1;
         let position = mob.position();
         mob.mob_base().controls().lock().look_control.set_look_at(
@@ -74,7 +75,7 @@ impl Goal for RandomLookAroundGoal {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Weak;
+    use std::sync::{Arc, Weak};
 
     use steel_registry::entity_type::EntityTypeRef;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
@@ -84,7 +85,7 @@ mod tests {
     use crate::entity::{Entity, EntityBase, LivingEntity, LivingEntityBase, Mob, MobBase};
 
     struct TestPathfinderMob {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         living_base: LivingEntityBase,
         mob_base: MobBase,
         mob_flags: SyncMutex<i8>,
@@ -94,13 +95,17 @@ mod tests {
     impl TestPathfinderMob {
         fn new() -> Self {
             init_test_registry();
+            let base = Arc::new(EntityBase::new(
+                1,
+                DVec3::ZERO,
+                vanilla_entities::PIG.dimensions,
+                Weak::new(),
+            ));
+            let base_weak = Arc::downgrade(&base);
+            // Leak the base so the weak back-reference stays upgradable.
+            std::mem::forget(base);
             Self {
-                base: EntityBase::new(
-                    1,
-                    DVec3::ZERO,
-                    vanilla_entities::PIG.dimensions,
-                    Weak::new(),
-                ),
+                base: base_weak,
                 living_base: LivingEntityBase::new(&vanilla_entities::PIG),
                 mob_base: MobBase::new(),
                 mob_flags: SyncMutex::new(0),
@@ -110,7 +115,7 @@ mod tests {
     }
 
     impl Entity for TestPathfinderMob {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -128,7 +133,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health;
         }
     }
@@ -142,7 +147,7 @@ mod tests {
             *self.mob_flags.lock()
         }
 
-        fn set_mob_flags(&self, flags: i8) {
+        fn set_mob_flags(&mut self, flags: i8) {
             *self.mob_flags.lock() = flags;
         }
     }
@@ -151,11 +156,11 @@ mod tests {
 
     #[test]
     fn random_look_around_sets_look_control_to_eye_height() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut goal = RandomLookAroundGoal::new();
 
-        goal.start(&mob);
-        goal.tick(&mob);
+        goal.start(&mut mob);
+        goal.tick(&mut mob);
 
         let look_control = mob.mob_base().controls().lock().look_control;
         assert!(look_control.is_looking_at_target());

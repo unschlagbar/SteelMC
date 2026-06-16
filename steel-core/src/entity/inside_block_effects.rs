@@ -3,7 +3,7 @@ use std::array;
 use crate::entity::Entity;
 
 /// Callback queued around an inside-block effect.
-pub type InsideBlockEffectCallback = Box<dyn Fn(&dyn Entity) + Send + Sync + 'static>;
+pub type InsideBlockEffectCallback = Box<dyn Fn(&mut dyn Entity) + Send + Sync + 'static>;
 
 const NO_STEP: i32 = -1;
 const EFFECT_TYPE_COUNT: usize = 5;
@@ -102,7 +102,7 @@ impl InsideBlockEffectCollector {
     }
 
     /// Applies queued effects and resets the collector for the next scan.
-    pub fn apply_and_clear(&mut self, entity: &dyn Entity) {
+    pub fn apply_and_clear(&mut self, entity: &mut dyn Entity) {
         self.flush_step();
 
         for effect in self.final_effects.drain(..) {
@@ -147,36 +147,33 @@ mod tests {
     use steel_registry::vanilla_entities;
     use steel_utils::locks::SyncMutex;
 
-    use crate::entity::{Entity, EntityBase};
+    use crate::entity::{Entity, EntityBase, SharedEntity};
 
     use super::{InsideBlockEffectCollector, InsideBlockEffectType};
 
     struct EffectTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         calls: Arc<SyncMutex<Vec<&'static str>>>,
         alive: Arc<SyncMutex<bool>>,
     }
 
     impl EffectTestEntity {
-        fn new() -> Arc<Self> {
+        fn new() -> SharedEntity {
             let calls = Arc::new(SyncMutex::new(Vec::new()));
             let alive = Arc::new(SyncMutex::new(true));
 
-            Arc::new(Self {
-                base: EntityBase::new(
-                    1,
-                    DVec3::ZERO,
-                    vanilla_entities::ITEM.dimensions,
-                    Weak::new(),
-                ),
-                calls,
-                alive,
-            })
+            EntityBase::pack_with(
+                crate::entity::next_entity_id(),
+                DVec3::ZERO,
+                vanilla_entities::ITEM.dimensions,
+                std::sync::Weak::new(),
+                |base| Self { base, calls, alive },
+            )
         }
     }
 
     impl Entity for EffectTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -188,7 +185,7 @@ mod tests {
             !self.is_removed() && *self.alive.lock()
         }
 
-        fn apply_inside_block_effect(&self, effect_type: InsideBlockEffectType) {
+        fn apply_inside_block_effect(&mut self, effect_type: InsideBlockEffectType) {
             self.calls.lock().push(match effect_type {
                 InsideBlockEffectType::Freeze => "freeze",
                 InsideBlockEffectType::ClearFreeze => "clear_freeze",
@@ -209,7 +206,11 @@ mod tests {
         collector.apply(InsideBlockEffectType::Freeze);
         collector.advance_step(1);
         collector.apply(InsideBlockEffectType::LavaIgnite);
-        collector.apply_and_clear(entity.as_ref());
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut EffectTestEntity = unsafe { entity.downcast_unchecked() };
+
+        collector.apply_and_clear(entity);
 
         assert_eq!(
             *entity.calls.lock(),
@@ -221,6 +222,9 @@ mod tests {
     fn collector_runs_before_and_after_callbacks_around_default_effect() {
         let entity = EffectTestEntity::new();
         let mut collector = InsideBlockEffectCollector::new();
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut EffectTestEntity = unsafe { entity.downcast_unchecked() };
 
         collector.advance_step(0);
         {
@@ -238,7 +242,7 @@ mod tests {
                 Box::new(move |_| calls.lock().push("after")),
             );
         }
-        collector.apply_and_clear(entity.as_ref());
+        collector.apply_and_clear(entity);
 
         assert_eq!(*entity.calls.lock(), vec!["before", "fire_ignite", "after"]);
     }
@@ -250,6 +254,10 @@ mod tests {
 
         collector.advance_step(0);
         collector.apply(InsideBlockEffectType::FireIgnite);
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut EffectTestEntity = unsafe { entity.downcast_unchecked() };
+
         {
             let calls = Arc::clone(&entity.calls);
             let alive = Arc::clone(&entity.alive);
@@ -262,7 +270,7 @@ mod tests {
             );
         }
         collector.apply(InsideBlockEffectType::LavaIgnite);
-        collector.apply_and_clear(entity.as_ref());
+        collector.apply_and_clear(entity);
 
         assert_eq!(*entity.calls.lock(), vec!["fire_ignite", "kill"]);
     }

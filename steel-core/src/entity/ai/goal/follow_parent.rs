@@ -84,15 +84,15 @@ impl Goal for FollowParentGoal {
             || distance_sqr > STOP_FOLLOW_IF_FARTHER_THAN_SQR)
     }
 
-    fn start(&mut self, _mob: &dyn PathfinderMob) {
+    fn start(&mut self, _mob: &mut dyn PathfinderMob) {
         self.time_to_recalc_path = 0;
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.parent = None;
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.time_to_recalc_path -= 1;
         if self.time_to_recalc_path > 0 {
             return;

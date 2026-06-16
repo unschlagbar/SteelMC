@@ -75,7 +75,7 @@ impl Experience {
 
     /// Syncs the score with the player's entity data
     pub fn sync_score(self, entity_data: &mut PlayerEntityData) {
-        entity_data.score.set(self.score);
+        entity_data.set_score(self.score);
     }
 
     /// Returns the progress to the next level between 0.0 and 1.0

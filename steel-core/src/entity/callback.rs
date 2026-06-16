@@ -54,7 +54,17 @@ pub trait EntityLevelCallback: Send + Sync {
     fn validate_move(&self, old_pos: DVec3, new_pos: DVec3) -> Result<(), EntityMoveError>;
 
     /// Called after an entity position change has been committed.
-    fn on_move_committed(&self, old_pos: DVec3, new_pos: DVec3) -> Result<(), EntityMoveError>;
+    ///
+    /// `entity` is the already-locked concrete entity when the move originates from
+    /// inside the entity's behavior lock (e.g. during `tick`), so tracker work can
+    /// reuse it instead of re-locking. It is `None` for base-direct moves made with
+    /// no behavior lock held (construction, loading), where re-locking is safe.
+    fn on_move_committed(
+        &self,
+        entity: Option<&mut dyn crate::entity::Entity>,
+        old_pos: DVec3,
+        new_pos: DVec3,
+    ) -> Result<(), EntityMoveError>;
 
     /// Called when entity is removed from the world.
     fn on_remove(&self, reason: RemovalReason);
@@ -72,7 +82,12 @@ impl EntityLevelCallback for NullEntityCallback {
         Ok(())
     }
 
-    fn on_move_committed(&self, _old_pos: DVec3, _new_pos: DVec3) -> Result<(), EntityMoveError> {
+    fn on_move_committed(
+        &self,
+        _entity: Option<&mut dyn crate::entity::Entity>,
+        _old_pos: DVec3,
+        _new_pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
         Ok(())
     }
 
@@ -99,7 +114,12 @@ impl EntityLevelCallback for InactiveEntityCallback {
         })
     }
 
-    fn on_move_committed(&self, _old_pos: DVec3, _new_pos: DVec3) -> Result<(), EntityMoveError> {
+    fn on_move_committed(
+        &self,
+        _entity: Option<&mut dyn crate::entity::Entity>,
+        _old_pos: DVec3,
+        _new_pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
         Err(EntityMoveError::Inactive {
             entity_id: self.entity_id,
         })
@@ -141,7 +161,12 @@ impl EntityLevelCallback for PlayerEntityCallback {
             })
     }
 
-    fn on_move_committed(&self, old_pos: DVec3, new_pos: DVec3) -> Result<(), EntityMoveError> {
+    fn on_move_committed(
+        &self,
+        entity: Option<&mut dyn crate::entity::Entity>,
+        old_pos: DVec3,
+        new_pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
         let Some(world) = self.world.upgrade() else {
             return Err(EntityMoveError::NotLive {
                 entity_id: self.entity_id,
@@ -160,6 +185,7 @@ impl EntityLevelCallback for PlayerEntityCallback {
         if update.section_changed() {
             world.entity_tracker().on_entity_section_change(
                 self.entity_id,
+                entity,
                 update.old_chunk,
                 update.new_chunk,
                 |chunk| world.player_area_map.get_tracking_players(chunk),
@@ -213,7 +239,12 @@ impl EntityLevelCallback for EntityChunkCallback {
             })
     }
 
-    fn on_move_committed(&self, old_pos: DVec3, new_pos: DVec3) -> Result<(), EntityMoveError> {
+    fn on_move_committed(
+        &self,
+        entity: Option<&mut dyn crate::entity::Entity>,
+        old_pos: DVec3,
+        new_pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
         let Some(world) = self.world.upgrade() else {
             return Err(EntityMoveError::NotLive {
                 entity_id: self.entity_id,
@@ -236,12 +267,13 @@ impl EntityLevelCallback for EntityChunkCallback {
             if update.became_inaccessible() {
                 world.remove_entity_from_tracker(self.entity_id);
             } else if update.became_accessible() {
-                if let Some(entity) = world.entity_manager().get_by_id(self.entity_id) {
-                    world.add_entity_to_tracker(&entity);
+                if let Some(shared) = world.entity_manager().get_by_id(self.entity_id) {
+                    world.add_entity_to_tracker_with_entity(&shared, entity);
                 }
             } else if update.new_accessible {
                 world.entity_tracker().on_entity_section_change(
                     self.entity_id,
+                    entity,
                     update.old_chunk,
                     update.new_chunk,
                     |chunk| world.player_area_map.get_tracking_players(chunk),

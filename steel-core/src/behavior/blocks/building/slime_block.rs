@@ -90,7 +90,13 @@ impl BlockBehavior for SlimeBlock {
         Self::velocity_after_fall(context)
     }
 
-    fn step_on(&self, state: BlockStateId, world: &Arc<World>, pos: BlockPos, entity: &dyn Entity) {
+    fn step_on(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        entity: &mut dyn Entity,
+    ) {
         entity.set_velocity(Self::velocity_after_step_on(
             entity.velocity(),
             entity.is_stepping_carefully(),

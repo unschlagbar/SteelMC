@@ -17,7 +17,7 @@ use crate::command::commands::{
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
 use crate::entity::{
-    AddEntityError, ENTITIES, Entity, EntitySpawnReason, SharedEntity, next_entity_id,
+    AddEntityError, ENTITIES, EntityBase, EntitySpawnReason, SharedEntity, next_entity_id,
 };
 use crate::world::World;
 
@@ -93,9 +93,9 @@ fn create_entity(
         return Err(command_failed(translations::COMMANDS_SUMMON_FAILED.msg()));
     };
 
-    if let Some(mob) = entity.as_mob() {
+    entity.with_mob_mut(|mob| {
         let _ = mob.finalize_spawn(&world, EntitySpawnReason::Command, None);
-    }
+    });
 
     match world.try_add_entity(Arc::clone(&entity)) {
         Ok(()) => Ok(entity),
@@ -110,7 +110,7 @@ fn command_failed(message: TranslatedMessage) -> CommandError {
     CommandError::CommandFailed(Box::new(message.into()))
 }
 
-fn entity_display_name(entity: &dyn Entity) -> TextComponent {
+fn entity_display_name(entity: &EntityBase) -> TextComponent {
     entity
         .custom_name()
         .unwrap_or_else(|| entity_type_display_name(entity.entity_type()))

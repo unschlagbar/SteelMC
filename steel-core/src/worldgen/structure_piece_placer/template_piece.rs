@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use glam::DVec3;
 use simdnbt::owned::NbtCompound;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
@@ -16,10 +14,7 @@ use steel_utils::random::{PositionalRandom, Random};
 use steel_utils::{BlockPos, BlockStateId, BoundingBox, Direction, Rotation, types::UpdateFlags};
 
 use crate::chunk::heightmap::HeightmapType;
-use crate::entity::{
-    entities::{ItemFrameEntity, RawEntity},
-    next_entity_id,
-};
+use crate::entity::entities::{ItemFrameEntity, RawEntity};
 use crate::worldgen::region::WorldGenRegion;
 use crate::worldgen::template::{
     StructureDataMarker, StructurePlaceSettings, StructureProcessorRandom, StructureTemplate,
@@ -418,15 +413,15 @@ impl StructurePiecePlacer {
             f64::from(pos.y()),
             f64::from(pos.z()) + 0.5,
         );
-        let entity = Arc::new(RawEntity::new(
-            next_entity_id(),
-            entity_pos,
-            region.weak_world(),
-            &vanilla_entities::DROWNED,
-        ));
-        entity.set_persistence_required();
-        entity.snap_to(entity_pos, 0.0, 0.0);
-        let _ = region.add_fresh_entity(entity);
+
+        let entity = RawEntity::new(&vanilla_entities::DROWNED);
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut RawEntity = entity.downcast().unwrap();
+            entity.set_persistence_required();
+            entity.snap_to(entity_pos, 0.0, 0.0);
+        }
+        let _ = region.add_fresh_entity(entity, entity_pos);
 
         let replacement = if pos.y() > region.sea_level() {
             vanilla_blocks::AIR.default_state()
@@ -531,14 +526,13 @@ impl StructurePiecePlacer {
             f64::from(pos.y()),
             f64::from(pos.z()) + 0.5,
         );
-        let entity = Arc::new(RawEntity::new(
-            next_entity_id(),
-            entity_pos,
-            region.weak_world(),
-            &vanilla_entities::SHULKER,
-        ));
-        entity.snap_to(entity_pos, 0.0, 0.0);
-        let _ = region.add_fresh_entity(entity);
+        let entity = RawEntity::new(&vanilla_entities::SHULKER);
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut RawEntity = entity.downcast().unwrap();
+            entity.snap_to(entity_pos, 0.0, 0.0);
+        }
+        let _ = region.add_fresh_entity(entity, entity_pos);
     }
 
     fn spawn_end_city_elytra_frame(
@@ -546,15 +540,13 @@ impl StructurePiecePlacer {
         pos: BlockPos,
         direction: Direction,
     ) {
-        let entity = Arc::new(ItemFrameEntity::new_attached(
-            &vanilla_entities::ITEM_FRAME,
-            next_entity_id(),
-            pos,
-            direction,
-            region.weak_world(),
-        ));
-        entity.set_item(ItemStack::new(&vanilla_items::ITEMS.elytra));
-        let _ = region.add_fresh_entity(entity);
+        let entity = ItemFrameEntity::new_attached(&vanilla_entities::ITEM_FRAME, pos, direction);
+        {
+            let mut frame = entity.lock_entity();
+            let frame: &mut ItemFrameEntity = frame.downcast().unwrap();
+            frame.set_item(ItemStack::new(&vanilla_items::ITEMS.elytra));
+        }
+        let _ = region.add_fresh_entity(entity, ItemFrameEntity::frame_center(pos, direction));
     }
 
     fn handle_mansion_marker(
@@ -632,15 +624,15 @@ impl StructurePiecePlacer {
         entity_type: EntityTypeRef,
     ) {
         let entity_pos = DVec3::new(f64::from(pos.x()), f64::from(pos.y()), f64::from(pos.z()));
-        let entity = Arc::new(RawEntity::new(
-            next_entity_id(),
-            entity_pos,
-            region.weak_world(),
-            entity_type,
-        ));
-        entity.set_persistence_required();
-        entity.snap_to(entity_pos, 0.0, 0.0);
-        let _ = region.add_fresh_entity(entity);
+        let entity = RawEntity::new(entity_type);
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut RawEntity = entity.downcast().unwrap();
+
+            entity.set_persistence_required();
+            entity.snap_to(entity_pos, 0.0, 0.0);
+        }
+        let _ = region.add_fresh_entity(entity, entity_pos);
     }
 
     fn loot_table_nbt(loot_table: &'static str, seed: i64) -> NbtCompound {

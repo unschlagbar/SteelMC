@@ -1,5 +1,6 @@
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
+use glam::DVec3;
 use steel_registry::blocks::block_state_ext::BlockStateExt as _;
 use steel_registry::blocks::properties::BlockStateProperties;
 use steel_registry::{Registry, vanilla_block_entity_types, vanilla_blocks};
@@ -9,7 +10,7 @@ use steel_utils::{BlockPos, BlockStateId, BoundingBox, Direction, types::UpdateF
 
 use crate::behavior::BlockStateBehaviorExt as _;
 use crate::chunk::heightmap::HeightmapType;
-use crate::entity::SharedEntity;
+use crate::entity::EntityBase;
 use crate::world::World;
 use crate::worldgen::region::WorldGenRegion;
 use crate::worldgen::template::StructureTemplate;
@@ -312,8 +313,8 @@ impl<'a, 'world> ScatteredFeaturePlacer<'a, 'world> {
         self.region.weak_world()
     }
 
-    pub(super) fn add_fresh_entity(&mut self, entity: SharedEntity) -> bool {
-        self.region.add_fresh_entity(entity)
+    pub(super) fn add_fresh_entity(&mut self, entity: Arc<EntityBase>, position: DVec3) -> bool {
+        self.region.add_fresh_entity(entity, position)
     }
 
     fn get_block(&self, x: i32, y: i32, z: i32) -> BlockStateId {

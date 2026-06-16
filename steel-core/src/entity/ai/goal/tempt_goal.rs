@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use glam::DVec3;
 use steel_registry::item_stack::ItemStack;
@@ -15,7 +16,7 @@ const DEFAULT_STOP_DISTANCE: f64 = 2.5;
 type TemptItemPredicate = Box<dyn Fn(&ItemStack) -> bool + Send + Sync>;
 
 pub struct TemptGoal {
-    player: Option<Arc<Player>>,
+    player: Option<Arc<SyncMutex<Player>>>,
     player_position: DVec3,
     player_yaw: f32,
     player_pitch: f32,
@@ -81,21 +82,24 @@ impl TemptGoal {
         let Some(player) = &self.player else {
             return false;
         };
+        let (player_pos, yaw, pitch) = {
+            let guard = player.lock();
+            let (yaw, pitch) = guard.rotation();
+            (guard.position(), yaw, pitch)
+        };
 
-        if mob.position().distance_squared(player.position()) < 36.0 {
-            if player.position().distance_squared(self.player_position) > 0.01 {
+        if mob.position().distance_squared(player_pos) < 36.0 {
+            if player_pos.distance_squared(self.player_position) > 0.01 {
                 return false;
             }
 
-            let (yaw, pitch) = player.rotation();
             if (pitch - self.player_pitch).abs() > 5.0 || (yaw - self.player_yaw).abs() > 5.0 {
                 return false;
             }
         } else {
-            self.player_position = player.position();
+            self.player_position = player_pos;
         }
 
-        let (yaw, pitch) = player.rotation();
         self.player_yaw = yaw;
         self.player_pitch = pitch;
         true
@@ -136,28 +140,31 @@ impl Goal for TemptGoal {
         self.can_use(mob)
     }
 
-    fn start(&mut self, _mob: &dyn PathfinderMob) {
+    fn start(&mut self, _mob: &mut dyn PathfinderMob) {
         if let Some(player) = &self.player {
-            self.player_position = player.position();
+            self.player_position = player.lock().position();
         }
         self.is_running = true;
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.player = None;
         mob.mob_base().navigation().lock().stop();
         self.calm_down = reduced_tick_delay(100);
         self.is_running = false;
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(player) = &self.player else {
             return;
         };
 
-        let player_position = player.position();
+        let (player_position, eye_y) = {
+            let guard = player.lock();
+            (guard.position(), guard.get_eye_y())
+        };
         mob.mob_base().controls().lock().look_control.set_look_at(
-            DVec3::new(player_position.x, player.get_eye_y(), player_position.z),
+            DVec3::new(player_position.x, eye_y, player_position.z),
             mob.max_head_y_rot() + 20.0,
             mob.max_head_x_rot(),
         );
@@ -199,7 +206,7 @@ mod tests {
             |item_stack| item_stack.is(&vanilla_items::ITEMS.carrot),
             false,
         );
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.should_follow(&pig));
 

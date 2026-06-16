@@ -39,7 +39,7 @@ impl Goal for TryFindWaterGoal {
             .is_water()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(world) = mob.level() else {
             return;
         };
@@ -121,7 +121,7 @@ mod tests {
     fn try_find_water_goal_requires_on_ground() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mob));
     }
@@ -130,7 +130,7 @@ mod tests {
     fn try_find_water_goal_requires_world_after_on_ground_check() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_on_ground(true);
 
         assert!(!goal.can_use(&mob));

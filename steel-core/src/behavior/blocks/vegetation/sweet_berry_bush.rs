@@ -100,7 +100,7 @@ impl BlockBehavior for SweetBerryBushBlock {
         state: BlockStateId,
         _world: &Arc<World>,
         _pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         _effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {
@@ -188,7 +188,7 @@ impl SweetBerryBushBlock {
             && entity.entity_type() != &vanilla_entities::BEE
     }
 
-    fn apply_contact_damage(state: BlockStateId, entity: &dyn Entity) {
+    fn apply_contact_damage(state: BlockStateId, entity: &mut dyn Entity) {
         if state.get_value(&BlockStateProperties::AGE_3) == 0 {
             return;
         }
@@ -253,10 +253,10 @@ mod tests {
     use steel_utils::locks::SyncMutex;
 
     use super::*;
-    use crate::entity::EntityBase;
+    use crate::entity::{EntityBase, SharedEntity};
 
     struct TestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         entity_type: EntityTypeRef,
         is_living: bool,
         uses_client_movement_packets: bool,
@@ -265,41 +265,26 @@ mod tests {
     }
 
     impl TestEntity {
-        fn living(entity_type: EntityTypeRef) -> Self {
-            Self {
-                base: EntityBase::new(
-                    1,
-                    DVec3::ZERO,
-                    EntityDimensions::new(0.6, 1.8, 1.62),
-                    Weak::<World>::new(),
-                ),
-                entity_type,
-                is_living: true,
-                uses_client_movement_packets: false,
-                known_movement: DVec3::ZERO,
-                damage: SyncMutex::new(Vec::new()),
-            }
+        fn living(entity_type: EntityTypeRef) -> SharedEntity {
+            EntityBase::pack_with(
+                crate::entity::next_entity_id(),
+                DVec3::ZERO,
+                EntityDimensions::new(0.6, 1.8, 1.62),
+                std::sync::Weak::new(),
+                |base| Self {
+                    base,
+                    entity_type,
+                    is_living: true,
+                    uses_client_movement_packets: false,
+                    known_movement: DVec3::ZERO,
+                    damage: SyncMutex::new(Vec::new()),
+                },
+            )
         }
 
-        fn with_position(self, position: DVec3) -> Self {
-            self.base.set_position_local(position);
-            self
-        }
-
-        fn with_old_position(self, old_position: DVec3) -> Self {
-            self.base.set_old_position(old_position);
-            self
-        }
-
-        fn with_client_movement(mut self, movement: DVec3) -> Self {
+        fn set_client_movement(&mut self, movement: DVec3) {
             self.uses_client_movement_packets = true;
             self.known_movement = movement;
-            self
-        }
-
-        fn non_living(mut self) -> Self {
-            self.is_living = false;
-            self
         }
 
         fn damage_events(&self) -> Vec<(String, f32)> {
@@ -308,7 +293,7 @@ mod tests {
     }
 
     impl Entity for TestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -328,7 +313,7 @@ mod tests {
             self.known_movement
         }
 
-        fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+        fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
             self.damage
                 .lock()
                 .push((source.damage_type.key.path.as_ref().to_owned(), amount));
@@ -345,11 +330,16 @@ mod tests {
 
     #[test]
     fn contact_damage_uses_old_position_for_server_authored_entities() {
-        let entity = TestEntity::living(&vanilla_entities::PLAYER)
-            .with_position(DVec3::new(0.0, 0.0, 0.0))
-            .with_old_position(DVec3::new(0.004, 0.0, 0.0));
+        let entity = TestEntity::living(&vanilla_entities::PLAYER);
+        entity.set_position_local(DVec3::new(0.0, 0.0, 0.0));
+        entity.set_old_position(DVec3::new(0.004, 0.0, 0.0));
 
-        SweetBerryBushBlock::apply_contact_damage(state_with_age(1), &entity);
+        entity.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut TestEntity = unsafe { entity.downcast_unchecked() };
 
         assert_eq!(
             entity.damage_events(),
@@ -359,12 +349,23 @@ mod tests {
 
     #[test]
     fn contact_damage_uses_known_movement_for_client_authored_entities() {
-        let entity = TestEntity::living(&vanilla_entities::PLAYER)
-            .with_position(DVec3::ZERO)
-            .with_old_position(DVec3::ZERO)
-            .with_client_movement(DVec3::new(0.0, 0.0, 0.004));
+        let entity = TestEntity::living(&vanilla_entities::PLAYER);
+        entity.set_position_local(DVec3::ZERO);
+        entity.set_old_position(DVec3::ZERO);
 
-        SweetBerryBushBlock::apply_contact_damage(state_with_age(1), &entity);
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut TestEntity = unsafe { entity.downcast_unchecked() };
+
+            entity.set_client_movement(DVec3::new(0.0, 0.0, 0.004));
+        }
+
+        entity.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut TestEntity = unsafe { entity.downcast_unchecked() };
 
         assert_eq!(
             entity.damage_events(),
@@ -374,22 +375,32 @@ mod tests {
 
     #[test]
     fn contact_damage_is_age_gated() {
-        let entity = TestEntity::living(&vanilla_entities::PLAYER)
-            .with_position(DVec3::ZERO)
-            .with_old_position(DVec3::new(0.004, 0.0, 0.0));
+        let entity = TestEntity::living(&vanilla_entities::PLAYER);
+        entity.set_position_local(DVec3::ZERO);
+        entity.set_old_position(DVec3::new(0.004, 0.0, 0.0));
 
-        SweetBerryBushBlock::apply_contact_damage(state_with_age(0), &entity);
+        entity.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(0), entity);
+        });
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut TestEntity = unsafe { entity.downcast_unchecked() };
 
         assert!(entity.damage_events().is_empty());
     }
 
     #[test]
     fn contact_damage_requires_threshold_movement() {
-        let entity = TestEntity::living(&vanilla_entities::PLAYER)
-            .with_position(DVec3::ZERO)
-            .with_old_position(DVec3::new(0.002_9, 0.0, 0.002_9));
+        let entity = TestEntity::living(&vanilla_entities::PLAYER);
+        entity.set_position_local(DVec3::ZERO);
+        entity.set_old_position(DVec3::new(0.002_9, 0.0, 0.002_9));
 
-        SweetBerryBushBlock::apply_contact_damage(state_with_age(1), &entity);
+        entity.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
+
+        let mut entity = entity.lock_entity();
+        let entity: &mut TestEntity = unsafe { entity.downcast_unchecked() };
 
         assert!(entity.damage_events().is_empty());
     }
@@ -398,10 +409,22 @@ mod tests {
     fn foxes_bees_and_non_living_entities_are_immune_to_sweet_berry_bush_effects() {
         let fox = TestEntity::living(&vanilla_entities::FOX);
         let bee = TestEntity::living(&vanilla_entities::BEE);
-        let item = TestEntity::living(&vanilla_entities::ITEM).non_living();
+        let item = TestEntity::living(&vanilla_entities::ITEM);
 
-        assert!(!SweetBerryBushBlock::applies_contact_effects(&fox));
-        assert!(!SweetBerryBushBlock::applies_contact_effects(&bee));
-        assert!(!SweetBerryBushBlock::applies_contact_effects(&item));
+        {
+            let mut item = item.lock_entity();
+            let item: &mut TestEntity = unsafe { item.downcast_unchecked() };
+            item.is_living = false;
+        }
+
+        fox.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
+        bee.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
+        item.with_entity(|entity| {
+            SweetBerryBushBlock::apply_contact_damage(state_with_age(1), entity);
+        });
     }
 }

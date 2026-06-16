@@ -15,8 +15,8 @@ use steel_utils::translations;
 use steel_utils::types::GameType;
 
 use crate::entity::{
-    AcceptedClientMovement, AcceptedClientMovementOutcome, Entity, EntityMoveError, LivingEntity,
-    get_input_vector,
+    AcceptedClientMovement, AcceptedClientMovementOutcome, Entity, EntityBase, EntityMoveError,
+    LivingEntity, get_input_vector,
 };
 use crate::physics::{
     MOVEMENT_ERROR_THRESHOLD, MovementCollisionValidation, MoverType, WorldCollisionProvider,
@@ -99,7 +99,7 @@ impl Player {
         false
     }
 
-    fn move_vehicle_packet_from_entity(entity: &dyn Entity) -> CMoveVehicle {
+    fn move_vehicle_packet_from_entity(entity: &EntityBase) -> CMoveVehicle {
         let rotation = entity.rotation();
         CMoveVehicle {
             position: entity.position(),
@@ -540,18 +540,16 @@ impl Player {
         let new_aabb = vehicle
             .bounding_box()
             .move_vec(target_pos - vehicle.position());
-        let collision_world = WorldCollisionProvider::for_entity(&world, vehicle.as_ref());
-        let old_collision = collision_world.has_entity_context_collision(
-            old_aabb,
-            vehicle.position().y,
-            vehicle.is_descending(),
-        );
-        let new_collision = is_colliding_with_new_shapes(
-            &collision_world,
-            old_aabb,
-            new_aabb,
-            vehicle.is_descending(),
-        );
+        let vehicle_y = vehicle.position().y;
+        let descending = vehicle.is_descending();
+        let (old_collision, new_collision) = {
+            let vehicle_entity = vehicle.arc_lock_entity();
+            let collision_world = WorldCollisionProvider::for_entity(&world, &*vehicle_entity);
+            (
+                collision_world.has_entity_context_collision(old_aabb, vehicle_y, descending),
+                is_colliding_with_new_shapes(&collision_world, old_aabb, new_aabb, descending),
+            )
+        };
 
         if (MovementCollisionValidation {
             no_physics: false,
@@ -575,7 +573,7 @@ impl Player {
         }
 
         let client_delta = target_pos - old_position;
-        match vehicle.apply_accepted_client_vehicle_movement(
+        let outcome = vehicle.apply_accepted_client_vehicle_movement(
             &world,
             AcceptedClientMovement {
                 position: Some(target_pos),
@@ -585,7 +583,8 @@ impl Player {
                 movement: client_delta,
                 reset_fall_distance: false,
             },
-        ) {
+        );
+        match outcome.unwrap_or(Ok(AcceptedClientMovementOutcome::Handled)) {
             Ok(AcceptedClientMovementOutcome::Applied) => {}
             Ok(AcceptedClientMovementOutcome::Handled) => return,
             Err(error) => {
@@ -610,12 +609,9 @@ impl Player {
             .lock()
             .set_last_known_client_movement(client_delta);
         world.chunk_map.update_player_status(self);
-        self.record_client_vehicle_floating(
-            &world,
-            vehicle.as_ref(),
-            move_delta.y,
-            vehicle_rests_on_something,
-        );
+        vehicle.with_entity_ref(|v| {
+            self.record_client_vehicle_floating(&world, v, move_delta.y, vehicle_rests_on_something);
+        });
         self.movement
             .lock()
             .mark_vehicle_last_good_position(vehicle.id(), vehicle.position());

@@ -49,15 +49,17 @@ impl FollowMobGoal {
             return true;
         }
 
-        following_mob.as_mob().is_some_and(|following_mob| {
-            following_mob
-                .mob_base()
-                .controls()
-                .lock()
-                .look_control
-                .wanted_position()
-                == mob_position
-        })
+        following_mob
+            .with_mob(|following_mob| {
+                following_mob
+                    .mob_base()
+                    .controls()
+                    .lock()
+                    .look_control
+                    .wanted_position()
+                    == mob_position
+            })
+            .unwrap_or(false)
     }
 }
 
@@ -98,19 +100,19 @@ impl Goal for FollowMobGoal {
             && mob.position().distance_squared(following_mob.position()) > self.stop_distance_sqr()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.time_to_recalc_path = 0;
         self.old_water_cost = mob.get_pathfinding_malus(PathType::Water);
         mob.set_pathfinding_malus(PathType::Water, 0.0);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.following_mob = None;
         mob.mob_base().navigation().lock().stop();
         mob.set_pathfinding_malus(PathType::Water, self.old_water_cost);
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(following_mob) = &self.following_mob else {
             return;
         };
@@ -178,7 +180,7 @@ mod tests {
     fn follow_mob_goal_requires_world() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mob));
     }
@@ -187,17 +189,17 @@ mod tests {
     fn follow_mob_goal_temporarily_removes_water_malus() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_pathfinding_malus(PathType::Water, 4.0);
 
-        goal.start(&mob);
+        goal.start(&mut mob);
 
         assert_eq!(
             mob.get_pathfinding_malus(PathType::Water).to_bits(),
             0.0_f32.to_bits()
         );
 
-        goal.stop(&mob);
+        goal.stop(&mut mob);
 
         assert_eq!(
             mob.get_pathfinding_malus(PathType::Water).to_bits(),
@@ -209,13 +211,13 @@ mod tests {
     fn follow_mob_goal_stops_when_no_navigation_is_running() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        goal.following_mob = Some(Arc::new(PigEntity::new(
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        goal.following_mob = Some(PigEntity::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(4.0, 0.0, 0.0),
             Weak::new(),
-        )));
+        ));
 
         assert!(!goal.can_continue_to_use(&mob));
     }
@@ -224,16 +226,16 @@ mod tests {
     fn follow_mob_goal_looks_at_following_mob() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let following_mob: SharedEntity = Arc::new(PigEntity::new(
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let following_mob: SharedEntity = PigEntity::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(4.0, 0.0, 0.0),
             Weak::new(),
-        ));
+        );
         goal.following_mob = Some(Arc::clone(&following_mob));
 
-        goal.tick(&mob);
+        goal.tick(&mut mob);
 
         let wanted_position = mob
             .mob_base()

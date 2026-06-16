@@ -45,7 +45,7 @@ impl Goal for MoveTowardsRestrictionGoal {
         !mob.mob_base().navigation().lock().is_done()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if let Some(wanted_position) = self.wanted_position {
             mob.move_to_pos(wanted_position, self.speed_modifier);
         }
@@ -73,7 +73,7 @@ mod tests {
     fn move_towards_restriction_goal_requires_outside_home() {
         init_test_registry();
         let mut goal = MoveTowardsRestrictionGoal::new(1.0);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_home_to(BlockPos::ZERO, 4);
 
         assert!(!goal.can_use(&mob));

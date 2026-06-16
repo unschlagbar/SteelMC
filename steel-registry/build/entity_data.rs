@@ -900,7 +900,7 @@ pub(crate) fn build() -> TokenStream {
     // Imports
     stream.extend(quote! {
         use crate::entity_data::{
-            ArmadilloState, BlockPos, DataValue, Direction, EntityData, EntityPose,
+            ArmadilloState, BlockPos, DataValue, DirtyBits, Direction, EntityData, EntityPose,
             GlobalPos, HumanoidArm, ParticleData, ParticleList, ParticleOptions, Quaternionf,
             ResolvableProfile, Rotations, SnifferState, SyncedValue, Vector3f,
             VillagerData,
@@ -920,7 +920,7 @@ pub(crate) fn build() -> TokenStream {
             fn base_mut(&mut self) -> &mut BaseEntityData;
 
             /// Packs dirty values for network sync, clearing dirty flags.
-            fn pack_dirty(&mut self) -> Option<Vec<DataValue>>;
+            fn pack_dirty(&self) -> Option<Vec<DataValue>>;
 
             /// Packs all non-default values for initial entity spawn.
             fn pack_all(&self) -> Vec<DataValue>;
@@ -946,9 +946,17 @@ pub(crate) fn build() -> TokenStream {
             .cloned()
             .unwrap_or_default();
 
+        assert!(
+            layer.fields.len() <= 32,
+            "Entity data layer '{}' has {} fields, which exceeds the 32-bit DirtyBits capacity",
+            layer.simple_name,
+            layer.fields.len()
+        );
+
         // Generate fields
         let mut field_defs = Vec::new();
         let mut field_inits = Vec::new();
+        let mut setters = Vec::new();
         let mut pack_dirty_checks = Vec::new();
         let mut pack_all_entries = Vec::new();
         let mut is_dirty_checks = Vec::new();
@@ -981,7 +989,17 @@ pub(crate) fn build() -> TokenStream {
             });
         }
 
-        for data in &layer.fields {
+        // Single per-layer dirty bitfield. Each field's dirty state lives at a fixed
+        // bit position (its ordinal within this layer), assigned below.
+        field_defs.push(quote! {
+            pub dirty: DirtyBits
+        });
+        field_inits.push(quote! {
+            dirty: DirtyBits::new()
+        });
+
+        for (bit, data) in layer.fields.iter().enumerate() {
+            let bit = bit as u32;
             let (rust_type, _, expected_serializer_id) = serializer_info(&data.serializer)
                 .unwrap_or_else(|| {
                     panic!(
@@ -1010,6 +1028,8 @@ pub(crate) fn build() -> TokenStream {
             let serializer_id_lit = data.serializer_id;
             let entity_data_expr = entity_data_expr(&data.serializer, &field_ident);
 
+            let setter_ident = Ident::new(&format!("set_{field_name}"), Span::call_site());
+
             field_defs.push(quote! {
                 pub #field_ident: SyncedValue<#rust_type_tokens>
             });
@@ -1018,14 +1038,22 @@ pub(crate) fn build() -> TokenStream {
                 #field_ident: SyncedValue::new(#default_expr)
             });
 
+            setters.push(quote! {
+                /// Sets this field, marking it dirty if the value changed.
+                pub fn #setter_ident(&mut self, value: #rust_type_tokens) {
+                    if self.#field_ident.set(value) {
+                        self.dirty.mark(#bit);
+                    }
+                }
+            });
+
             pack_dirty_checks.push(quote! {
-                if self.#field_ident.is_dirty() {
+                if dirty & (1 << #bit) != 0 {
                     values.push(DataValue {
                         index: #index,
                         serializer_id: #serializer_id_lit,
                         value: #entity_data_expr,
                     });
-                    self.#field_ident.clear_dirty();
                 }
             });
 
@@ -1038,17 +1066,13 @@ pub(crate) fn build() -> TokenStream {
                     });
                 }
             });
-
-            is_dirty_checks.push(quote! {
-                self.#field_ident.is_dirty()
-            });
         }
 
-        let is_dirty_expr = if is_dirty_checks.is_empty() {
-            quote! { false }
-        } else {
-            quote! { #(#is_dirty_checks)||* }
-        };
+        // The layer's own fields are dirty iff any bit is set; parents track their own.
+        is_dirty_checks.push(quote! {
+            self.dirty.any()
+        });
+        let is_dirty_expr = quote! { #(#is_dirty_checks)||* };
         let new_body = if new_overrides.is_empty() {
             quote! {
                 Self {
@@ -1099,15 +1123,18 @@ pub(crate) fn build() -> TokenStream {
 
                 #(#layer_accessors)*
 
+                #(#setters)*
+
                 /// Pack all dirty values for network sync, clearing dirty flags.
                 /// Returns `None` if no values are dirty.
-                pub fn pack_dirty(&mut self) -> Option<Vec<DataValue>> {
+                pub fn pack_dirty(&self) -> Option<Vec<DataValue>> {
                     let mut values = Vec::new();
                     self.pack_dirty_into(&mut values);
                     if values.is_empty() { None } else { Some(values) }
                 }
 
-                fn pack_dirty_into(&mut self, values: &mut Vec<DataValue>) {
+                fn pack_dirty_into(&self, values: &mut Vec<DataValue>) {
+                    let dirty = self.dirty.take();
                     #(#pack_dirty_checks)*
                 }
 
@@ -1143,7 +1170,7 @@ pub(crate) fn build() -> TokenStream {
                     #struct_ident::base_mut(self)
                 }
 
-                fn pack_dirty(&mut self) -> Option<Vec<DataValue>> {
+                fn pack_dirty(&self) -> Option<Vec<DataValue>> {
                     #struct_ident::pack_dirty(self)
                 }
 
@@ -1245,7 +1272,7 @@ pub(crate) fn build() -> TokenStream {
 
                 /// Pack all dirty values for network sync, clearing dirty flags.
                 /// Returns `None` if no values are dirty.
-                pub fn pack_dirty(&mut self) -> Option<Vec<DataValue>> {
+                pub fn pack_dirty(&self) -> Option<Vec<DataValue>> {
                     self.#root_field_ident.pack_dirty()
                 }
 
@@ -1275,7 +1302,7 @@ pub(crate) fn build() -> TokenStream {
                     #concrete_ident::base_mut(self)
                 }
 
-                fn pack_dirty(&mut self) -> Option<Vec<DataValue>> {
+                fn pack_dirty(&self) -> Option<Vec<DataValue>> {
                     #concrete_ident::pack_dirty(self)
                 }
 

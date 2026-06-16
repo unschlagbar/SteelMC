@@ -91,15 +91,15 @@ pub trait Goal: Send {
         false
     }
 
-    fn start(&mut self, _mob: &dyn PathfinderMob) {}
+    fn start(&mut self, _mob: &mut dyn PathfinderMob) {}
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {}
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {}
 
     fn requires_update_every_tick(&self) -> bool {
         false
     }
 
-    fn tick(&mut self, _mob: &dyn PathfinderMob) {}
+    fn tick(&mut self, _mob: &mut dyn PathfinderMob) {}
 }
 
 struct WrappedGoal {
@@ -137,7 +137,7 @@ impl WrappedGoal {
         self.goal.can_continue_to_use(mob)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if self.running {
             return;
         }
@@ -145,7 +145,7 @@ impl WrappedGoal {
         self.goal.start(mob);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         if !self.running {
             return;
         }
@@ -153,7 +153,7 @@ impl WrappedGoal {
         self.goal.stop(mob);
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.goal.tick(mob);
     }
 
@@ -188,7 +188,7 @@ impl GoalSelector {
             .push(WrappedGoal::new(priority, Box::new(goal)));
     }
 
-    pub fn tick(&mut self, mob: &dyn PathfinderMob) {
+    pub fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         for index in 0..self.available_goals.len() {
             let should_stop = {
                 let disabled_controls = self.disabled_controls;
@@ -224,7 +224,7 @@ impl GoalSelector {
 
     pub fn tick_running_goals(
         &mut self,
-        mob: &dyn PathfinderMob,
+        mob: &mut dyn PathfinderMob,
         force_tick_all_running_goals: bool,
     ) {
         for goal in &mut self.available_goals {
@@ -338,8 +338,8 @@ impl fmt::Debug for GoalSelector {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Weak;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Weak};
 
     use glam::DVec3;
     use steel_registry::entity_type::EntityTypeRef;
@@ -352,7 +352,7 @@ mod tests {
     };
 
     struct TestPathfinderMob {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         living_base: LivingEntityBase,
         mob_base: MobBase,
         mob_flags: SyncMutex<i8>,
@@ -362,13 +362,17 @@ mod tests {
     impl TestPathfinderMob {
         fn new() -> Self {
             init_test_registry();
+            let base = Arc::new(EntityBase::new(
+                1,
+                DVec3::ZERO,
+                vanilla_entities::PIG.dimensions,
+                Weak::new(),
+            ));
+            let base_weak = Arc::downgrade(&base);
+            // Leak the base so the weak back-reference stays upgradable.
+            std::mem::forget(base);
             Self {
-                base: EntityBase::new(
-                    1,
-                    DVec3::ZERO,
-                    vanilla_entities::PIG.dimensions,
-                    Weak::new(),
-                ),
+                base: base_weak,
                 living_base: LivingEntityBase::new(&vanilla_entities::PIG),
                 mob_base: MobBase::new(),
                 mob_flags: SyncMutex::new(0),
@@ -378,7 +382,7 @@ mod tests {
     }
 
     impl Entity for TestPathfinderMob {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -396,7 +400,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health;
         }
     }
@@ -410,7 +414,7 @@ mod tests {
             *self.mob_flags.lock()
         }
 
-        fn set_mob_flags(&self, flags: i8) {
+        fn set_mob_flags(&mut self, flags: i8) {
             *self.mob_flags.lock() = flags;
         }
     }
@@ -505,7 +509,7 @@ mod tests {
             self.requires_update_every_tick
         }
 
-        fn tick(&mut self, _mob: &dyn PathfinderMob) {
+        fn tick(&mut self, _mob: &mut dyn PathfinderMob) {
             if let Some(tick_count) = self.tick_count {
                 tick_count.fetch_add(1, Ordering::Relaxed);
             }
@@ -516,13 +520,13 @@ mod tests {
 
     #[test]
     fn lower_priority_goal_replaces_running_goal_for_same_control() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut selector = GoalSelector::new();
         selector.add_goal(5, StaticGoal::new(GoalControls::MOVE));
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         selector.add_goal(3, StaticGoal::new(GoalControls::MOVE));
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         assert_eq!(selector.running_goal_count(), 1);
         assert!(selector.is_priority_running(3));
@@ -530,13 +534,13 @@ mod tests {
 
     #[test]
     fn non_interruptable_goal_blocks_replacement() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut selector = GoalSelector::new();
         selector.add_goal(5, StaticGoal::new(GoalControls::MOVE).non_interruptable());
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         selector.add_goal(3, StaticGoal::new(GoalControls::MOVE));
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         assert_eq!(selector.running_goal_count(), 1);
         assert!(selector.is_priority_running(5));
@@ -544,13 +548,13 @@ mod tests {
 
     #[test]
     fn disabled_control_stops_running_goal() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut selector = GoalSelector::new();
         selector.add_goal(5, StaticGoal::new(GoalControls::MOVE));
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         selector.disable_control(GoalControl::Move);
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
         assert_eq!(selector.running_goal_count(), 0);
     }
@@ -558,7 +562,7 @@ mod tests {
     #[test]
     fn tick_running_goals_respects_requires_update_every_tick() {
         RUNNING_TICK_COUNT.store(0, Ordering::Relaxed);
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut selector = GoalSelector::new();
         selector.add_goal(
             5,
@@ -566,16 +570,16 @@ mod tests {
                 .with_update_every_tick()
                 .with_tick_counter(&RUNNING_TICK_COUNT),
         );
-        selector.tick(&mob);
+        selector.tick(&mut mob);
 
-        selector.tick_running_goals(&mob, false);
+        selector.tick_running_goals(&mut mob, false);
 
         assert_eq!(RUNNING_TICK_COUNT.load(Ordering::Relaxed), 2);
     }
 
     #[test]
     fn cleanup_stops_goal_that_can_no_longer_continue() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         let mut selector = GoalSelector::new();
         selector.add_goal(
             5,
@@ -584,15 +588,15 @@ mod tests {
                 .with_can_use_once(),
         );
 
-        selector.tick(&mob);
-        selector.tick(&mob);
+        selector.tick(&mut mob);
+        selector.tick(&mut mob);
 
         assert_eq!(selector.running_goal_count(), 0);
     }
 
     #[test]
     fn running_panic_goal_is_visible_to_pathfinder_mob() {
-        let mob = TestPathfinderMob::new();
+        let mut mob = TestPathfinderMob::new();
         mob.mob_base()
             .goal_selector()
             .lock()
@@ -600,7 +604,7 @@ mod tests {
 
         assert!(!mob.is_panicking());
 
-        mob.mob_base().goal_selector().lock().tick(&mob);
+        mob.mob_base().goal_selector().lock().tick(&mut mob);
 
         assert!(
             mob.mob_base()

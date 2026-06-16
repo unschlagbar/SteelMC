@@ -274,7 +274,7 @@ impl NavigatingMobTracker {
     }
 
     fn track(&self, entity: &SharedEntity) {
-        if entity.as_pathfinder_mob().is_some() {
+        if entity.with_pathfinder_mob(|_| ()).is_some() {
             self.ids.lock().insert(entity.id());
         }
     }
@@ -286,6 +286,25 @@ impl NavigatingMobTracker {
     fn ids(&self) -> Vec<i32> {
         self.ids.lock().iter().copied().collect()
     }
+}
+
+/// Tracker visibility work deferred out of an entity's move commit.
+///
+/// Entities move while holding their behavior mutex (their `tick` runs under
+/// `SharedEntity`'s lock). The tracker updates triggered by a section change
+/// dispatch back into the entity (e.g. `broadcast_to_player`, spawn-packet
+/// packing) through `with_entity_ref`, which would re-lock that same mutex and
+/// deadlock. We capture the decision here and replay it after entity ticking,
+/// when no behavior lock is held. Mirrors vanilla running tracking in the chunk
+/// tick rather than inside `Entity.move`.
+#[derive(Clone, Copy)]
+pub(crate) struct DeferredMoveTracking {
+    entity_id: i32,
+    old_chunk: ChunkPos,
+    new_chunk: ChunkPos,
+    became_inaccessible: bool,
+    became_accessible: bool,
+    new_accessible: bool,
 }
 
 /// A struct that represents a world.
@@ -1116,7 +1135,28 @@ impl World {
                 self.untrack_navigating_mob(entity_id);
                 continue;
             };
-            let Some(pathfinder) = entity.as_pathfinder_mob() else {
+            let recomputed = entity.with_pathfinder_mob(|pathfinder| {
+                if !pathfinder.is_path_finding() {
+                    return;
+                }
+
+                let should_recompute = {
+                    let navigation = pathfinder.mob_base().navigation().lock();
+                    navigation.should_recompute_path(pos, pathfinder.position())
+                };
+                if !should_recompute {
+                    return;
+                }
+
+                let request = {
+                    let mut navigation = pathfinder.mob_base().navigation().lock();
+                    navigation.request_recompute_path(game_time, pathfinder.can_update_path())
+                };
+                if let Some(request) = request {
+                    pathfinder.recompute_path(request);
+                }
+            });
+            if recomputed.is_none() {
                 self.untrack_navigating_mob(entity_id);
                 continue;
             };
@@ -1367,6 +1407,7 @@ impl World {
             let _span = tracing::trace_span!("player_tick").entered();
             let start = Instant::now();
             self.players.iter_players(|_uuid, player| {
+                player.drain_inbound();
                 player.tick();
                 if runs_normally && !player.is_passenger() {
                     let dirty_chunks = self.entity_manager.tick_vehicle_passengers_for_root(
@@ -1954,7 +1995,7 @@ impl World {
     pub fn broadcast_chat(
         &self,
         mut packet: CPlayerChat,
-        _sender: Arc<Player>,
+        _sender: Arc<SyncMutex<Player>>,
         sender_last_seen: LastSeen,
         message_signature: Option<&[u8; 256]>,
     ) {
@@ -2337,15 +2378,19 @@ impl World {
             let vz = triangle_random(0.0, VELOCITY_SPREAD);
 
             let entity_id = next_entity_id();
-            let entity = Arc::new(ItemEntity::with_item_and_velocity(
+            let entity = ItemEntity::with_item_and_velocity(
                 &vanilla_entities::ITEM,
                 entity_id,
                 DVec3::new(x, y, z),
                 split_stack,
                 DVec3::new(vx, vy, vz),
                 Arc::downgrade(self),
-            ));
-            entity.set_default_pickup_delay();
+            );
+            {
+                let mut entity = entity.lock_entity();
+                let entity: &mut ItemEntity = entity.downcast().unwrap();
+                entity.set_default_pickup_delay();
+            }
             if let Err(error) = self.try_add_entity(entity) {
                 log::warn!("Failed to drop item stack entity: {error}");
             }
@@ -3301,8 +3346,20 @@ impl World {
     }
 
     pub(crate) fn add_entity_to_tracker(self: &Arc<Self>, entity: &SharedEntity) {
+        self.add_entity_to_tracker_with_entity(entity, None);
+    }
+
+    /// Adds an entity to the tracker, threading an already-locked concrete entity when the
+    /// triggering move holds the behavior lock (e.g. a section change during `tick`), so the
+    /// tracker reuses it instead of re-entering the behavior mutex.
+    pub(crate) fn add_entity_to_tracker_with_entity(
+        self: &Arc<Self>,
+        entity: &SharedEntity,
+        locked_entity: Option<&mut dyn crate::entity::Entity>,
+    ) {
         self.entity_tracker.add(
             entity,
+            locked_entity,
             |chunk| self.player_area_map.get_tracking_players(chunk),
             |id| self.players.get_by_entity_id(id),
         );
@@ -3504,7 +3561,7 @@ impl World {
     /// This is a convenience method for dropping items in the world.
     ///
     /// Returns `None` if the item stack is empty.
-    pub fn spawn_item(self: &Arc<Self>, pos: DVec3, item: ItemStack) -> Option<Arc<ItemEntity>> {
+    pub fn spawn_item(self: &Arc<Self>, pos: DVec3, item: ItemStack) -> Option<SharedEntity> {
         // Default ItemEntity velocity: random horizontal scatter + upward pop
         let vx = rand::random::<f64>() * 0.2 - 0.1;
         let vy = 0.2;
@@ -3520,7 +3577,7 @@ impl World {
         pos: DVec3,
         item: ItemStack,
         velocity: DVec3,
-    ) -> Option<Arc<ItemEntity>> {
+    ) -> Option<SharedEntity> {
         use crate::entity::next_entity_id;
 
         if item.is_empty() {
@@ -3528,14 +3585,14 @@ impl World {
         }
 
         let entity_id = next_entity_id();
-        let entity = Arc::new(ItemEntity::with_item_and_velocity(
+        let entity = ItemEntity::with_item_and_velocity(
             &vanilla_entities::ITEM,
             entity_id,
             pos,
             item,
             velocity,
             Arc::downgrade(self),
-        ));
+        );
         if let Err(error) = self.try_add_entity(entity.clone()) {
             log::warn!("Failed to spawn item entity: {error}");
             return None;
@@ -3548,11 +3605,7 @@ impl World {
     /// Mirrors vanilla's `Block.popResource()`. Used for block drops.
     /// The item spawns near the center of the block with slight random offset
     /// and small random velocity.
-    pub fn pop_resource(
-        self: &Arc<Self>,
-        pos: BlockPos,
-        item: ItemStack,
-    ) -> Option<Arc<ItemEntity>> {
+    pub fn pop_resource(self: &Arc<Self>, pos: BlockPos, item: ItemStack) -> Option<SharedEntity> {
         use steel_registry::vanilla_entities;
 
         if item.is_empty() {
@@ -3573,7 +3626,11 @@ impl World {
         let z = f64::from(pos.z()) + 0.5 + (rand::random::<f64>() - 0.5) * 0.5;
 
         let entity = self.spawn_item(DVec3::new(x, y, z), item)?;
-        entity.set_default_pickup_delay();
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut ItemEntity = entity.downcast().unwrap();
+            entity.set_default_pickup_delay();
+        }
         Some(entity)
     }
 
@@ -3586,7 +3643,7 @@ impl World {
         pos: BlockPos,
         face: Direction,
         item: ItemStack,
-    ) -> Option<Arc<ItemEntity>> {
+    ) -> Option<SharedEntity> {
         use steel_registry::vanilla_entities;
 
         if item.is_empty() {
@@ -3644,7 +3701,11 @@ impl World {
             item,
             DVec3::new(delta_x, delta_y, delta_z),
         )?;
-        entity.set_default_pickup_delay();
+        {
+            let mut entity = entity.lock_entity();
+            let entity: &mut ItemEntity = entity.downcast().unwrap();
+            entity.set_default_pickup_delay();
+        }
         Some(entity)
     }
 
@@ -3706,9 +3767,9 @@ impl World {
         position: DVec3,
         max_distance: f64,
         mut predicate: impl FnMut(&Player) -> bool,
-    ) -> Option<Arc<Player>> {
+    ) -> Option<Arc<SyncMutex<Player>>> {
         let max_distance_sqr = max_distance * max_distance;
-        let mut nearest: Option<(Arc<Player>, f64)> = None;
+        let mut nearest: Option<(Arc<SyncMutex<Player>>, f64)> = None;
         self.players.iter_players(|_, player| {
             if predicate(player) {
                 let distance_sqr = player.position().distance_squared(position);
@@ -3749,7 +3810,7 @@ impl World {
     #[must_use]
     pub fn get_pushable_entities(
         &self,
-        pusher: &dyn Entity,
+        pusher: SharedEntity,
         aabb: &WorldAabb,
     ) -> Vec<SharedEntity> {
         self.get_entities_in_aabb(aabb)
@@ -3894,11 +3955,10 @@ impl ScheduledTickAccess for Arc<World> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Weak};
+    use std::sync::Weak;
 
     use steel_registry::entity_type::EntityTypeRef;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
-    use uuid::Uuid;
 
     use crate::entity::{EntityBase, entities::PigEntity};
 
@@ -3907,25 +3967,23 @@ mod tests {
     static SPLIT_BLOCK: &[BlockLocalAabb] = &[FIRST_HALF, SECOND_HALF];
 
     struct TrackerTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
     }
 
     impl TrackerTestEntity {
-        fn shared(id: i32) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::with_uuid(
-                    id,
-                    Uuid::from_u128(id as u128),
-                    DVec3::ZERO,
-                    vanilla_entities::ITEM.dimensions,
-                    Weak::new(),
-                ),
-            })
+        fn shared() -> SharedEntity {
+            EntityBase::pack_with(
+                crate::entity::next_entity_id(),
+                DVec3::ZERO,
+                vanilla_entities::ITEM.dimensions,
+                std::sync::Weak::new(),
+                |base| Self { base },
+            )
         }
     }
 
     impl Entity for TrackerTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -3979,13 +4037,13 @@ mod tests {
         init_test_registry();
 
         let tracker = NavigatingMobTracker::new();
-        let non_pathfinder = TrackerTestEntity::shared(1);
-        let pig: SharedEntity = Arc::new(PigEntity::new(
+        let non_pathfinder = TrackerTestEntity::shared();
+        let pig = PigEntity::new(
             &vanilla_entities::PIG,
             2,
             DVec3::ZERO,
-            Weak::new(),
-        ));
+            std::sync::Weak::new(),
+        );
 
         tracker.track(&non_pathfinder);
         assert!(tracker.ids().is_empty());

@@ -50,11 +50,12 @@ impl TargetGoalBase {
         let Some(target) = mob.target().or_else(|| self.target_mob.clone()) else {
             return false;
         };
-        let Some(target_living) = target.as_living_entity() else {
-            return false;
-        };
-
-        if !mob.can_attack(target_living) || mob.is_allied_to(target_living) {
+        let attackable = target
+            .with_living(|target_living| {
+                mob.can_attack(target_living) && !mob.is_allied_to(target_living)
+            })
+            .unwrap_or(false);
+        if !attackable {
             return false;
         }
 
@@ -63,7 +64,11 @@ impl TargetGoalBase {
             return false;
         }
 
-        if self.must_see && !self.update_unseen_ticks(mob, target_living) {
+        if self.must_see
+            && !target
+                .with_living(|target_living| self.update_unseen_ticks(mob, target_living))
+                .unwrap_or(false)
+        {
             return false;
         }
 
@@ -150,7 +155,7 @@ fn follow_distance(mob: &dyn PathfinderMob) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::sync::Weak;
 
     use glam::DVec3;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
@@ -159,33 +164,25 @@ mod tests {
     use crate::entity::ai::targeting::TargetingConditions;
     use crate::entity::{Mob, entities::PigEntity};
 
-    fn pig(id: i32, position: DVec3) -> Arc<PigEntity> {
-        Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            id,
-            position,
-            Weak::new(),
-        ))
+    fn pig(id: i32, position: DVec3) -> PigEntity {
+        PigEntity::create(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
-    fn target_living(target: &SharedEntity) -> &dyn LivingEntity {
-        let Some(living) = target.as_living_entity() else {
-            panic!("test target should be a living entity");
-        };
-        living
+    fn shared_pig(id: i32, position: DVec3) -> SharedEntity {
+        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     #[test]
     fn target_goal_base_continues_with_existing_mob_target() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(false, false);
 
         goal.start();
 
-        assert!(goal.can_continue_to_use(mob.as_ref()));
+        assert!(goal.can_continue_to_use(&mob));
         let Some(stored_target) = mob.target() else {
             panic!("target should remain set");
         };
@@ -196,12 +193,12 @@ mod tests {
     fn target_goal_base_restores_stored_target_while_continuing() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, false);
         goal.set_target_mob(Some(target.clone()));
 
         assert!(mob.target().is_none());
-        assert!(goal.can_continue_to_use(mob.as_ref()));
+        assert!(goal.can_continue_to_use(&mob));
 
         let Some(stored_target) = mob.target() else {
             panic!("stored target should be copied onto the mob");
@@ -213,26 +210,26 @@ mod tests {
     fn target_goal_base_forgets_unseen_target_after_memory_ticks() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(true, false);
         goal.set_unseen_memory_ticks(2);
         goal.start();
 
-        assert!(goal.can_continue_to_use(mob.as_ref()));
-        assert!(!goal.can_continue_to_use(mob.as_ref()));
+        assert!(goal.can_continue_to_use(&mob));
+        assert!(!goal.can_continue_to_use(&mob));
     }
 
     #[test]
     fn target_goal_base_stop_clears_mob_and_stored_target() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(false, false);
         goal.set_target_mob(Some(target));
 
-        goal.stop(mob.as_ref());
+        goal.stop(&mob);
 
         assert!(mob.target().is_none());
         assert!(goal.target_mob.is_none());
@@ -242,29 +239,36 @@ mod tests {
     fn target_goal_base_can_attack_requires_world() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, false);
         let target_conditions = TargetingConditions::for_combat().ignore_line_of_sight();
 
-        assert!(!goal.can_attack(
-            mob.as_ref(),
-            Some(target_living(&target)),
-            &target_conditions
-        ));
+        let can_attack = target
+            .with_living(|living| goal.can_attack(&mob, Some(living), &target_conditions))
+            .unwrap();
+        assert!(!can_attack);
     }
 
     #[test]
     fn target_goal_base_caches_unreachable_targets() {
         init_test_registry();
         let mob = pig(1, DVec3::ZERO);
-        let target: SharedEntity = pig(2, DVec3::new(2.0, 0.0, 0.0));
+        let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, true);
 
-        assert!(!goal.can_reach(mob.as_ref(), target_living(&target)));
+        assert!(
+            !target
+                .with_living(|living| goal.can_reach(&mob, living))
+                .unwrap()
+        );
         assert_eq!(goal.reach_cache, ReachCache::CantReach);
         let first_reach_cache_time = goal.reach_cache_time;
 
-        assert!(!goal.can_reach(mob.as_ref(), target_living(&target)));
+        assert!(
+            !target
+                .with_living(|living| goal.can_reach(&mob, living))
+                .unwrap()
+        );
         assert_eq!(goal.reach_cache, ReachCache::CantReach);
         assert_eq!(goal.reach_cache_time, first_reach_cache_time - 1);
     }

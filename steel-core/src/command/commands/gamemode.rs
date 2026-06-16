@@ -1,5 +1,6 @@
 //! Handler for the "gamemode" command.
 use crate::command::arguments::gamemode::GameModeArgument;
+use steel_utils::locks::SyncMutex;
 use crate::command::arguments::player::PlayerArgument;
 use crate::command::commands::{
     CommandExecutor, CommandHandlerBuilder, CommandHandlerDyn, argument,
@@ -49,7 +50,7 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
             .ok_or(CommandError::InvalidRequirement)?;
 
         // Set the player's game mode
-        player.set_game_mode(gamemode);
+        player.lock().set_game_mode(gamemode);
 
         Ok(())
     }
@@ -57,10 +58,10 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
 
 struct GameModeTargetCommandExecutor;
 
-impl CommandExecutor<(((), GameType), Vec<Arc<Player>>)> for GameModeTargetCommandExecutor {
+impl CommandExecutor<(((), GameType), Vec<Arc<SyncMutex<Player>>>)> for GameModeTargetCommandExecutor {
     fn execute(
         &self,
-        args: (((), GameType), Vec<Arc<Player>>),
+        args: (((), GameType), Vec<Arc<SyncMutex<Player>>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let (((), gamemode), targets) = args;
@@ -68,10 +69,10 @@ impl CommandExecutor<(((), GameType), Vec<Arc<Player>>)> for GameModeTargetComma
         let mode_translation = get_gamemode_translation(gamemode);
 
         for target in targets {
-            if target.set_game_mode(gamemode) {
+            if target.lock().set_game_mode(gamemode) {
                 // Send feedback to sender if sender is not the target
                 let sender_is_target = if let Some(sender_player) = context.sender.get_player() {
-                    sender_player.id() == target.id()
+                    sender_player.lock().id() == target.lock().id()
                 } else {
                     false
                 };
@@ -80,7 +81,7 @@ impl CommandExecutor<(((), GameType), Vec<Arc<Player>>)> for GameModeTargetComma
                     context.sender.send_message(
                         &translations::COMMANDS_GAMEMODE_SUCCESS_OTHER
                             .message([
-                                TextComponent::plain(target.gameprofile.name.clone()),
+                                TextComponent::plain(target.lock().gameprofile.name.clone()),
                                 TextComponent::from(mode_translation),
                             ])
                             .into(),

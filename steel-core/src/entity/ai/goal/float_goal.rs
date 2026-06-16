@@ -29,7 +29,7 @@ impl Goal for FloatGoal {
         true
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         if mob.base().random().lock().next_f32() < FLOAT_JUMP_CHANCE {
             mob.mob_base().controls().lock().jump_control.jump();
         }
@@ -38,7 +38,7 @@ impl Goal for FloatGoal {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Weak;
+    use std::sync::{Arc, Weak};
 
     use glam::DVec3;
     use steel_registry::entity_type::EntityTypeRef;
@@ -51,7 +51,7 @@ mod tests {
     };
 
     struct TestPathfinderMob {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         living_base: LivingEntityBase,
         mob_base: MobBase,
         mob_flags: SyncMutex<i8>,
@@ -61,20 +61,23 @@ mod tests {
     impl TestPathfinderMob {
         fn new(water_height: f64, lava_height: f64) -> Self {
             init_test_registry();
-            let base = EntityBase::new(
+            let base = Arc::new(EntityBase::new(
                 1,
                 DVec3::ZERO,
                 vanilla_entities::PIG.dimensions,
                 Weak::new(),
-            );
+            ));
             base.set_fluid_contact(EntityFluidContact::from_parts(
                 water_height,
                 lava_height,
                 false,
                 false,
             ));
+            let base_weak = Arc::downgrade(&base);
+            // Leak the base so the weak back-reference stays upgradable.
+            std::mem::forget(base);
             Self {
-                base,
+                base: base_weak,
                 living_base: LivingEntityBase::new(&vanilla_entities::PIG),
                 mob_base: MobBase::new(),
                 mob_flags: SyncMutex::new(0),
@@ -84,7 +87,7 @@ mod tests {
     }
 
     impl Entity for TestPathfinderMob {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -102,7 +105,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health;
         }
     }
@@ -116,7 +119,7 @@ mod tests {
             *self.mob_flags.lock()
         }
 
-        fn set_mob_flags(&self, flags: i8) {
+        fn set_mob_flags(&mut self, flags: i8) {
             *self.mob_flags.lock() = flags;
         }
     }

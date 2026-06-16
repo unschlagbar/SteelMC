@@ -146,7 +146,7 @@ impl BlockBehavior for FireBlock {
         _state: BlockStateId,
         _world: &Arc<World>,
         _pos: BlockPos,
-        _entity: &dyn Entity,
+        _entity: &mut dyn Entity,
         effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {
@@ -223,7 +223,7 @@ impl BlockBehavior for SoulFireBlock {
         _state: BlockStateId,
         _world: &Arc<World>,
         _pos: BlockPos,
-        _entity: &dyn Entity,
+        _entity: &mut dyn Entity,
         effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {

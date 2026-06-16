@@ -651,7 +651,7 @@ impl LivingEntityBase {
             .attributes
             .lock()
             .required_value(vanilla_attributes::MAX_HEALTH) as f32;
-        entity_data.living_entity_mut().health.set(max_health);
+        entity_data.living_entity_mut().set_health(max_health);
     }
 
     /// Returns vanilla `LivingEntity.equipment` storage.
@@ -1463,9 +1463,9 @@ fn living_entity_from_weak(entity: &mut Option<WeakEntity>) -> Option<SharedEnti
 }
 
 fn living_is_dead(entity: &SharedEntity) -> bool {
-    entity
-        .as_living_entity()
-        .is_none_or(|living| !LivingEntity::is_alive(living))
+    !entity
+        .with_living(|living| LivingEntity::is_alive(living))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

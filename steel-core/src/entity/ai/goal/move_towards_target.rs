@@ -63,11 +63,11 @@ impl Goal for MoveTowardsTargetGoal {
             && target.position().distance_squared(mob.position()) < self.within_distance_sqr()
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.target = None;
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if let Some(wanted_position) = self.wanted_position {
             mob.move_to_pos(wanted_position, self.speed_modifier);
         }
@@ -76,7 +76,7 @@ impl Goal for MoveTowardsTargetGoal {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::sync::Weak;
 
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
@@ -94,7 +94,7 @@ mod tests {
     fn move_towards_target_goal_requires_target() {
         init_test_registry();
         let mut goal = MoveTowardsTargetGoal::new(1.0, 16.0);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mob));
     }
@@ -103,13 +103,13 @@ mod tests {
     fn move_towards_target_goal_rejects_target_outside_range() {
         init_test_registry();
         let mut goal = MoveTowardsTargetGoal::new(1.0, 8.0);
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let target: SharedEntity = Arc::new(PigEntity::new(
+        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let target: SharedEntity = PigEntity::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(9.0, 0.0, 0.0),
             Weak::new(),
-        ));
+        );
         assert!(mob.set_target(Some(&target)));
 
         assert!(!goal.can_use(&mob));

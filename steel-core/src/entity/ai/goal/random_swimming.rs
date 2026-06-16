@@ -38,11 +38,11 @@ impl Goal for RandomSwimmingGoal {
         self.stroll.can_continue_to_use(mob)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.stroll.start(mob);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.stroll.stop(mob);
     }
 }

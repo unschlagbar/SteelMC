@@ -6,6 +6,7 @@ pub mod error;
 pub mod sender;
 
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use steel_protocol::packets::game::{CCommandSuggestions, CCommands, CommandNode, SuggestionEntry};
 use text_components::{Modifier, TextComponent, format::Color};
@@ -183,14 +184,16 @@ impl CommandDispatcher {
     /// Handles a command suggestion request from a player.
     pub fn handle_player_suggestions(
         &self,
-        player: &Arc<Player>,
+        player: &Arc<SyncMutex<Player>>,
         id: i32,
         command: &str,
         server: Arc<Server>,
     ) {
         let (suggestions, start, length) =
             self.handle_suggestions(CommandSender::Player(Arc::clone(player)), command, server);
-        player.send_packet(CCommandSuggestions::new(id, start, length, suggestions));
+        player
+            .lock()
+            .send_packet(CCommandSuggestions::new(id, start, length, suggestions));
     }
 
     /// Handles a command suggestion request from a player.

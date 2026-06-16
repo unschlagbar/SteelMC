@@ -3,7 +3,7 @@
 //! Used by both `blocks.rs` and `items.rs` build scripts to parse `#[json_arg]`
 //! attributes and generate constructor arguments from `classes.json`.
 
-use heck::ToPascalCase;
+use heck::{ToPascalCase, ToUpperCamelCase};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use std::collections::HashMap;
@@ -292,6 +292,9 @@ pub(crate) fn extract_class_name(attr: &syn::Attribute, attribute_name: &str) ->
             let value = meta.value()?;
             let lit: syn::LitStr = value.parse()?;
             class_name = Some(lit.value());
+        } else if let Ok(value) = meta.value() {
+            // Consume and ignore any other value-bearing keys (e.g. `identifier`).
+            let _: syn::Lit = value.parse()?;
         }
         Ok(())
     })
@@ -326,7 +329,7 @@ pub(crate) fn scan_object_behaviors_with_pattern(
             if let syn::Item::Struct(s) = item
                 && let Some(info) = parse_object_behavior(s, attribute_name)
             {
-                let class_name = info.class_name.clone();
+                let class_name = info.class_name.to_upper_camel_case();
                 discovered.insert(class_name, info);
             }
         }

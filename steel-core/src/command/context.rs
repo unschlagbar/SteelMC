@@ -1,5 +1,6 @@
 //! This module contains the command context.
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use glam::DVec3;
 
@@ -15,7 +16,7 @@ pub struct CommandContext {
     /// The sender of the command.
     pub sender: CommandSender,
     /// The player targeted by the command.
-    pub player: Option<Arc<Player>>,
+    pub player: Option<Arc<SyncMutex<Player>>>,
     /// The world the command is executing in.
     pub world: Arc<World>,
     /// The server where the command has been run.
@@ -45,7 +46,7 @@ impl CommandContext {
         let player = sender.get_player().cloned();
         let world = player
             .as_ref()
-            .map_or(server.overworld().clone(), |p| p.get_world());
+            .map_or(server.overworld().clone(), |p| p.lock().get_world());
         let world_spawn = world.level_data.read().data().spawn.clone();
         let position = player
             .as_ref()
@@ -57,7 +58,7 @@ impl CommandContext {
                     f64::from(world_spawn.y),
                     f64::from(world_spawn.z),
                 ),
-                |p| p.position(),
+                |p| p.lock().position(),
             );
 
         Self {

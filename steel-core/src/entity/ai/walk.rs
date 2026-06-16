@@ -1230,7 +1230,7 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_open_doors_from_navigation() {
         init_test_registry();
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.mob_base().navigation().lock().set_can_open_doors(true);
 
         let settings = MobPathSettings::from_mob(&pig);
@@ -1241,7 +1241,7 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_walk_over_fences_from_navigation() {
         init_test_registry();
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.mob_base()
             .navigation()
             .lock()

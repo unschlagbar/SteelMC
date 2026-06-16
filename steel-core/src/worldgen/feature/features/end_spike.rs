@@ -1,12 +1,12 @@
 use std::f64::consts::PI;
-use std::sync::Arc;
 
 use glam::DVec3;
 use steel_registry::vanilla_entities;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
-use crate::entity::{Entity, entities::EndCrystalEntity, next_entity_id};
+use crate::entity::entities::EndCrystalEntity;
+use crate::entity::next_entity_id;
 
 const END_SPIKE_COUNT: usize = 10;
 const END_SPIKE_DISTANCE: f64 = 42.0;
@@ -176,20 +176,25 @@ impl FeatureDecorationRunner {
             f64::from(spike.height + 1),
             f64::from(spike.center_z) + 0.5,
         );
-        let crystal = Arc::new(EndCrystalEntity::new(
+        let crystal = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             position,
-            region.weak_world(),
-        ));
-        crystal.set_beam_target(
-            config
-                .crystal_beam_target
-                .map(|[x, y, z]| BlockPos::new(x, y, z)),
+            std::sync::Weak::new(),
         );
+        {
+            let mut crystal = crystal.lock_entity();
+            let crystal: &mut EndCrystalEntity = crystal.downcast().unwrap();
+
+            crystal.set_beam_target(
+                config
+                    .crystal_beam_target
+                    .map(|[x, y, z]| BlockPos::new(x, y, z)),
+            );
+            crystal.snap_to(position, random.next_f32() * 360.0, 0.0);
+        }
         crystal.set_invulnerable(config.crystal_invulnerable);
-        crystal.snap_to(position, random.next_f32() * 360.0, 0.0);
-        let _ = region.add_fresh_entity(crystal);
+        let _ = region.add_fresh_entity(crystal, position);
 
         let crystal_pos = BlockPos::from(position);
         let bedrock = REGISTRY

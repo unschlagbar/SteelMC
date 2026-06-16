@@ -2,12 +2,12 @@
 
 use rustc_hash::FxHashSet;
 
-use super::{Entity, SharedEntity};
+use super::{EntityBase, SharedEntity};
 
 /// Snapshots vanilla old position and rotation before an entity tick.
-pub(crate) fn snapshot_old_pos_and_rot_for_tick(entity: &dyn Entity) {
-    entity.set_old_position_to_current();
-    entity.base().set_old_rotation_to_current();
+pub(crate) fn snapshot_old_pos_and_rot_for_tick(base: &EntityBase) {
+    base.set_old_position_to_current();
+    base.set_old_rotation_to_current();
 }
 
 /// Recursively ticks vehicle passengers that are eligible in the caller's tick context.
@@ -15,7 +15,7 @@ pub(crate) fn snapshot_old_pos_and_rot_for_tick(entity: &dyn Entity) {
 /// Mirrors vanilla `ServerLevel.tickPassenger`: invalid vehicle links are detached, and
 /// passengers only recurse when the server-level entity tick list says they may tick.
 pub(crate) fn tick_vehicle_passengers_with_ticked_if(
-    vehicle: &dyn Entity,
+    vehicle: &EntityBase,
     ticked_entities: &mut FxHashSet<i32>,
     post_tick: &mut impl FnMut(&SharedEntity),
     can_tick: &mut impl FnMut(&SharedEntity) -> bool,
@@ -36,7 +36,7 @@ pub(crate) fn tick_vehicle_passengers_with_ticked_if(
 }
 
 fn tick_passenger(
-    vehicle: &dyn Entity,
+    vehicle: &EntityBase,
     entity: &SharedEntity,
     ticked_entities: &mut FxHashSet<i32>,
     post_tick: &mut impl FnMut(&SharedEntity),
@@ -60,14 +60,14 @@ fn tick_passenger(
     }
 
     if can_tick(entity) && ticked_entities.insert(entity.id()) {
-        snapshot_old_pos_and_rot_for_tick(entity.as_ref());
+        snapshot_old_pos_and_rot_for_tick(entity);
         entity.advance_tick_count();
-        entity.ride_tick();
+        entity.ride_tick_entity();
         post_tick(entity);
 
         for passenger in entity.passengers() {
             tick_passenger(
-                entity.as_ref(),
+                entity,
                 &passenger,
                 ticked_entities,
                 post_tick,

@@ -67,7 +67,7 @@ impl Goal for FleeSunGoal {
         !mob.mob_base().navigation().lock().is_done()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(wanted_position) = self.wanted_position else {
             return;
         };
@@ -93,7 +93,8 @@ fn get_hide_pos_with(
 
     for _ in 0..HIDE_POS_ATTEMPTS {
         let random_pos = {
-            let mut random = mob.base().random().lock();
+            let mob_base = mob.base();
+            let mut random = mob_base.random().lock();
             pos.offset(
                 random.next_i32_bounded(20) - 10,
                 random.next_i32_bounded(6) - 3,
@@ -120,7 +121,7 @@ mod tests {
     use crate::entity::entities::PigEntity;
 
     fn pig() -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
     }
 
     #[test]

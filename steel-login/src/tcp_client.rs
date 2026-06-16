@@ -454,11 +454,10 @@ impl JavaTcpClient {
             drop(connection_updates_recv);
 
             if let Some(connection) = connection {
-                let server = self_clone.server.clone();
                 drop(self_clone);
 
                 match &*connection {
-                    PlayerConnection::Java(java) => java.listener(reader, server).await,
+                    PlayerConnection::Java(java) => java.listener(reader).await,
                     PlayerConnection::Other(_) => unreachable!("Expected Java connection"),
                 }
             }

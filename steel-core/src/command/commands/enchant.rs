@@ -4,6 +4,7 @@
 // TODO: Support all LivingEntity targets when the entity system supports it
 use std::borrow::Cow;
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use steel_registry::enchantment::{Enchantment, EnchantmentRef};
 use steel_utils::translations;
@@ -34,7 +35,10 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         argument("targets", PlayerArgument::multiple()).then(
             argument("enchantment", EnchantmentArgument)
                 .executes(
-                    |(((), targets), enchantment): (((), Vec<Arc<Player>>), EnchantmentRef),
+                    |(((), targets), enchantment): (
+                        ((), Vec<Arc<SyncMutex<Player>>>),
+                        EnchantmentRef,
+                    ),
                      ctx: &mut CommandContext| {
                         enchant(&targets, enchantment, 1, ctx)
                     },
@@ -43,7 +47,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     argument("level", IntegerArgument::bounded(Some(0), None)).executes(
                         #[expect(clippy::type_complexity, reason = "command framework pattern")]
                         |((((), targets), enchantment), level): (
-                            (((), Vec<Arc<Player>>), EnchantmentRef),
+                            (((), Vec<Arc<SyncMutex<Player>>>), EnchantmentRef),
                             i32,
                         ),
                          ctx: &mut CommandContext| {
@@ -56,7 +60,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 }
 
 fn enchant(
-    targets: &[Arc<Player>],
+    targets: &[Arc<SyncMutex<Player>>],
     enchantment: EnchantmentRef,
     level: i32,
     ctx: &mut CommandContext,
@@ -76,14 +80,15 @@ fn enchant(
     let enchantment_key = enchantment.key.clone();
 
     for target in targets {
-        let mut inv = target.inventory.lock();
+        let inventory = target.lock().inventory.clone();
+        let mut inv = inventory.lock();
         let item = inv.get_selected_item();
 
         if item.is_empty() {
             if targets.len() == 1 {
                 return Err(CommandError::CommandFailed(Box::new(
                     translations::COMMANDS_ENCHANT_FAILED_ITEMLESS
-                        .message([TextComponent::from(target.gameprofile.name.clone())])
+                        .message([TextComponent::from(target.lock().gameprofile.name.clone())])
                         .into(),
                 )));
             }
@@ -122,7 +127,7 @@ fn enchant(
             &translations::COMMANDS_ENCHANT_SUCCESS_SINGLE
                 .message([
                     enchantment_name,
-                    TextComponent::from(targets[0].gameprofile.name.clone()),
+                    TextComponent::from(targets[0].lock().gameprofile.name.clone()),
                 ])
                 .into(),
         );

@@ -37,16 +37,14 @@ fn list_players(context: &mut CommandContext, show_uuids: bool) {
         .get_players()
         .iter()
         .map(|player| {
+            let profile = player.lock().gameprofile.clone();
             if show_uuids {
                 COMMANDS_LIST_NAME_AND_ID
-                    .message([
-                        player.gameprofile.name.clone(),
-                        player.gameprofile.id.to_string(),
-                    ])
+                    .message([profile.name.clone(), profile.id.to_string()])
                     .component()
                     .to_string()
             } else {
-                player.gameprofile.name.clone()
+                profile.name.clone()
             }
         })
         .collect::<Vec<String>>()

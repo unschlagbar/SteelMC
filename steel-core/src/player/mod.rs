@@ -29,7 +29,9 @@ pub mod player_inventory;
 pub mod profile_key;
 mod signature_cache;
 mod teleport_state;
+pub mod server_player;
 mod tick_state;
+pub mod view;
 
 pub use abilities::Abilities;
 use chat_state::ChatState;
@@ -48,6 +50,7 @@ use steel_protocol::{
 };
 use teleport_state::TeleportState;
 use tick_state::PlayerTickState;
+use view::PlayerView;
 
 use block_breaking::BlockBreakingManager;
 use enum_dispatch::enum_dispatch;
@@ -105,6 +108,9 @@ use steel_protocol::packets::{
 use steel_registry::item_stack::ItemStack;
 
 use steel_utils::{BlockPos, BlockStateId, ChunkPos, Identifier};
+
+use steel_protocol::utils::RawPacket;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::inventory::{MenuInstance, container::Container, inventory_menu::InventoryMenu};
 
@@ -173,6 +179,31 @@ use crate::player::networking::JavaConnection;
 use crate::portal::TeleportTransition;
 use crate::world::World;
 
+/// The `Arc`-shared slices of a player that concurrent loops (chunk sending,
+/// network) need to reach without holding `Arc<SyncMutex<Player>>`.
+///
+/// This mirrors vanilla's structure where the chunk sender holds the connection
+/// alongside the player handle. The game tick owns the `Player` itself; these
+/// loops hold a cheap clone of `PlayerShared` instead, so the player can later be
+/// owned and ticked through `&mut self`.
+#[derive(Clone)]
+pub struct PlayerShared {
+    /// Lock-free published view (chunk position, send epoch), written by the game tick.
+    pub view: Arc<PlayerView>,
+    /// The player's connection, for sending packets.
+    pub connection: Arc<PlayerConnection>,
+    /// Shared chunk-sending state, mutated by the game tick and chunk-send loop.
+    pub chunk_sender: Arc<SyncMutex<ChunkSender>>,
+}
+
+/// Shared handle to a player.
+///
+/// Like every other entity, a player is reached mutably by locking; the game
+/// tick and all cross-entity mutation lock this to obtain `&mut Player` and call
+/// the `&mut self` `Entity`/`LivingEntity` methods. Held by the player map, the
+/// connection, the inventory back-reference, and `EntityBase`.
+pub type SharedPlayer = Arc<SyncMutex<Player>>;
+
 /// A struct representing a player.
 pub struct Player {
     /// The player's game profile.
@@ -189,7 +220,9 @@ pub struct Player {
     pub(crate) config: Arc<RuntimeConfig>,
 
     /// Common entity fields (id, uuid, position, rotation, removal, callback).
-    base: EntityBase,
+    base: Arc<EntityBase>,
+    /// Downgraded copy of `base` for the `Entity::base_weak` accessor.
+    base_weak: Weak<EntityBase>,
 
     /// Client lifecycle flags.
     lifecycle: SyncMutex<PlayerLifecycleState>,
@@ -200,12 +233,23 @@ pub struct Player {
     /// Synchronized entity data (health, pose, flags, etc.) for network sync.
     entity_data: SyncMutex<PlayerEntityData>,
 
-    /// The last chunk position of the player.
-    pub last_chunk_pos: SyncMutex<ChunkPos>,
+    /// Lock-free published view of cross-loop state (chunk position, send epoch).
+    /// Written only by the game tick; read by the chunk and network loops.
+    pub view: Arc<PlayerView>,
+
+    /// Inbound game-state packets queued by the connection listener, drained and
+    /// applied on the game tick by [`Player::drain_inbound`] so that game state is
+    /// only ever mutated by a single thread.
+    inbound_rx: SyncMutex<UnboundedReceiver<RawPacket>>,
     /// The last chunk tracking view of the player.
     pub last_tracking_view: SyncMutex<Option<PlayerChunkView>>,
     /// The chunk sender for the player.
-    pub chunk_sender: SyncMutex<ChunkSender>,
+    ///
+    /// Shared (`Arc`) because it is touched by three contexts: the game tick
+    /// (queueing/dropping chunks), the chunk-sending loop (encoding/committing
+    /// batches), and the network task (batch acks). The chunk-sending loop reaches
+    /// it through a [`PlayerShared`] handle rather than `Arc<SyncMutex<Player>>`.
+    pub chunk_sender: Arc<SyncMutex<ChunkSender>>,
 
     /// The client's settings/information (language, view distance, chat visibility, etc.).
     /// Updated when the client sends `SClientInformation` during config or play phase.
@@ -258,10 +302,6 @@ pub struct Player {
     /// The Player's Experience
     pub experience: SyncMutex<Experience>,
 
-    /// Monotonic counter bumped on world teleport/reset. The chunk sending tick
-    /// snapshots this before encoding and compares after to detect stale batches.
-    pub chunk_send_epoch: SyncMutex<u32>,
-
     /// Persisted `RootVehicle` payload awaiting live entity restoration.
     pending_root_vehicle: SyncMutex<Option<PendingRootVehicleRestore>>,
 }
@@ -286,6 +326,15 @@ impl Player {
 
         let end_pos = start_pos + direction;
         (start_pos, end_pos)
+    }
+
+    /// Returns this player's entity handle.
+    ///
+    /// Use this wherever a player must flow into entity-typed storage or
+    /// parameters (goal targets, passenger lists, trackers).
+    #[must_use]
+    pub fn shared_entity(&self) -> SharedEntity {
+        self.base.clone()
     }
 
     /// Returns the player's current game mode.
@@ -319,8 +368,9 @@ impl Player {
         server: Weak<Server>,
         config: Arc<RuntimeConfig>,
         entity_id: i32,
-        player: &Weak<Player>,
+        player: &Weak<SyncMutex<Player>>,
         client_information: ClientInformation,
+        inbound_rx: UnboundedReceiver<RawPacket>,
     ) -> Self {
         // Create a single shared inventory container used by both the player and inventory menu
         let inventory = Arc::new(SyncMutex::new(PlayerInventory::new(player.clone())));
@@ -331,6 +381,19 @@ impl Player {
         let player_uuid = gameprofile.id;
         let world_ref = Arc::downgrade(&world);
 
+        let base = {
+            let mut base = EntityBase::with_uuid(
+                entity_id,
+                player_uuid,
+                pos,
+                Self::dimensions_for_pose(EntityPose::Standing),
+                world_ref,
+            );
+            base.attach_player(player.clone());
+            Arc::new(base)
+        };
+        let base_weak = Arc::downgrade(&base);
+
         Self {
             gameprofile,
             connection,
@@ -338,13 +401,8 @@ impl Player {
             world: ArcSwap::new(world),
             server,
             config,
-            base: EntityBase::with_uuid(
-                entity_id,
-                player_uuid,
-                pos,
-                Self::dimensions_for_pose(EntityPose::Standing),
-                world_ref,
-            ),
+            base,
+            base_weak,
             lifecycle: SyncMutex::new(PlayerLifecycleState::default()),
             movement: SyncMutex::new(MovementState::new()),
             entity_data: SyncMutex::new({
@@ -352,9 +410,10 @@ impl Player {
                 living_base.initialize_synced_data(&mut data);
                 data
             }),
-            last_chunk_pos: SyncMutex::new(ChunkPos::new(0, 0)),
+            view: Arc::new(PlayerView::new(ChunkPos::new(0, 0))),
+            inbound_rx: SyncMutex::new(inbound_rx),
             last_tracking_view: SyncMutex::new(None),
-            chunk_sender: SyncMutex::new(ChunkSender::default()),
+            chunk_sender: Arc::new(SyncMutex::new(ChunkSender::default())),
             client_information: SyncMutex::new(client_information),
             chat: SyncMutex::new(ChatState::new()),
             game_modes: SyncMutex::new(PlayerGameModeState::new(GameType::Survival)),
@@ -371,8 +430,35 @@ impl Player {
             food_data: SyncMutex::new(FoodData::new()),
             health_sync: SyncMutex::new(HealthSyncState::new()),
             experience: SyncMutex::new(Experience::default()),
-            chunk_send_epoch: SyncMutex::new(0),
             pending_root_vehicle: SyncMutex::new(None),
+        }
+    }
+
+    /// Builds the `Arc`-shared handle used by the concurrent chunk-sending and
+    /// network loops to reach this player without holding `Arc<SyncMutex<Player>>`.
+    #[must_use]
+    pub fn shared_handle(&self) -> PlayerShared {
+        PlayerShared {
+            view: Arc::clone(&self.view),
+            connection: Arc::clone(&self.connection),
+            chunk_sender: Arc::clone(&self.chunk_sender),
+        }
+    }
+
+    /// Drains and applies all queued inbound packets on the game tick.
+    ///
+    /// The connection listener enqueues game-state packets off the IO task; this
+    /// applies them here so player state is mutated by a single thread. Called at
+    /// the start of the player's tick.
+    pub fn drain_inbound(self: &Arc<Self>) {
+        let Some(server) = self.server.upgrade() else {
+            return;
+        };
+        let mut rx = self.inbound_rx.lock();
+        while let Ok(packet) = rx.try_recv() {
+            if let Err(err) = JavaConnection::apply_inbound_packet(self, packet, &server) {
+                log::warn!("Failed to apply inbound packet for player {}: {err}", self.id());
+            }
         }
     }
 
@@ -520,7 +606,7 @@ impl Player {
 
         if death_time >= DEATH_DURATION && !self.is_removed() {
             let world = self.get_world();
-            let chunk_pos = *self.last_chunk_pos.lock();
+            let chunk_pos = self.view.last_chunk_pos();
             world.broadcast_to_nearby(
                 chunk_pos,
                 CEntityEvent {
@@ -570,8 +656,11 @@ impl Player {
             living.effect_ambience.set(display.ambient);
         }
 
-        self.entity_data.set_base_invisible_flag(display.invisible);
         self.entity_data
+            .lock()
+            .set_base_invisible_flag(display.invisible);
+        self.entity_data
+            .lock()
             .set_base_glowing_flag(self.has_glowing_tag() || display.glowing);
     }
 
@@ -591,8 +680,8 @@ impl Player {
             return;
         }
 
-        let pusher = self as &dyn Entity;
-        let pushable_entities = world.get_pushable_entities(pusher, &self.bounding_box());
+        let pushable_entities =
+            world.get_pushable_entities(self.shared_entity(), &self.bounding_box());
         if pushable_entities.is_empty() {
             return;
         }
@@ -600,7 +689,7 @@ impl Player {
         self.apply_entity_cramming_damage(world, &pushable_entities);
 
         for entity in pushable_entities {
-            entity.push_entity(pusher);
+            entity.push_entity(self);
         }
     }
 
@@ -750,7 +839,7 @@ impl Player {
         let world = self.get_world();
 
         // Broadcast entity event 3 (death sound) to all nearby players.
-        let chunk_pos = *self.last_chunk_pos.lock();
+        let chunk_pos = self.view.last_chunk_pos();
         world.broadcast_to_nearby(
             chunk_pos,
             CEntityEvent {
@@ -1152,13 +1241,10 @@ impl Player {
 
         // Reset chunk tracking — bump generation counter so the chunk sending tick
         // discards any in-flight batch encoded against the old world.
-        {
-            let mut chunk_send_epoch = self.chunk_send_epoch.lock();
-            *chunk_send_epoch = chunk_send_epoch.wrapping_add(1);
-        }
+        self.view.bump_chunk_send_epoch();
         *self.chunk_sender.lock() = ChunkSender::default();
         *self.last_tracking_view.lock() = None;
-        *self.last_chunk_pos.lock() = ChunkPos::new(i32::MAX, i32::MAX);
+        self.view.set_last_chunk_pos(ChunkPos::new(i32::MAX, i32::MAX));
 
         restore_state();
 
@@ -1358,8 +1444,12 @@ pub enum ResetReason {
 }
 
 impl Entity for Player {
-    fn base(&self) -> &EntityBase {
-        &self.base
+    fn base_weak(&self) -> &Weak<EntityBase> {
+        &self.base_weak
+    }
+
+    fn base(&self) -> Arc<EntityBase> {
+        self.base.clone()
     }
 
     fn entity_type(&self) -> EntityTypeRef {
@@ -1416,7 +1506,7 @@ impl Entity for Player {
         }
     }
 
-    fn tick(&self) {
+    fn tick(&mut self) {
         // Player tick is handled separately by World::tick_game()
         // This is here for Entity trait compliance
     }
@@ -1585,7 +1675,7 @@ impl Entity for Player {
         Some(&self.entity_data)
     }
 
-    fn update_data_before_sync(&self) {
+    fn update_data_before_sync(&mut self) {
         self.update_dirty_mob_effect_entity_data();
     }
 
@@ -1687,13 +1777,13 @@ impl Entity for Player {
         }
     }
 
-    fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+    fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
         // Delegates to Player's inherent hurt method which handles
         // player-specific prechecks before the shared living hurt path.
         Player::hurt(self, source, amount)
     }
 
-    fn change_world(self: Arc<Self>, teleport_transition: &TeleportTransition) {
+    fn change_world(&self, teleport_transition: &TeleportTransition) {
         let new_world = teleport_transition.target_world.clone();
         if Arc::ptr_eq(&self.get_world(), &new_world) {
             let pos = teleport_transition.position;
@@ -1706,9 +1796,13 @@ impl Entity for Player {
             }
             self.reset_flying_ticks();
         } else {
-            self.reset(new_world, ResetReason::WorldChange);
+            let this = self
+                .base
+                .player()
+                .expect("player base must reference its player");
+            this.reset(new_world, ResetReason::WorldChange);
             // TODO: set portal cooldown from teleport_transition.portal_cooldown
-            if !self.spawn(
+            if !this.spawn(
                 teleport_transition.position,
                 teleport_transition.rotation,
                 ResetReason::WorldChange,
@@ -1726,7 +1820,7 @@ impl LivingEntity for Player {
         *self.entity_data.lock().living_entity().health.get()
     }
 
-    fn set_health(&self, health: f32) {
+    fn set_health(&mut self, health: f32) {
         let max_health = self.get_max_health();
         let clamped = health.clamp(0.0, max_health);
         self.entity_data
@@ -1757,15 +1851,15 @@ impl LivingEntity for Player {
         !self.has_client_loaded()
     }
 
-    fn actually_hurt(&self, source: &DamageSource, amount: f32) {
+    fn actually_hurt(&mut self, source: &DamageSource, amount: f32) {
         Player::actually_hurt(self, source, amount);
     }
 
     fn hurt_broadcast_chunk(&self) -> ChunkPos {
-        *self.last_chunk_pos.lock()
+        self.view.last_chunk_pos()
     }
 
-    fn die(&self, source: &DamageSource) {
+    fn die(&mut self, source: &DamageSource) {
         Player::die(self, source);
     }
 
@@ -1828,7 +1922,7 @@ impl LivingEntity for Player {
         }
     }
 
-    fn ai_step(&self) -> Option<MoveResult> {
+    fn ai_step(&mut self) -> Option<MoveResult> {
         if self.is_flying() && !self.is_passenger() {
             self.reset_fall_distance();
         }
@@ -1836,7 +1930,7 @@ impl LivingEntity for Player {
         self.default_ai_step()
     }
 
-    fn travel(&self, input: DVec3) -> Option<MoveResult> {
+    fn travel(&mut self, input: DVec3) -> Option<MoveResult> {
         if self.is_passenger() {
             return self.default_travel(input);
         }

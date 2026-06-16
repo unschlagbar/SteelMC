@@ -98,12 +98,18 @@ struct KeepAliveTracker {
 /// A connection to a Java client.
 pub struct JavaConnection {
     outgoing_packets: UnboundedSender<OutboundPacket>,
+    /// Inbound game-state packets queued for the game tick to apply.
+    ///
+    /// The listener decodes raw packets off the IO task and enqueues them here;
+    /// the owning player drains and applies them on the game tick, so game state
+    /// is only ever mutated by a single thread.
+    inbound_packets: UnboundedSender<RawPacket>,
     cancel_token: CancellationToken,
     compression: Option<CompressionInfo>,
     network_writer: JavaNetworkWriter,
     id: u64,
 
-    player: Weak<Player>,
+    player: Weak<SyncMutex<Player>>,
     keep_alive_tracker: SyncMutex<KeepAliveTracker>,
     latency: SyncMutex<u32>,
 }
@@ -112,14 +118,16 @@ impl JavaConnection {
     /// Creates a new `JavaConnection`.
     pub const fn new(
         outgoing_packets: UnboundedSender<OutboundPacket>,
+        inbound_packets: UnboundedSender<RawPacket>,
         cancel_token: CancellationToken,
         compression: Option<CompressionInfo>,
         network_writer: JavaNetworkWriter,
         id: u64,
-        player: Weak<Player>,
+        player: Weak<SyncMutex<Player>>,
     ) -> Self {
         Self {
             outgoing_packets,
+            inbound_packets,
             cancel_token,
             compression,
             network_writer,
@@ -291,16 +299,20 @@ impl JavaConnection {
         )
     }
 
-    /// Processes a packet from the client.
+    /// Applies a queued inbound packet to the player on the game tick.
+    ///
+    /// Called only from [`Player::drain_inbound`](crate::player::Player::drain_inbound),
+    /// so all game-state mutation happens on a single thread. Latency-sensitive
+    /// connection packets (keep-alive) are handled inline in [`Self::listener`] and
+    /// never reach here.
     #[expect(
         clippy::too_many_lines,
         reason = "single match dispatch over all play packets; splitting would hurt readability"
     )]
-    pub fn process_packet(
-        &self,
+    pub(crate) fn apply_inbound_packet(
+        player: &Arc<SyncMutex<Player>>,
         packet: RawPacket,
-        player: Arc<Player>,
-        server: Arc<Server>,
+        server: &Arc<Server>,
     ) -> Result<(), PacketError> {
         let data = &mut Cursor::new(packet.payload.as_slice());
 
@@ -328,7 +340,7 @@ impl JavaConnection {
                 player.handle_custom_payload(SCustomPayload::read_packet(data)?);
             }
             play::S_CHAT => {
-                player.handle_chat(SChat::read_packet(data)?, Arc::clone(&player));
+                player.handle_chat(SChat::read_packet(data)?, Arc::clone(player));
             }
             play::S_CHAT_SESSION_UPDATE => {
                 player.handle_chat_session_update(SChatSessionUpdate::read_packet(data)?);
@@ -349,9 +361,6 @@ impl JavaConnection {
                     .chunk_sender
                     .lock()
                     .on_chunk_batch_received_by_client(packet.desired_chunks_per_tick);
-            }
-            play::S_KEEP_ALIVE => {
-                self.handle_keep_alive(SKeepAlive::read_packet(data)?);
             }
             play::S_MOVE_PLAYER_POS => {
                 player.handle_move_player(SMovePlayerPos::read_packet(data)?.into());
@@ -377,15 +386,15 @@ impl JavaConnection {
             }
             play::S_CHAT_COMMAND => {
                 server.command_dispatcher.read().handle_command(
-                    CommandSender::Player(player),
+                    CommandSender::Player(Arc::clone(player)),
                     SChatCommand::read_packet(data)?.command,
-                    &server,
+                    server,
                 );
             }
             play::S_COMMAND_SUGGESTION => {
                 let packet = SCommandSuggestion::read_packet(data)?;
                 server.command_dispatcher.read().handle_player_suggestions(
-                    &player,
+                    player,
                     packet.id,
                     &packet.command,
                     server.clone(),
@@ -464,12 +473,30 @@ impl JavaConnection {
         Ok(())
     }
 
+    /// Handles a freshly decoded raw packet off the IO task.
+    ///
+    /// Keep-alive is connection-level and latency-sensitive, so it is processed
+    /// inline here. Every other packet is queued for the owning player to apply on
+    /// the game tick, keeping game-state mutation single-threaded.
+    fn dispatch_raw_packet(&self, packet: RawPacket) {
+        if packet.id == play::S_KEEP_ALIVE {
+            match SKeepAlive::read_packet(&mut Cursor::new(packet.payload.as_slice())) {
+                Ok(keep_alive) => self.handle_keep_alive(keep_alive),
+                Err(err) => {
+                    log::warn!("Failed to decode keep-alive from client {}: {err}", self.id);
+                }
+            }
+            return;
+        }
+
+        if self.inbound_packets.send(packet).is_err() {
+            // The receiving player has been dropped; nothing left to apply.
+            self.close();
+        }
+    }
+
     /// Listens for packets from the client.
-    pub async fn listener(
-        &self,
-        mut reader: TCPNetworkDecoder<BufReader<OwnedReadHalf>>,
-        server: Arc<Server>,
-    ) {
+    pub async fn listener(&self, mut reader: TCPNetworkDecoder<BufReader<OwnedReadHalf>>) {
         loop {
             select! {
                 () = self.wait_for_close() => {
@@ -477,15 +504,7 @@ impl JavaConnection {
                 }
                 packet = reader.get_raw_packet() => {
                     match packet {
-                        Ok(packet) => {
-                            if let Some(player) = self.player.upgrade()
-                                && let Err(err) = self.process_packet(packet, player, server.clone()) {
-                                log::warn!(
-                                    "Failed to get packet from client {}: {err}",
-                                    self.id
-                                );
-                            }
-                        }
+                        Ok(packet) => self.dispatch_raw_packet(packet),
                         Err(err) => {
                             log::debug!("Failed to get raw packet from client {}: {err}", self.id);
                             self.close();

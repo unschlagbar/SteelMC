@@ -1,6 +1,7 @@
 //! Experience Command
 
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use steel_utils::translations;
 use text_components::TextComponent;
@@ -28,13 +29,13 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("query").then(
             argument("target", PlayerArgument::multiple())
                 .then(literal("points").executes(
-                    |((), players): ((), Vec<Arc<Player>>), ctx: &mut CommandContext| {
+                    |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let points = { player.experience.lock().points() };
+                            let points = { player.lock().experience.lock().points() };
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_POINTS
                                     .message([
-                                        TextComponent::from(player.gameprofile.name.clone()),
+                                        TextComponent::from(player.lock().gameprofile.name.clone()),
                                         TextComponent::from(points.to_string()),
                                     ])
                                     .into(),
@@ -44,13 +45,13 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     },
                 ))
                 .then(literal("levels").executes(
-                    |((), players): ((), Vec<Arc<Player>>), ctx: &mut CommandContext| {
+                    |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let level = { player.experience.lock().level() };
+                            let level = { player.lock().experience.lock().level() };
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_LEVELS
                                     .message([
-                                        TextComponent::from(player.gameprofile.name.clone()),
+                                        TextComponent::from(player.lock().gameprofile.name.clone()),
                                         TextComponent::from(level.to_string()),
                                     ])
                                     .into(),
@@ -66,19 +67,19 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             argument("target", PlayerArgument::multiple()).then(
                 argument("amount", IntegerArgument::bounded(Some(0), None))
                     .executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Points, ctx)
                         },
                     )
                     .then(literal("points").executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Points, ctx)
                         },
                     ))
                     .then(literal("levels").executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Levels, ctx)
                         },
@@ -91,21 +92,21 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             argument("target", PlayerArgument::multiple()).then(
                 argument("amount", IntegerArgument::new())
                     .executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Points, ctx);
                             Ok(())
                         },
                     )
                     .then(literal("points").executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Points, ctx);
                             Ok(())
                         },
                     ))
                     .then(literal("levels").executes(
-                        |(((), players), amount): (((), Vec<Arc<Player>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Levels, ctx);
                             Ok(())
@@ -118,14 +119,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("clear")
             .executes(|(): (), ctx: &mut CommandContext| {
                 if let Some(player) = ctx.sender.get_player() {
-                    player.experience.lock().set_total_points(0);
+                    player.lock().experience.lock().set_total_points(0);
                 }
                 Ok(())
             })
             .then(argument("target", PlayerArgument::multiple()).executes(
-                |((), players): ((), Vec<Arc<Player>>), _ctx: &mut CommandContext| {
+                |((), players): ((), Vec<Arc<SyncMutex<Player>>>), _ctx: &mut CommandContext| {
                     for player in players {
-                        player.experience.lock().set_total_points(0);
+                        player.lock().experience.lock().set_total_points(0);
                     }
                     Ok(())
                 },
@@ -139,13 +140,14 @@ enum ExperienceType {
 }
 
 fn set_experience(
-    players: Vec<Arc<Player>>,
+    players: Vec<Arc<SyncMutex<Player>>>,
     amount: i32,
     xp_type: ExperienceType,
     ctx: &mut CommandContext,
 ) -> Result<(), CommandError> {
     for player in &players {
-        let mut experience = player.experience.lock();
+        let player_guard = player.lock();
+        let mut experience = player_guard.experience.lock();
         match xp_type {
             ExperienceType::Points => experience
                 .set_points(amount)
@@ -164,7 +166,7 @@ fn set_experience(
             &translation
                 .message([
                     TextComponent::from(amount.to_string()),
-                    TextComponent::from(player.gameprofile.name.clone()),
+                    TextComponent::from(player.lock().gameprofile.name.clone()),
                 ])
                 .into(),
         );
@@ -192,13 +194,14 @@ fn set_experience(
 }
 
 fn add_experience(
-    players: Vec<Arc<Player>>,
+    players: Vec<Arc<SyncMutex<Player>>>,
     amount: i32,
     xp_type: ExperienceType,
     ctx: &mut CommandContext,
 ) {
     for player in &players {
-        let mut experience = player.experience.lock();
+        let player_guard = player.lock();
+        let mut experience = player_guard.experience.lock();
         match xp_type {
             ExperienceType::Points => experience.add_points(amount),
             ExperienceType::Levels => experience.add_levels(amount),
@@ -215,7 +218,7 @@ fn add_experience(
             &translation
                 .message([
                     TextComponent::from(amount.to_string()),
-                    TextComponent::from(player.gameprofile.name.clone()),
+                    TextComponent::from(player.lock().gameprofile.name.clone()),
                 ])
                 .into(),
         );

@@ -20,8 +20,8 @@ use steel_utils::locks::{SyncMutex, SyncRwLock};
 
 use crate::chunk::player_chunk_view::PlayerChunkView;
 use crate::entity::{
-    Entity, EntityMovementSyncPacket, MobEffectSyncPacket, ServerEntityMovementSyncState,
-    ServerEntityMovementSyncUpdate, SharedEntity, WeakEntity,
+    Entity, EntityBase, EntityMovementSyncPacket, MobEffectSyncPacket,
+    ServerEntityMovementSyncState, ServerEntityMovementSyncUpdate, SharedEntity, WeakEntity,
 };
 use crate::player::Player;
 
@@ -131,8 +131,9 @@ impl EntityTracker {
     pub fn add(
         &self,
         entity: &SharedEntity,
+        locked_entity: Option<&mut dyn Entity>,
         get_players_in_chunk: impl Fn(ChunkPos) -> Vec<i32>,
-        get_player: impl Fn(i32) -> Option<Arc<Player>>,
+        get_player: impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
     ) {
         assert!(
             !entity.is_removed(),
@@ -140,10 +141,30 @@ impl EntityTracker {
             entity.id()
         );
 
+        // Resolve the concrete entity once: threaded in when the move that triggered
+        // this add already holds the behavior lock, otherwise locked once here (safe,
+        // since `None` only comes from callers running outside the behavior lock).
+        match locked_entity {
+            Some(e) => self.add_with_entity(entity, e, &get_players_in_chunk, &get_player),
+            None => {
+                entity.with_entity(|e| {
+                    self.add_with_entity(entity, e, &get_players_in_chunk, &get_player);
+                });
+            }
+        }
+    }
+
+    fn add_with_entity(
+        &self,
+        entity: &SharedEntity,
+        locked: &mut dyn Entity,
+        get_players_in_chunk: &impl Fn(ChunkPos) -> Vec<i32>,
+        get_player: &impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
+    ) {
         let entity_id = entity.id();
-        let tracking_range = EntityTrackingRange::from_client_chunk_range(
-            entity.entity_type().client_tracking_range,
-        );
+        let entity_type = locked.entity_type();
+        let tracking_range =
+            EntityTrackingRange::from_client_chunk_range(entity_type.client_tracking_range);
         if tracking_range.is_disabled() {
             return;
         }
@@ -154,10 +175,11 @@ impl EntityTracker {
         let players_to_notify = Self::visible_players_for_entity(
             entity_id,
             entity.as_ref(),
+            locked,
             registered_chunk,
             tracking_range,
-            &get_players_in_chunk,
-            &get_player,
+            get_players_in_chunk,
+            get_player,
         );
         let player_ids_to_notify: Vec<i32> = players_to_notify.iter().copied().collect();
 
@@ -168,12 +190,12 @@ impl EntityTracker {
                 entity.velocity(),
                 entity.on_ground(),
                 entity.rotation(),
-                entity.head_yaw(),
-                entity.entity_type().update_interval,
-                entity.entity_type().track_deltas,
+                locked.head_yaw(),
+                entity_type.update_interval,
+                entity_type.track_deltas,
             )),
             last_passenger_ids: SyncMutex::new(self.direct_tracked_passenger_ids(entity.as_ref())),
-            last_leash_holder_id: SyncMutex::new(leash_holder_id(entity.as_ref())),
+            last_leash_holder_id: SyncMutex::new(leash_holder_id_of(locked)),
             tracking_range,
             registered_chunk,
             seen_by: SyncRwLock::new(players_to_notify),
@@ -187,13 +209,13 @@ impl EntityTracker {
         // Send spawn packets to all nearby players
         for player_id in player_ids_to_notify {
             if let Some(player) = get_player(player_id) {
-                self.send_spawn_packets(entity, &player);
+                self.send_spawn_packets_with_entity(entity, locked, &player);
             }
         }
     }
 
     /// Stops tracking an entity and sends despawn to all tracking players.
-    pub fn remove(&self, entity_id: i32, get_player: impl Fn(i32) -> Option<Arc<Player>>) {
+    pub fn remove(&self, entity_id: i32, get_player: impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>) {
         if let Some((_, tracked)) = self.entities.remove_sync(&entity_id) {
             let entity = tracked.entity.upgrade();
             // Send despawn to all tracking players
@@ -300,7 +322,7 @@ impl EntityTracker {
     >(
         &self,
         get_players_in_chunk: impl Fn(ChunkPos) -> Vec<i32>,
-        get_player: impl Fn(i32) -> Option<Arc<Player>>,
+        get_player: impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
         mut senders: EntityChangeSenders<
             Movement,
             SelfMovement,
@@ -535,14 +557,17 @@ impl EntityTracker {
     pub fn on_entity_section_change(
         &self,
         entity_id: i32,
+        locked_entity: Option<&mut dyn Entity>,
         old_chunk: ChunkPos,
         new_chunk: ChunkPos,
         get_players_in_chunk: impl Fn(ChunkPos) -> Vec<i32>,
-        get_player: impl Fn(i32) -> Option<Arc<Player>>,
+        get_player: impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
     ) {
         let mut players_to_remove = Vec::new();
         let mut players_to_add = Vec::new();
         let mut entity_to_spawn = None;
+
+        let locked_entity = locked_entity;
 
         self.entities.update_sync(&entity_id, |_, tracked| {
             if old_chunk != new_chunk {
@@ -553,14 +578,33 @@ impl EntityTracker {
                 return;
             };
 
-            let new_seen_by = Self::visible_players_for_entity(
-                entity_id,
-                entity.as_ref(),
-                new_chunk,
-                tracked.tracking_range,
-                &get_players_in_chunk,
-                &get_player,
-            );
+            let base = entity.as_ref();
+            // Reuse the threaded concrete entity if the move holds the behavior lock,
+            // otherwise lock it once here (safe: `None` means no behavior lock is held).
+            let new_seen_by = if let Some(e) = locked_entity.as_ref() {
+                Self::visible_players_for_entity(
+                    entity_id,
+                    base,
+                    *e,
+                    new_chunk,
+                    tracked.tracking_range,
+                    &get_players_in_chunk,
+                    &get_player,
+                )
+            } else {
+                base.with_entity_ref(|e| {
+                    Self::visible_players_for_entity(
+                        entity_id,
+                        base,
+                        e,
+                        new_chunk,
+                        tracked.tracking_range,
+                        &get_players_in_chunk,
+                        &get_player,
+                    )
+                })
+                .unwrap_or_default()
+            };
 
             let mut seen_by = tracked.seen_by.write();
             players_to_remove.extend(seen_by.difference(&new_seen_by).copied());
@@ -586,7 +630,10 @@ impl EntityTracker {
 
         for player_id in players_to_add {
             if let Some(player) = get_player(player_id) {
-                self.send_spawn_packets(&entity, &player);
+                match locked_entity {
+                    Some(e) => self.send_spawn_packets_with_entity(&entity, e, &player),
+                    None => self.send_spawn_packets(&entity, &player),
+                }
             }
         }
     }
@@ -595,7 +642,7 @@ impl EntityTracker {
         &self,
         entity_id: i32,
         get_players_in_chunk: &impl Fn(ChunkPos) -> Vec<i32>,
-        get_player: &impl Fn(i32) -> Option<Arc<Player>>,
+        get_player: &impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
     ) {
         let mut players_to_remove = Vec::new();
         let mut players_to_add = Vec::new();
@@ -606,14 +653,22 @@ impl EntityTracker {
                 return;
             };
 
-            let new_seen_by = Self::visible_players_for_entity(
-                entity_id,
-                entity.as_ref(),
-                tracked.registered_chunk,
-                tracked.tracking_range,
-                get_players_in_chunk,
-                get_player,
-            );
+            // Runs from `send_changes` outside any behavior lock, so resolve the concrete
+            // entity once via `with_entity_ref` (player-safe; mobs lock the mutex once).
+            let base = entity.as_ref();
+            let new_seen_by = base
+                .with_entity_ref(|e| {
+                    Self::visible_players_for_entity(
+                        entity_id,
+                        base,
+                        e,
+                        tracked.registered_chunk,
+                        tracked.tracking_range,
+                        get_players_in_chunk,
+                        get_player,
+                    )
+                })
+                .unwrap_or_default();
 
             let mut seen_by = tracked.seen_by.write();
             players_to_remove.extend(seen_by.difference(&new_seen_by).copied());
@@ -668,16 +723,17 @@ impl EntityTracker {
 
     fn visible_players_for_entity(
         entity_id: i32,
+        base: &EntityBase,
         entity: &dyn Entity,
         entity_chunk: ChunkPos,
         tracking_range: EntityTrackingRange,
         get_players_in_chunk: &impl Fn(ChunkPos) -> Vec<i32>,
-        get_player: &impl Fn(i32) -> Option<Arc<Player>>,
+        get_player: &impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
     ) -> FxHashSet<i32> {
-        let entity_pos = entity.position();
-        let tracking_range = effective_tracking_range(entity, tracking_range);
+        let entity_pos = base.position();
+        let tracking_range = effective_tracking_range(base, tracking_range);
         let mut players = FxHashSet::default();
-        if entity.is_removed() {
+        if base.is_removed() {
             return players;
         }
 
@@ -711,6 +767,22 @@ impl EntityTracker {
             .send_to(entity_id, player);
     }
 
+    /// Sends spawn packets reusing an already-locked concrete entity (no re-lock).
+    fn send_spawn_packets_with_entity(
+        &self,
+        entity: &SharedEntity,
+        locked: &mut dyn Entity,
+        player: &Player,
+    ) {
+        let entity_id = entity.id();
+        EntitySpawnPairing::from_locked_entity(
+            entity.as_ref(),
+            locked,
+            self.passenger_pairing_packets_for_player(entity.as_ref(), player.id()),
+        )
+        .send_to(entity_id, player);
+    }
+
     fn spawn_pairing(&self, entity: &SharedEntity, player_id: i32) -> EntitySpawnPairing {
         EntitySpawnPairing::from_entity(
             entity,
@@ -720,7 +792,7 @@ impl EntityTracker {
 
     fn passenger_pairing_packets_for_player(
         &self,
-        entity: &dyn Entity,
+        entity: &EntityBase,
         player_id: i32,
     ) -> Vec<CSetPassengers> {
         let mut packets = Vec::new();
@@ -734,7 +806,7 @@ impl EntityTracker {
         {
             packets.push(CSetPassengers::new(
                 vehicle.id(),
-                self.direct_passenger_ids_seen_by_player(vehicle.as_ref(), player_id),
+                self.direct_passenger_ids_seen_by_player(&vehicle, player_id),
             ));
         }
 
@@ -743,7 +815,7 @@ impl EntityTracker {
 
     fn vehicle_passenger_packet_for_player(
         &self,
-        entity: &dyn Entity,
+        entity: &EntityBase,
         player_id: i32,
     ) -> Option<CSetPassengers> {
         let vehicle = entity.vehicle()?;
@@ -752,11 +824,11 @@ impl EntityTracker {
         }
         Some(CSetPassengers::new(
             vehicle.id(),
-            self.direct_passenger_ids_seen_by_player(vehicle.as_ref(), player_id),
+            self.direct_passenger_ids_seen_by_player(&vehicle, player_id),
         ))
     }
 
-    fn direct_tracked_passenger_ids(&self, entity: &dyn Entity) -> Vec<i32> {
+    fn direct_tracked_passenger_ids(&self, entity: &EntityBase) -> Vec<i32> {
         entity
             .passengers()
             .into_iter()
@@ -765,7 +837,7 @@ impl EntityTracker {
             .collect()
     }
 
-    fn direct_passenger_ids_seen_by_player(&self, entity: &dyn Entity, player_id: i32) -> Vec<i32> {
+    fn direct_passenger_ids_seen_by_player(&self, entity: &EntityBase, player_id: i32) -> Vec<i32> {
         entity
             .passengers()
             .into_iter()
@@ -789,7 +861,12 @@ impl EntityTracker {
     }
 }
 
-fn leash_holder_id(entity: &dyn Entity) -> Option<i32> {
+fn leash_holder_id(entity: &EntityBase) -> Option<i32> {
+    entity.with_entity_ref(leash_holder_id_of).flatten()
+}
+
+/// Leash holder id from an already-locked concrete entity, without re-locking.
+fn leash_holder_id_of(entity: &dyn Entity) -> Option<i32> {
     entity
         .as_mob()
         .and_then(|mob| mob.leash_holder())
@@ -809,7 +886,7 @@ fn is_within_tracking_distance(
 }
 
 fn effective_tracking_range(
-    entity: &dyn Entity,
+    entity: &EntityBase,
     base_range: EntityTrackingRange,
 ) -> EntityTrackingRange {
     let mut range = base_range;
@@ -820,7 +897,7 @@ fn effective_tracking_range(
 }
 
 fn add_passenger_tracking_ranges(
-    entity: &dyn Entity,
+    entity: &EntityBase,
     range: &mut EntityTrackingRange,
     visited: &mut FxHashSet<i32>,
 ) {
@@ -832,7 +909,24 @@ fn add_passenger_tracking_ranges(
             passenger.entity_type().client_tracking_range,
         );
         range.block_radius = range.block_radius.max(passenger_range.block_radius);
-        add_passenger_tracking_ranges(passenger.as_ref(), range, visited);
+        add_passenger_tracking_ranges2(&passenger, range, visited);
+    }
+}
+
+fn add_passenger_tracking_ranges2(
+    entity: &Arc<EntityBase>,
+    range: &mut EntityTrackingRange,
+    visited: &mut FxHashSet<i32>,
+) {
+    for passenger in entity.passengers() {
+        if !visited.insert(passenger.id()) {
+            continue;
+        }
+        let passenger_range = EntityTrackingRange::from_client_chunk_range(
+            passenger.entity_type().client_tracking_range,
+        );
+        range.block_radius = range.block_radius.max(passenger_range.block_radius);
+        add_passenger_tracking_ranges2(&passenger, range, visited);
     }
 }
 
@@ -847,13 +941,28 @@ struct EntitySpawnPairing {
 
 impl EntitySpawnPairing {
     fn from_entity(entity: &SharedEntity, passenger_packets: Vec<CSetPassengers>) -> Self {
-        entity.update_data_before_sync();
+        // Resolve the concrete entity once (player-safe). Callers running inside the
+        // entity's behavior lock must use `from_locked_entity` instead.
+        entity
+            .with_entity(|e| Self::from_locked_entity(entity.as_ref(), e, passenger_packets))
+            .expect("spawn pairing requires an attached entity")
+    }
 
-        let pos = entity.spawn_position();
-        let vel = entity.velocity();
-        let (yaw, pitch) = entity.rotation();
-        let head_yaw = entity.head_yaw();
-        let entity_type_id = entity.entity_type().id() as i32;
+    /// Builds the spawn pairing from an already-locked concrete entity, reading
+    /// lock-free fields from `base` and entity-specific data from `locked` directly
+    /// (no `with_entity_ref`, so it is safe to call while holding the behavior lock).
+    fn from_locked_entity(
+        base: &EntityBase,
+        locked: &mut dyn Entity,
+        passenger_packets: Vec<CSetPassengers>,
+    ) -> Self {
+        locked.update_data_before_sync();
+
+        let pos = locked.spawn_position();
+        let vel = base.velocity();
+        let (yaw, pitch) = base.rotation();
+        let head_yaw = locked.head_yaw();
+        let entity_type_id = locked.entity_type().id() as i32;
 
         // Convert rotation from degrees to protocol byte format (256th of a full rotation)
         // Uses to_angle_byte which matches vanilla's Mth.packDegrees
@@ -863,8 +972,8 @@ impl EntitySpawnPairing {
 
         Self {
             spawn_packet: CAddEntity {
-                id: entity.id(),
-                uuid: entity.uuid(),
+                id: base.id(),
+                uuid: base.uuid(),
                 entity_type: entity_type_id,
                 x: pos.x,
                 y: pos.y,
@@ -875,14 +984,14 @@ impl EntitySpawnPairing {
                 x_rot,
                 y_rot,
                 head_y_rot,
-                data: entity.spawn_data(),
+                data: locked.spawn_data(),
             },
-            entity_data: entity.pack_all_entity_data(),
-            attributes: entity.pack_syncable_attributes(),
-            equipment: entity.pack_all_equipment(),
+            entity_data: locked.pack_all_entity_data(),
+            attributes: locked.pack_syncable_attributes(),
+            equipment: locked.pack_all_equipment(),
             passenger_packets,
-            entity_link_packet: leash_holder_id(entity.as_ref())
-                .map(|holder_id| CSetEntityLink::new(entity.id(), holder_id)),
+            entity_link_packet: leash_holder_id_of(locked)
+                .map(|holder_id| CSetEntityLink::new(base.id(), holder_id)),
         }
     }
 
@@ -916,7 +1025,7 @@ impl EntitySpawnPairing {
 fn direct_player_passenger_delta(
     old_passenger_ids: &[i32],
     new_passenger_ids: &[i32],
-    get_player: &impl Fn(i32) -> Option<Arc<Player>>,
+    get_player: &impl Fn(i32) -> Option<Arc<SyncMutex<Player>>>,
 ) -> Vec<i32> {
     let old_passenger_ids = old_passenger_ids.iter().copied().collect::<FxHashSet<_>>();
     let new_passenger_ids = new_passenger_ids.iter().copied().collect::<FxHashSet<_>>();
@@ -943,58 +1052,39 @@ mod tests {
 
     use super::*;
     use crate::entity::{
-        EntityBase, Mob,
+        EntityBase,
         entities::{LeashFenceKnotEntity, PigEntity},
     };
     use crate::inventory::equipment::EquipmentSlot;
 
     struct PairingTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         entity_type: EntityTypeRef,
         attributes: Vec<AttributeSnapshot>,
-        dirty_attributes: SyncMutex<Vec<AttributeSnapshot>>,
-        equipment: SyncMutex<Vec<EquipmentSlotItem>>,
-        dirty_equipment: SyncMutex<Vec<EquipmentSlotItem>>,
-        passengers: SyncMutex<Vec<WeakEntity>>,
-        vehicle: SyncMutex<Option<WeakEntity>>,
+        dirty_attributes: Arc<SyncMutex<Vec<AttributeSnapshot>>>,
+        equipment: Arc<SyncMutex<Vec<EquipmentSlotItem>>>,
+        dirty_equipment: Arc<SyncMutex<Vec<EquipmentSlotItem>>>,
     }
 
-    impl PairingTestEntity {
-        fn new(id: i32, attributes: Vec<AttributeSnapshot>) -> Arc<Self> {
-            Self::new_with_type(id, &vanilla_entities::ITEM, attributes)
-        }
+    /// Test handle pairing the shared entity with the cells feeding its packs.
+    struct PairingTest {
+        entity: SharedEntity,
+        dirty_attributes: Arc<SyncMutex<Vec<AttributeSnapshot>>>,
+        equipment: Arc<SyncMutex<Vec<EquipmentSlotItem>>>,
+        dirty_equipment: Arc<SyncMutex<Vec<EquipmentSlotItem>>>,
+    }
 
-        fn new_with_type(
-            id: i32,
-            entity_type: EntityTypeRef,
-            attributes: Vec<AttributeSnapshot>,
-        ) -> Arc<Self> {
-            Arc::new(Self {
-                base: EntityBase::new(id, DVec3::ZERO, entity_type.dimensions, Weak::new()),
-                entity_type,
-                attributes,
-                dirty_attributes: SyncMutex::new(Vec::new()),
-                equipment: SyncMutex::new(Vec::new()),
-                dirty_equipment: SyncMutex::new(Vec::new()),
-                passengers: SyncMutex::new(Vec::new()),
-                vehicle: SyncMutex::new(None),
-            })
-        }
+    impl std::ops::Deref for PairingTest {
+        type Target = SharedEntity;
 
-        fn shared(attributes: Vec<AttributeSnapshot>) -> SharedEntity {
-            Self::new(1, attributes)
+        fn deref(&self) -> &SharedEntity {
+            &self.entity
         }
+    }
 
-        fn add_passenger(&self, passenger: &SharedEntity) {
-            self.passengers.lock().push(Arc::downgrade(passenger));
-        }
-
-        fn clear_passengers(&self) {
-            self.passengers.lock().clear();
-        }
-
-        fn set_vehicle(&self, vehicle: &SharedEntity) {
-            *self.vehicle.lock() = Some(Arc::downgrade(vehicle));
+    impl PairingTest {
+        fn entity(&self) -> SharedEntity {
+            self.entity.clone()
         }
 
         fn set_dirty_attributes(&self, attributes: Vec<AttributeSnapshot>) {
@@ -1010,8 +1100,48 @@ mod tests {
         }
     }
 
+    impl PairingTestEntity {
+        fn new(id: i32, attributes: Vec<AttributeSnapshot>) -> PairingTest {
+            Self::new_with_type(id, &vanilla_entities::ITEM, attributes)
+        }
+
+        fn new_with_type(
+            id: i32,
+            entity_type: EntityTypeRef,
+            attributes: Vec<AttributeSnapshot>,
+        ) -> PairingTest {
+            let dirty_attributes = Arc::new(SyncMutex::new(Vec::new()));
+            let equipment = Arc::new(SyncMutex::new(Vec::new()));
+            let dirty_equipment = Arc::new(SyncMutex::new(Vec::new()));
+            let entity = EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                entity_type.dimensions,
+                Weak::new(),
+                |base| Self {
+                    base,
+                    entity_type,
+                    attributes,
+                    dirty_attributes: dirty_attributes.clone(),
+                    equipment: equipment.clone(),
+                    dirty_equipment: dirty_equipment.clone(),
+                },
+            );
+            PairingTest {
+                entity,
+                dirty_attributes,
+                equipment,
+                dirty_equipment,
+            }
+        }
+
+        fn shared(attributes: Vec<AttributeSnapshot>) -> SharedEntity {
+            Self::new(1, attributes).entity()
+        }
+    }
+
     impl Entity for PairingTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -1033,22 +1163,6 @@ mod tests {
 
         fn drain_dirty_equipment(&self) -> Vec<EquipmentSlotItem> {
             mem::take(&mut *self.dirty_equipment.lock())
-        }
-
-        fn vehicle(&self) -> Option<SharedEntity> {
-            self.vehicle.lock().as_ref().and_then(Weak::upgrade)
-        }
-
-        fn passengers(&self) -> Vec<SharedEntity> {
-            let mut live_passengers = Vec::new();
-            self.passengers.lock().retain(|passenger| {
-                let Some(entity) = passenger.upgrade() else {
-                    return false;
-                };
-                live_passengers.push(entity);
-                true
-            });
-            live_passengers
         }
     }
 
@@ -1183,9 +1297,9 @@ mod tests {
                 > vehicle_typed.entity_type().client_tracking_range
         );
 
-        let passenger: SharedEntity = passenger_typed;
-        vehicle_typed.add_passenger(&passenger);
-        let vehicle: SharedEntity = vehicle_typed;
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
+        let vehicle: SharedEntity = vehicle_typed.entity();
         let base_range = EntityTrackingRange::from_client_chunk_range(
             vehicle.entity_type().client_tracking_range,
         );
@@ -1228,7 +1342,7 @@ mod tests {
             slot: EquipmentSlot::Chest,
             item_stack: stack.clone(),
         }]);
-        let entity: SharedEntity = entity_typed;
+        let entity: SharedEntity = entity_typed.entity();
         let pairing = EntitySpawnPairing::from_entity(&entity, Vec::new());
 
         assert_eq!(pairing.spawn_packet.id, entity.id());
@@ -1241,12 +1355,10 @@ mod tests {
     fn spawn_pairing_uses_entity_spawn_packet_position() {
         test_support::init_test_registry();
 
-        let entity: SharedEntity = Arc::new(LeashFenceKnotEntity::new_attached(
+        let entity: SharedEntity = LeashFenceKnotEntity::new_attached(
             &vanilla_entities::LEASH_KNOT,
-            1,
             BlockPos::new(4, 65, -9),
-            Weak::new(),
-        ));
+        );
         let pairing = EntitySpawnPairing::from_entity(&entity, Vec::new());
 
         assert_eq!(pairing.spawn_packet.x, 4.0);
@@ -1260,8 +1372,8 @@ mod tests {
 
         let tracker = EntityTracker::new();
         let entity_typed = PairingTestEntity::new(1, Vec::new());
-        let entity: SharedEntity = entity_typed.clone();
-        tracker.add(&entity, |_| Vec::new(), |_| None);
+        let entity: SharedEntity = entity_typed.entity();
+        tracker.add(&entity, None, |_| Vec::new(), |_| None);
 
         entity_typed.set_dirty_attributes(vec![AttributeSnapshot {
             attribute_id: 7,
@@ -1315,8 +1427,8 @@ mod tests {
 
         let tracker = EntityTracker::new();
         let entity_typed = PairingTestEntity::new(1, Vec::new());
-        let entity: SharedEntity = entity_typed.clone();
-        tracker.add(&entity, |_| Vec::new(), |_| None);
+        let entity: SharedEntity = entity_typed.entity();
+        tracker.add(&entity, None, |_| Vec::new(), |_| None);
 
         let stack = ItemStack::new(&vanilla_items::ITEMS.elytra);
         entity_typed.set_dirty_equipment(vec![EquipmentSlotItem {
@@ -1372,7 +1484,7 @@ mod tests {
         let tracker = EntityTracker::new();
         let entity_typed =
             PairingTestEntity::new_with_type(1, &vanilla_entities::PLAYER, Vec::new());
-        let entity: SharedEntity = entity_typed.clone();
+        let entity: SharedEntity = entity_typed.entity();
         track_entity_for_player(&tracker, &entity, 99);
 
         entity_typed.set_velocity(DVec3::new(0.25, 0.4, -0.125));
@@ -1453,9 +1565,9 @@ mod tests {
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed;
-        vehicle_typed.add_passenger(&passenger);
-        let vehicle: SharedEntity = vehicle_typed;
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
+        let vehicle: SharedEntity = vehicle_typed.entity();
 
         let pairing = tracker.spawn_pairing(&vehicle, 99);
 
@@ -1469,10 +1581,10 @@ mod tests {
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed;
-        vehicle_typed.add_passenger(&passenger);
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
         track_entity_for_player(&tracker, &passenger, 99);
-        let vehicle: SharedEntity = vehicle_typed;
+        let vehicle: SharedEntity = vehicle_typed.entity();
 
         let pairing = tracker.spawn_pairing(&vehicle, 99);
 
@@ -1488,10 +1600,9 @@ mod tests {
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed.clone();
-        vehicle_typed.add_passenger(&passenger);
-        let vehicle: SharedEntity = vehicle_typed;
-        passenger_typed.set_vehicle(&vehicle);
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
+        let _vehicle: SharedEntity = vehicle_typed.entity();
 
         let pairing = tracker.spawn_pairing(&passenger, 99);
 
@@ -1505,10 +1616,9 @@ mod tests {
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed.clone();
-        vehicle_typed.add_passenger(&passenger);
-        let vehicle: SharedEntity = vehicle_typed;
-        passenger_typed.set_vehicle(&vehicle);
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
+        let vehicle: SharedEntity = vehicle_typed.entity();
         track_entity_for_player(&tracker, &vehicle, 99);
         track_entity_for_player(&tracker, &passenger, 99);
 
@@ -1524,15 +1634,9 @@ mod tests {
         test_support::init_test_registry();
 
         let tracker = EntityTracker::new();
-        let pig_typed = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let holder: SharedEntity = PairingTestEntity::new(2, Vec::new());
-        assert!(pig_typed.set_leashed_to(&holder));
-        let pig: SharedEntity = pig_typed;
+        let pig: SharedEntity = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let holder: SharedEntity = PairingTestEntity::new(2, Vec::new()).entity();
+        assert!(pig.with_mob(|mob| mob.set_leashed_to(&holder)).unwrap());
 
         let pairing = tracker.spawn_pairing(&pig, 99);
 
@@ -1544,17 +1648,9 @@ mod tests {
         test_support::init_test_registry();
 
         let tracker = EntityTracker::new();
-        let pig: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let holder: SharedEntity = PairingTestEntity::new(2, Vec::new());
+        let pig: SharedEntity = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let holder: SharedEntity = PairingTestEntity::new(2, Vec::new()).entity();
         track_entity_for_player(&tracker, &pig, 99);
-        let Some(pig_mob) = pig.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
 
         let mut updates = Vec::new();
         tracker.send_changes(
@@ -1573,7 +1669,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        assert!(pig_mob.set_leashed_to(&holder));
+        assert!(pig.with_mob(|mob| mob.set_leashed_to(&holder)).unwrap());
         tracker.send_changes(
             |_| Vec::new(),
             |_| None,
@@ -1607,7 +1703,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        pig_mob.remove_leash_state();
+        pig.with_mob(|mob| mob.remove_leash_state());
         tracker.send_changes(
             |_| Vec::new(),
             |_| None,
@@ -1631,9 +1727,9 @@ mod tests {
 
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
-        let vehicle: SharedEntity = vehicle_typed.clone();
+        let vehicle: SharedEntity = vehicle_typed.entity();
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed;
+        let passenger: SharedEntity = passenger_typed.entity();
         track_entity_for_player(&tracker, &vehicle, 99);
         track_entity_for_player(&tracker, &passenger, 99);
 
@@ -1656,7 +1752,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        vehicle_typed.add_passenger(&passenger);
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
         tracker.send_changes(
             |_| Vec::new(),
             |_| None,
@@ -1697,7 +1793,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        vehicle_typed.clear_passengers();
+        passenger.stop_riding();
         mark_seen_by_player(&tracker, 1, 99);
         tracker.send_changes(
             |_| Vec::new(),
@@ -1728,9 +1824,9 @@ mod tests {
         let tracker = EntityTracker::new();
         let vehicle_typed = PairingTestEntity::new(1, Vec::new());
         let passenger_typed = PairingTestEntity::new(2, Vec::new());
-        let passenger: SharedEntity = passenger_typed;
-        vehicle_typed.add_passenger(&passenger);
-        let vehicle: SharedEntity = vehicle_typed;
+        let passenger: SharedEntity = passenger_typed.entity();
+        EntityBase::restore_passenger_relationship(&vehicle_typed.entity(), &passenger);
+        let vehicle: SharedEntity = vehicle_typed.entity();
         track_entity_for_player(&tracker, &passenger, 99);
         track_entity_for_player(&tracker, &vehicle, 99);
 
@@ -1758,5 +1854,40 @@ mod tests {
         assert_eq!(updates[0].0, 99);
         assert_eq!(updates[0].1.vehicle_id, 1);
         assert!(updates[0].1.passenger_ids.is_empty());
+    }
+
+    /// Regression: the move-commit path runs while the entity's behavior mutex is held
+    /// (a move during `tick`). The concrete-entity helpers it uses must read entity data
+    /// directly from the already-locked entity instead of re-entering the non-reentrant
+    /// behavior mutex via `with_entity_ref` — otherwise the tick thread self-deadlocks.
+    ///
+    /// Runs under a watchdog so a regression fails by timeout rather than hanging forever.
+    #[test]
+    fn move_commit_helpers_do_not_reenter_behavior_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        test_support::init_test_registry();
+
+        // A mob has a real behavior mutex, so re-locking it would deadlock (unlike players).
+        let pig: SharedEntity = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // Hold the behavior lock for the whole closure, exactly like `tick` does.
+            let mut entity = pig.arc_lock_entity();
+
+            // Concrete-entity move-path helpers: none of these may call `with_entity_ref`.
+            let _ = leash_holder_id_of(&*entity);
+            let _ = EntitySpawnPairing::from_locked_entity(pig.as_ref(), &mut *entity, Vec::new());
+
+            drop(entity);
+            let _ = tx.send(());
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "move-commit helpers re-entered the behavior mutex (deadlock regression)"
+        );
     }
 }

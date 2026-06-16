@@ -71,17 +71,13 @@ pub fn build(entities: &[EntityClass]) -> String {
             registry.register(
                 &vanilla_entities::#entity_type_ident,
                 |entity_type, id, pos, world| {
-                    let entity: SharedEntity =
-                        Arc::new(#struct_ident::new(entity_type, id, pos, world #(, #args)*));
-                    entity
+                    #struct_ident::new(entity_type, id, pos, world #(, #args)*)
                 },
             );
             registry.register_load(
                 &vanilla_entities::#entity_type_ident,
                 |entity_type, load| {
-                    let entity: SharedEntity =
-                        Arc::new(#struct_ident::from_saved(entity_type, load #(, #args)*));
-                    entity
+                    #struct_ident::from_saved(entity_type, load #(, #args)*)
                 },
             );
         };
@@ -126,9 +122,8 @@ pub fn build(entities: &[EntityClass]) -> String {
     let output = quote! {
         //! Generated entity factory registrations.
 
-        use std::sync::Arc;
         use steel_registry::{vanilla_entities #(#registry_import_tokens)*};
-        use crate::entity::{EntityRegistry, SharedEntity};
+        use crate::entity::EntityRegistry;
         use crate::entity::entities::{#(#entity_type_imports),*};
         #(#enum_import_tokens)*
 

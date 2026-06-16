@@ -201,7 +201,7 @@ impl BlockBehavior for PitcherCropBlock {
         _state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         _effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {

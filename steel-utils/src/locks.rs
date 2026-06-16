@@ -8,6 +8,11 @@ use tokio::sync::{Mutex, RwLock};
 
 /// A synchronous mutex.
 pub type SyncMutex<T> = parking_lot::Mutex<T>;
+/// A synchronous mutex.
+pub type SyncMutexGuard<'a, T> = parking_lot::lock_api::MutexGuard<'a, parking_lot::RawMutex, T>;
+/// A synchronous mutex.
+pub type ArcMutexGuard<'a, T> = parking_lot::lock_api::ArcMutexGuard<parking_lot::RawMutex, T>;
+
 /// A synchronous read-write lock.
 pub type SyncRwLock<T> = parking_lot::RwLock<T>;
 

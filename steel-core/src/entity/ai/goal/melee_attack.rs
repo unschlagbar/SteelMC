@@ -43,11 +43,11 @@ impl MeleeAttackGoal {
         }
     }
 
-    fn check_and_perform_attack(&mut self, mob: &dyn PathfinderMob, target: &SharedEntity) {
-        let Some(target_living) = target.as_living_entity() else {
-            return;
-        };
-        if !self.can_perform_attack(mob, target_living) {
+    fn check_and_perform_attack(&mut self, mob: &mut dyn PathfinderMob, target: &SharedEntity) {
+        let can_attack = target
+            .with_living(|target_living| self.can_perform_attack(mob, target_living))
+            .unwrap_or(false);
+        if !can_attack {
             return;
         }
 
@@ -83,10 +83,13 @@ impl MeleeAttackGoal {
     }
 
     fn should_recalculate_path(&mut self, mob: &dyn PathfinderMob, target: &SharedEntity) -> bool {
-        let Some(target_living) = target.as_living_entity() else {
-            return false;
-        };
-        if !self.following_target_even_if_not_seen && !mob.has_line_of_sight_cached(target_living) {
+        let line_of_sight_ok = target
+            .with_living(|target_living| {
+                self.following_target_even_if_not_seen
+                    || mob.has_line_of_sight_cached(target_living)
+            })
+            .unwrap_or(false);
+        if !line_of_sight_ok {
             return false;
         }
         if self.ticks_until_next_path_recalculation > 0 {
@@ -147,15 +150,18 @@ impl Goal for MeleeAttackGoal {
         let Some(target) = mob.target() else {
             return false;
         };
-        let Some(target_living) = target.as_living_entity() else {
-            return false;
-        };
-        if !LivingEntity::is_alive(target_living) {
+        let target_alive = target
+            .with_living(|target_living| LivingEntity::is_alive(target_living))
+            .unwrap_or(false);
+        if !target_alive {
             return false;
         }
 
         self.path = mob.create_path_to(target.block_position(), 0);
-        self.path.is_some() || mob.is_within_melee_attack_range(target_living)
+        self.path.is_some()
+            || target
+                .with_living(|target_living| mob.is_within_melee_attack_range(target_living))
+                .unwrap_or(false)
     }
 
     fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
@@ -175,7 +181,7 @@ impl Goal for MeleeAttackGoal {
         is_no_creative_or_spectator(&target)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if let Some(path) = self.path.take() {
             mob.move_to_path(Some(path), self.speed_modifier);
         } else {
@@ -186,7 +192,7 @@ impl Goal for MeleeAttackGoal {
         self.ticks_until_next_attack = 0;
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         if mob
             .target()
             .as_ref()
@@ -203,7 +209,7 @@ impl Goal for MeleeAttackGoal {
         true
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(target) = mob.target() else {
             return;
         };
@@ -228,13 +234,13 @@ impl Goal for MeleeAttackGoal {
 
 fn is_no_creative_or_spectator(entity: &SharedEntity) -> bool {
     !entity
-        .as_player()
+        .player()
         .is_some_and(|player| entity.is_spectator() || player.has_infinite_materials())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::sync::Weak;
 
     use glam::DVec3;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
@@ -244,11 +250,11 @@ mod tests {
     use crate::entity::{Entity, Mob, entities::PigEntity};
 
     fn pig(id: i32, position: DVec3) -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     fn shared_pig(id: i32, position: DVec3) -> SharedEntity {
-        Arc::new(pig(id, position))
+        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     #[test]
@@ -274,9 +280,9 @@ mod tests {
     fn melee_attack_goal_start_without_path_still_sets_aggressive() {
         init_test_registry();
         let mut goal = MeleeAttackGoal::new(1.0, true);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
 
-        goal.start(&mob);
+        goal.start(&mut mob);
 
         assert!(mob.is_aggressive());
         assert!(mob.mob_base().navigation().lock().is_done());
@@ -288,14 +294,14 @@ mod tests {
     fn melee_attack_goal_stop_clears_aggression_and_navigation() {
         init_test_registry();
         let mut goal = MeleeAttackGoal::new(1.0, true);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         mob.set_aggressive(true);
         mob.mob_base()
             .navigation()
             .lock()
             .set_direct_target(DVec3::new(4.0, 0.0, 0.0), 1.0);
 
-        goal.stop(&mob);
+        goal.stop(&mut mob);
 
         assert!(!mob.is_aggressive());
         assert!(mob.mob_base().navigation().lock().is_done());
@@ -323,12 +329,12 @@ mod tests {
     fn melee_attack_goal_tick_recalculates_path_with_failed_move_penalty() {
         init_test_registry();
         let mut goal = MeleeAttackGoal::new(1.0, true);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         mob.base().random().lock().set_seed(0);
         let target = shared_pig(2, DVec3::new(4.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
 
-        goal.tick(&mob);
+        goal.tick(&mut mob);
 
         assert_eq!(goal.pathed_target, target.position());
         assert!(goal.ticks_until_next_path_recalculation > 0);

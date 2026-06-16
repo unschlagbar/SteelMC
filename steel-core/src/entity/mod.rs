@@ -109,13 +109,18 @@ fn leash_scan_area(center: DVec3) -> WorldAabb {
 fn transfer_leashables_to_holder(leashables: Vec<SharedEntity>, new_holder: &SharedEntity) -> bool {
     let mut transferred = false;
     for leashable in leashables {
-        let Some(mob) = leashable.as_mob() else {
-            continue;
-        };
-        if mob.can_have_a_leash_attached_to(new_holder.as_ref()) {
-            let _ = mob.set_leashed_to(new_holder);
-            transferred = true;
-        }
+        let accepted = leashable
+            .with_mob(|mob| {
+                let can_attach = new_holder
+                    .with_entity_ref(|holder| mob.can_have_a_leash_attached_to(holder))
+                    .unwrap_or(false);
+                if can_attach {
+                    let _ = mob.set_leashed_to(new_holder);
+                }
+                can_attach
+            })
+            .unwrap_or(false);
+        transferred |= accepted;
     }
     transferred
 }
@@ -187,7 +192,7 @@ impl BlockEffectFireSnapshot {
 }
 
 fn finish_inside_block_effects(
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
     effect_collector: &mut InsideBlockEffectCollector,
     before_effects: BlockEffectFireSnapshot,
 ) {
@@ -373,7 +378,7 @@ pub fn next_entity_id() -> i32 {
 }
 
 fn apply_block_effect_segment(
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
     world: &Arc<World>,
     from: DVec3,
     to: DVec3,
@@ -483,7 +488,7 @@ fn should_apply_resolved_movement(requested_movement: DVec3, actual_movement: DV
         || requested_movement.length_squared() - movement_length < MOVEMENT_RECORD_EPSILON
 }
 
-fn apply_step_on_block(entity: &dyn Entity, world: &Arc<World>) {
+fn apply_step_on_block(entity: &mut dyn Entity, world: &Arc<World>) {
     if !entity.on_ground() {
         return;
     }
@@ -500,7 +505,7 @@ fn apply_step_on_block(entity: &dyn Entity, world: &Arc<World>) {
     clippy::too_many_lines,
     reason = "vanilla movement block-effect traversal is easier to audit when kept in one sweep"
 )]
-fn apply_effects_from_block_movements(entity: &dyn Entity, movements: &[EntityMovement]) {
+fn apply_effects_from_block_movements(entity: &mut dyn Entity, movements: &[EntityMovement]) {
     if !entity.is_affected_by_blocks() {
         return;
     }
@@ -625,6 +630,7 @@ mod fluid_contact;
 mod generated_entities;
 mod inside_block_effects;
 mod item_based_steering;
+pub mod kind;
 mod living_base;
 mod manager;
 mod mob;
@@ -655,6 +661,7 @@ pub use inside_block_effects::{
     InsideBlockEffectCallback, InsideBlockEffectCollector, InsideBlockEffectType,
 };
 pub(crate) use item_based_steering::{ItemBasedSteering, ItemSteerable};
+pub use kind::{EntityIdentifier, LockedEntity};
 pub use living_base::{
     ActiveMobEffect, DEATH_DURATION, DEFAULT_SWING_DURATION, LivingEntityBase, LivingRotationState,
     LivingSwingState, LivingTravelInput, MobEffectInstance, MobEffectSyncChange,
@@ -683,10 +690,10 @@ pub(crate) use ticking::{
 pub use tracker::{EntityChangeSenders, EntityTracker};
 
 /// Type alias for a shared entity reference.
-pub type SharedEntity = Arc<dyn Entity>;
+pub type SharedEntity = Arc<EntityBase>;
 
 /// Type alias for a weak entity reference.
-pub type WeakEntity = Weak<dyn Entity>;
+pub type WeakEntity = Weak<EntityBase>;
 
 pub(crate) fn start_riding_entities(
     passenger: &SharedEntity,
@@ -759,9 +766,13 @@ pub enum AcceptedClientMovementOutcome {
 pub trait EntityEventSource {
     /// Returns this entity as a game-event source.
     fn as_entity_event_source(&self) -> &dyn Entity;
+    fn as_entity_event_source_mut(&mut self) -> &mut dyn Entity;
 }
 
 impl<T: Entity> EntityEventSource for T {
+    fn as_entity_event_source_mut(&mut self) -> &mut dyn Entity {
+        self
+    }
     fn as_entity_event_source(&self) -> &dyn Entity {
         self
     }
@@ -774,20 +785,30 @@ impl<T: Entity> EntityEventSource for T {
 ///
 /// # Using `EntityBase`
 ///
-/// Entities expose [`EntityBase`] to get default implementations for common
-/// methods like `id()`, `uuid()`, `position()`, etc.
+/// Entities expose [`EntityBase`] via a `Weak<EntityBase>` back-reference so the
+/// base is always accessible through `self.base()`, which upgrades the weak.
 ///
 /// ```ignore
 /// impl Entity for MyEntity {
-///     fn base(&self) -> &EntityBase { &self.base }
+///     fn base_weak(&self) -> &Weak<EntityBase> { &self.base }
 ///     fn entity_type(&self) -> EntityTypeRef { vanilla_entities::MY_ENTITY }
-///     fn bounding_box(&self) -> WorldAabb { /* ... */ }
-///     // All other common methods use defaults from EntityBase!
+///     // All other common methods use defaults via self.base()!
 /// }
 /// ```
 pub trait Entity: EntityEventSource + Send + Sync {
-    /// Returns a reference to the entity's shared vanilla base fields.
-    fn base(&self) -> &EntityBase;
+    /// Returns the weak back-reference to the containing `EntityBase`.
+    fn base_weak(&self) -> &Weak<EntityBase>;
+
+    /// Upgrades the weak back-reference to a strong `Arc<EntityBase>`.
+    ///
+    /// # Panics
+    /// Panics if the entity outlives its `EntityBase`, which is impossible in
+    /// correct usage (the entity lives inside `EntityBase`'s `SyncMutex`).
+    fn base(&self) -> Arc<EntityBase> {
+        self.base_weak()
+            .upgrade()
+            .expect("entity alive without its EntityBase — impossible in correct usage")
+    }
 
     /// Gets the entity type containing tracking range, dimensions, etc.
     fn entity_type(&self) -> EntityTypeRef;
@@ -1141,7 +1162,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Repositions a direct passenger from this vehicle's attachment point.
     ///
     /// Mirrors vanilla `Entity.positionRider`.
-    fn position_rider(&self, passenger: &dyn Entity) {
+    fn position_rider(&self, passenger: &mut dyn Entity) {
         if !self.has_passenger(passenger) {
             return;
         }
@@ -1279,7 +1300,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// Concrete entity ticks that mirror vanilla `super.tick()` should call this
     /// rather than calling [`Self::base_tick`] directly.
-    fn default_tick(&self) {
+    fn default_tick(&mut self) {
         self.base_tick();
     }
 
@@ -1290,16 +1311,16 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// Steel keeps the fallback empty because many vanilla subclasses override
     /// tick without calling `super.tick()`.
-    fn tick(&self) {}
+    fn tick(&mut self) {}
 
     /// Called every game tick while this entity is riding another entity.
     ///
     /// Mirrors vanilla `Entity.rideTick`.
-    fn ride_tick(&self) {
+    fn ride_tick(&mut self) {
         self.set_velocity(DVec3::ZERO);
         self.tick();
         if let Some(vehicle) = self.vehicle() {
-            vehicle.position_rider(self.as_entity_event_source());
+            vehicle.position_rider(self.as_entity_event_source_mut());
         }
     }
 
@@ -1307,7 +1328,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// This intentionally stays separate from `tick()` because several vanilla
     /// subclasses override tick without calling `super.tick()`.
-    fn base_tick(&self) {
+    fn base_tick(&mut self) {
         self.base().advance_base_tick_state();
         if let Some(living) = self.as_living_entity() {
             living.advance_living_rotation_for_base_tick();
@@ -1355,7 +1376,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     fn check_despawn(&self) {}
 
     /// Applies an inside-block effect queued by vanilla's step-based collector.
-    fn apply_inside_block_effect(&self, effect_type: InsideBlockEffectType) {
+    fn apply_inside_block_effect(&mut self, effect_type: InsideBlockEffectType) {
         let fire_ignite_extra_ticks = if matches!(effect_type, InsideBlockEffectType::FireIgnite) {
             self.fire_ignite_extra_ticks()
         } else {
@@ -1401,10 +1422,19 @@ pub trait Entity: EntityEventSource + Send + Sync {
         None
     }
 
+    /// Returns mutable access to the synchronized entity-data container.
+    ///
+    /// Mutation of vanilla synced data flows through `&mut self`; entities accessed
+    /// behind shared ownership (e.g. players) keep their data behind a lock and leave
+    /// this `None`, mutating through their own locking accessors instead.
+    fn synced_data_mut(&mut self) -> Option<&mut dyn EntitySyncedData> {
+        None
+    }
+
     /// Updates synchronized entity data just before tracker sync.
     ///
     /// Mirrors vanilla `Entity.updateDataBeforeSync`.
-    fn update_data_before_sync(&self) {}
+    fn update_data_before_sync(&mut self) {}
 
     /// Packs syncable attributes for initial spawn pairing.
     ///
@@ -1463,12 +1493,12 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Gets the entity as an `ItemEntity` if it is one.
-    fn as_item_entity(self: Arc<Self>) -> Option<Arc<ItemEntity>> {
+    fn as_item_entity_ref(&self) -> Option<&ItemEntity> {
         None
     }
 
     /// Gets the entity as an `ExperienceOrbEntity` if it is one.
-    fn as_experience_orb(self: Arc<Self>) -> Option<Arc<ExperienceOrbEntity>> {
+    fn as_experience_orb_ref(&self) -> Option<&ExperienceOrbEntity> {
         None
     }
 
@@ -1484,7 +1514,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     fn notify_leashee_removed(&self, _leashable: &dyn Entity) {}
 
     /// Called when a player touches this entity during nearby pickup processing.
-    fn player_touch(self: Arc<Self>, _player: &Arc<Player>) {}
+    fn player_touch(&mut self, _player: &Arc<SyncMutex<Player>>) {}
 
     /// Finds leashable mobs in vanilla's nearby leash scan whose holder is this entity.
     fn leashables_leashed_to(&self) -> Vec<SharedEntity> {
@@ -1534,9 +1564,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         }
 
         for leashable in leashables {
-            if let Some(mob) = leashable.as_mob() {
-                mob.drop_leash();
-            }
+            leashable.with_mob(|mob| mob.drop_leash());
         }
 
         if !dropped {
@@ -1639,7 +1667,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Handles vanilla entity right-click interaction.
     fn interact(
-        &self,
+        &mut self,
         player: &Player,
         hand: InteractionHand,
         location: DVec3,
@@ -1719,7 +1747,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
                 return InteractionResult::Success;
             }
 
-            if holder.as_player().is_some() {
+            if holder.is_player() {
                 return InteractionResult::Pass;
             }
         }
@@ -1766,6 +1794,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
         None
     }
 
+    /// Returns this entity as a mutable living entity when it has living behavior.
+    fn as_living_entity_mut(&mut self) -> Option<&mut dyn LivingEntity> {
+        None
+    }
+
     /// Returns this entity as a player when it is the concrete server player.
     ///
     /// Mirrors vanilla player-only branches without requiring core code to
@@ -1787,6 +1820,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
         None
     }
 
+    /// Returns this entity as a mutable pathfinder mob when it has pathfinding behavior.
+    fn as_pathfinder_mob_mut(&mut self) -> Option<&mut dyn PathfinderMob> {
+        None
+    }
+
     /// Returns true for entities that implement vanilla mob behavior.
     fn is_mob(&self) -> bool {
         false
@@ -1797,6 +1835,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Mirrors vanilla's frequent `instanceof Mob` branches without requiring
     /// core code to downcast through `Any`.
     fn as_mob(&self) -> Option<&dyn Mob> {
+        None
+    }
+
+    /// Returns this entity as a mutable mob when it has mob behavior.
+    fn as_mob_mut(&mut self) -> Option<&mut dyn Mob> {
         None
     }
 
@@ -1813,6 +1856,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
         None
     }
 
+    /// Returns this entity as a mutable animal when it has animal behavior.
+    fn as_animal_mut(&mut self) -> Option<&mut dyn Animal> {
+        None
+    }
+
     /// Returns true for entities that implement vanilla item-steered boosts.
     fn is_item_steerable(&self) -> bool {
         false
@@ -1822,7 +1870,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// Mirrors vanilla's `instanceof ItemSteerable` branches without requiring
     /// core code to downcast through `Any`.
-    fn as_item_steerable(&self) -> Option<&dyn ItemSteerable> {
+    fn as_item_steerable(&mut self) -> Option<&mut dyn ItemSteerable> {
         None
     }
 
@@ -1877,29 +1925,29 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets the vanilla shift-key-down shared flag.
-    fn set_shared_shift_key_down(&self, shift_key_down: bool) {
-        if let Some(synced_data) = self.synced_data() {
+    fn set_shared_shift_key_down(&mut self, shift_key_down: bool) {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_shift_key_down(shift_key_down);
         }
     }
 
     /// Sets the vanilla swimming shared flag.
-    fn set_shared_swimming(&self, swimming: bool) {
-        if let Some(synced_data) = self.synced_data() {
+    fn set_shared_swimming(&mut self, swimming: bool) {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_swimming(swimming);
         }
     }
 
     /// Sets the vanilla sprinting shared flag.
-    fn set_shared_sprinting(&self, sprinting: bool) {
-        if let Some(synced_data) = self.synced_data() {
+    fn set_shared_sprinting(&mut self, sprinting: bool) {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_sprinting(sprinting);
         }
     }
 
     /// Sets the vanilla fall-flying shared flag.
-    fn set_shared_fall_flying(&self, fall_flying: bool) {
-        if let Some(synced_data) = self.synced_data() {
+    fn set_shared_fall_flying(&mut self, fall_flying: bool) {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_fall_flying(fall_flying);
         }
     }
@@ -2120,7 +2168,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets vanilla `remainingFireTicks`.
-    fn set_remaining_fire_ticks(&self, remaining_fire_ticks: i32) {
+    fn set_remaining_fire_ticks(&mut self, remaining_fire_ticks: i32) {
         self.base().set_remaining_fire_ticks(
             self.remaining_fire_ticks_cap()
                 .map_or(remaining_fire_ticks, |cap| remaining_fire_ticks.min(cap)),
@@ -2134,7 +2182,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets synchronized vanilla `TicksFrozen`.
-    fn set_ticks_frozen(&self, ticks_frozen: i32) {
+    fn set_ticks_frozen(&mut self, ticks_frozen: i32) {
         self.base().set_ticks_frozen(ticks_frozen);
         self.sync_base_fire_freeze_entity_data();
     }
@@ -2155,7 +2203,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Applies vanilla lava-contact damage after lava ignition effects.
-    fn lava_hurt(&self) {
+    fn lava_hurt(&mut self) {
         if self.fire_immune() {
             return;
         }
@@ -2164,7 +2212,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
             && self.should_play_lava_hurt_sound()
         {
             let pitch = {
-                let mut random = self.base().random().lock();
+                let base = self.base();
+                let mut random = base.random().lock();
                 2.0 + random.next_f32() * 0.4
             };
             self.play_sound(&sound_events::ENTITY_GENERIC_BURN, 0.4, pitch);
@@ -2220,49 +2269,53 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Clears accumulated freezing.
-    fn clear_freeze(&self) {
+    fn clear_freeze(&mut self) {
         self.base().clear_freeze();
         self.sync_base_fire_freeze_entity_data();
     }
 
     /// Clears fire without resetting the vanilla fire immunity cooldown.
-    fn clear_fire(&self) {
+    fn clear_fire(&mut self) {
         self.base().clear_fire();
         self.sync_base_fire_freeze_entity_data();
     }
 
     /// Ignites this entity for a vanilla tick duration.
-    fn ignite_for_ticks(&self, number_of_ticks: i32) {
+    fn ignite_for_ticks(&mut self, number_of_ticks: i32) {
         self.base()
             .ignite_for_ticks(number_of_ticks, self.remaining_fire_ticks_cap());
         self.sync_base_fire_freeze_entity_data();
     }
 
     /// Projects base fire/freeze state into generated synced entity data.
-    fn sync_base_fire_freeze_entity_data(&self) {
-        let Some(synced_data) = self.synced_data() else {
+    fn sync_base_fire_freeze_entity_data(&mut self) {
+        let ticks_frozen = self.ticks_frozen();
+        let on_fire = self.is_on_fire() || self.has_visual_fire();
+        let Some(synced_data) = self.synced_data_mut() else {
             return;
         };
 
-        synced_data.set_base_ticks_frozen(self.ticks_frozen());
-        synced_data.set_base_on_fire_flag(self.is_on_fire() || self.has_visual_fire());
+        synced_data.set_base_ticks_frozen(ticks_frozen);
+        synced_data.set_base_on_fire_flag(on_fire);
     }
 
     /// Projects all base-owned synchronized fields into generated entity data.
-    fn sync_base_entity_data(&self) {
-        let Some(synced_data) = self.synced_data() else {
+    fn sync_base_entity_data(&mut self) {
+        let save_data = self.base().save_data();
+        let ticks_frozen = self.ticks_frozen();
+        let on_fire = self.is_on_fire() || self.has_visual_fire();
+        let Some(synced_data) = self.synced_data_mut() else {
             return;
         };
 
-        let save_data = self.base().save_data();
         synced_data.set_air_supply(save_data.air_supply);
         synced_data.set_custom_name(save_data.custom_name);
         synced_data.set_custom_name_visible(save_data.custom_name_visible);
         synced_data.set_silent(save_data.silent);
         synced_data.set_no_gravity(save_data.no_gravity);
         synced_data.set_base_glowing_flag(save_data.glowing);
-        synced_data.set_base_ticks_frozen(self.ticks_frozen());
-        synced_data.set_base_on_fire_flag(self.is_on_fire() || self.has_visual_fire());
+        synced_data.set_base_ticks_frozen(ticks_frozen);
+        synced_data.set_base_on_fire_flag(on_fire);
     }
 
     /// Returns true if this entity is currently touching water.
@@ -2476,7 +2529,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
             });
 
         let speed = {
-            let mut random = self.base().random().lock();
+            let self_base = self.base();
+            let mut random = self_base.random().lock();
             f64::from(random.next_f32().mul_add(0.2, 0.1))
         };
         let step = direction_step(closest_direction);
@@ -2502,16 +2556,16 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Applies current block-contact effects to this entity.
     ///
     /// Mirrors the shared ownership boundary of vanilla `Entity.applyEffectsFromBlocks`.
-    fn apply_effects_from_blocks(&self) {
-        let entity = self.as_entity_event_source();
+    fn apply_effects_from_blocks(&mut self) {
         let movements = self.base().take_movements_for_block_effects();
+        let entity = self.as_entity_event_source_mut();
         apply_effects_from_block_movements(entity, &movements);
     }
 
     /// Replays the last finalized block-contact movement list.
-    fn apply_effects_from_blocks_for_last_movements(&self) {
-        let entity = self.as_entity_event_source();
+    fn apply_effects_from_blocks_for_last_movements(&mut self) {
         let movements = self.base().last_movements_for_block_effects();
+        let entity = self.as_entity_event_source_mut();
         apply_effects_from_block_movements(entity, &movements);
     }
 
@@ -2540,7 +2594,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Mirrors the shared tail of vanilla player and controlled-vehicle movement
     /// handling after rollback/collision validation has accepted the target.
     fn default_apply_accepted_client_movement(
-        &self,
+        &mut self,
         world: &Arc<World>,
         accepted: AcceptedClientMovement,
     ) -> Result<AcceptedClientMovementOutcome, EntityMoveError> {
@@ -2567,7 +2621,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Applies final state accepted from a client-authored movement packet.
     fn apply_accepted_client_movement(
-        &self,
+        &mut self,
         world: &Arc<World>,
         accepted: AcceptedClientMovement,
     ) -> Result<AcceptedClientMovementOutcome, EntityMoveError> {
@@ -2576,7 +2630,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Applies final state accepted from a controlled-vehicle movement packet.
     fn apply_accepted_client_vehicle_movement(
-        &self,
+        &mut self,
         world: &Arc<World>,
         mut accepted: AcceptedClientMovement,
     ) -> Result<AcceptedClientMovementOutcome, EntityMoveError> {
@@ -2586,9 +2640,13 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Attempts to set the entity's position through world lifecycle validation.
+    ///
+    /// Threads `self` (the already-locked concrete entity) to the lifecycle callback so
+    /// move-triggered tracker work reuses it instead of re-locking the behavior mutex.
     #[must_use = "movement commits can fail when world entity state rejects the update"]
-    fn try_set_position(&self, pos: DVec3) -> Result<(), EntityMoveError> {
-        self.base().try_set_position(pos)
+    fn try_set_position(&mut self, pos: DVec3) -> Result<(), EntityMoveError> {
+        self.base()
+            .try_set_position_with_entity(self.as_entity_event_source_mut(), pos)
     }
 
     /// Sets the vanilla movement-trace old position to the current position.
@@ -2744,10 +2802,10 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets the physical pose and synchronized pose metadata.
-    fn set_pose(&self, pose: EntityPose) {
+    fn set_pose(&mut self, pose: EntityPose) {
         self.base()
             .set_pose_and_dimensions(pose, self.dimensions_for_pose(pose));
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_pose(pose);
         }
     }
@@ -2793,9 +2851,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets the synchronized vanilla `Air` value.
-    fn set_air_supply(&self, air_supply: i32) {
+    fn set_air_supply(&mut self, air_supply: i32) {
         self.base().set_air_supply(air_supply);
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_air_supply(air_supply);
         }
     }
@@ -2826,9 +2884,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets this entity's optional vanilla custom name.
-    fn set_custom_name(&self, custom_name: Option<TextComponent>) {
+    fn set_custom_name(&mut self, custom_name: Option<TextComponent>) {
         self.base().set_custom_name(custom_name.clone());
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_custom_name(custom_name);
         }
     }
@@ -2839,9 +2897,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets whether vanilla renders this entity's custom name.
-    fn set_custom_name_visible(&self, visible: bool) {
+    fn set_custom_name_visible(&mut self, visible: bool) {
         self.base().set_custom_name_visible(visible);
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_custom_name_visible(visible);
         }
     }
@@ -2852,9 +2910,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets this entity's server-owned vanilla glowing tag.
-    fn set_glowing_tag(&self, glowing: bool) {
+    fn set_glowing_tag(&mut self, glowing: bool) {
         self.base().set_glowing(glowing);
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_base_glowing_flag(glowing);
         }
     }
@@ -2900,9 +2958,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets whether sounds from this entity are suppressed.
-    fn set_silent(&self, silent: bool) {
+    fn set_silent(&mut self, silent: bool) {
         self.base().set_silent(silent);
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_silent(silent);
         }
     }
@@ -2944,7 +3002,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Plays vanilla's extinguished-on-fire entity sound.
     fn play_entity_on_fire_extinguished_sound(&self) {
         let pitch = {
-            let mut random = self.base().random().lock();
+            let self_base = self.base();
+            let mut random = self_base.random().lock();
             1.6 + (random.next_f32() - random.next_f32()) * 0.4
         };
         self.play_sound(&sound_events::ENTITY_GENERIC_EXTINGUISH_FIRE, 0.7, pitch);
@@ -3023,7 +3082,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Plays this entity's swim sound at the given volume.
     fn play_swim_sound(&self, volume: f32) {
         let pitch = {
-            let mut random = self.base().random().lock();
+            let self_base = self.base();
+            let mut random = self_base.random().lock();
             1.0 + (random.next_f32() - random.next_f32()) * 0.4
         };
         self.play_sound(self.swim_sound(), volume, pitch);
@@ -3202,9 +3262,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Sets the shared vanilla `NoGravity` flag.
-    fn set_no_gravity(&self, no_gravity: bool) {
+    fn set_no_gravity(&mut self, no_gravity: bool) {
         self.base().set_no_gravity(no_gravity);
-        if let Some(synced_data) = self.synced_data() {
+        if let Some(synced_data) = self.synced_data_mut() {
             synced_data.set_no_gravity(no_gravity);
         }
     }
@@ -3249,7 +3309,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Moves the entity without collision physics.
-    fn move_without_physics(&self, delta: DVec3) -> Option<MoveResult> {
+    fn move_without_physics(&mut self, delta: DVec3) -> Option<MoveResult> {
         let final_position = self.position() + delta;
         if let Err(error) = self.try_set_position(final_position) {
             log::debug!(
@@ -3277,7 +3337,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// Mirrors vanilla's `Entity.move(MoverType, Vec3)`.
     /// Updates position, `on_ground`, velocity (on collision), and returns collision info.
-    fn move_entity(&self, mover_type: MoverType, delta: DVec3) -> Option<MoveResult> {
+    fn move_entity(&mut self, mover_type: MoverType, delta: DVec3) -> Option<MoveResult> {
         let world = self.level()?;
         if self.no_physics() {
             return self.move_without_physics(delta);
@@ -3562,11 +3622,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// entity's position with the given Y offset and has a default pickup delay.
     ///
     /// Returns `None` if the item stack is empty or the entity has no world.
-    fn spawn_at_location(
-        &self,
-        item: ItemStack,
-        y_offset: f64,
-    ) -> Option<Arc<entities::ItemEntity>> {
+    fn spawn_at_location(&self, item: ItemStack, y_offset: f64) -> Option<SharedEntity> {
         let world = self.level()?;
         let pos = self.position();
         world.spawn_item(DVec3::new(pos.x, pos.y + y_offset, pos.z), item)
@@ -3577,7 +3633,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         &self,
         item: ItemStack,
         offset: DVec3,
-    ) -> Option<Arc<entities::ItemEntity>> {
+    ) -> Option<SharedEntity> {
         let world = self.level()?;
         world.spawn_item(self.position() + offset, item)
     }
@@ -3599,7 +3655,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// are already restored; this handles type-specific data.
     ///
     /// Mirrors vanilla's `Entity.readAdditionalSaveData()`.
-    fn load_additional(&self, _nbt: BorrowedNbtCompoundView<'_, '_>) {}
+    fn load_additional(&mut self, _nbt: BorrowedNbtCompoundView<'_, '_>) {}
 
     /// Applies damage to this entity.
     ///
@@ -3610,7 +3666,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         unused_variables,
         reason = "default trait impl; parameters used by overrides"
     )]
-    fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+    fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
         false
     }
 
@@ -3618,7 +3674,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// The default implementation logs a warning — non-player entity teleportation
     /// is not yet implemented. Override in entity types that support it.
-    fn change_world(self: Arc<Self>, _teleport_transition: &TeleportTransition) {
+    fn change_world(&self, _teleport_transition: &TeleportTransition) {
         log::warn!(
             "change_world called on entity {} which does not implement world changes",
             self.id(),
@@ -3731,7 +3787,7 @@ pub trait LivingEntity: Entity {
     fn get_health(&self) -> f32;
 
     /// Sets the health of the entity, clamped between 0 and max health.
-    fn set_health(&self, health: f32);
+    fn set_health(&mut self, health: f32);
 
     /// Gets the maximum health from the attribute system.
     fn get_max_health(&self) -> f32 {
@@ -3756,7 +3812,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Heals the entity by the specified amount.
-    fn heal(&self, amount: f32) {
+    fn heal(&mut self, amount: f32) {
         let current_health = self.get_health();
         if current_health > 0.0 {
             self.set_health(current_health + amount);
@@ -3780,7 +3836,8 @@ pub trait LivingEntity: Entity {
 
     /// Returns vanilla `LivingEntity.getVoicePitch`.
     fn voice_pitch(&self) -> f32 {
-        let mut random = self.base().random().lock();
+        let self_base = self.base();
+        let mut random = self_base.random().lock();
         if self.is_baby() {
             (random.next_f32() - random.next_f32()) * 0.2 + 1.5
         } else {
@@ -4070,7 +4127,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Main vanilla living-entity damage entry point.
-    fn hurt_server(&self, source: &DamageSource, amount: f32) -> bool {
+    fn hurt_server(&mut self, source: &DamageSource, amount: f32) -> bool {
         if self.is_invulnerable_to(source) {
             return false;
         }
@@ -4141,7 +4198,7 @@ pub trait LivingEntity: Entity {
     fn before_actually_hurt(&self, _source: &DamageSource, _amount: f32) {}
 
     /// Applies damage after vanilla reductions.
-    fn actually_hurt(&self, _source: &DamageSource, amount: f32) {
+    fn actually_hurt(&mut self, _source: &DamageSource, amount: f32) {
         if amount <= 0.0 {
             return;
         }
@@ -4183,7 +4240,8 @@ pub trait LivingEntity: Entity {
         }
 
         while xd * xd + zd * zd < KNOCKBACK_DIRECTION_EPSILON_SQ {
-            let mut random = self.base().random().lock();
+            let self_base = self.base();
+            let mut random = self_base.random().lock();
             xd = (random.next_f64() - random.next_f64()) * 0.01;
             zd = (random.next_f64() - random.next_f64()) * 0.01;
         }
@@ -4254,7 +4312,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Processes vanilla living death side effects.
-    fn die(&self, source: &DamageSource) {
+    fn die(&mut self, source: &DamageSource) {
         if self.is_removed() {
             return;
         }
@@ -4541,7 +4599,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Sets whether this entity is fall flying.
-    fn set_fall_flying(&self, fall_flying: bool) {
+    fn set_fall_flying(&mut self, fall_flying: bool) {
         self.set_shared_fall_flying(fall_flying);
         self.living_base().set_fall_flying(fall_flying);
     }
@@ -4844,12 +4902,12 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `Player.startFallFlying()`.
-    fn start_fall_flying(&self) {
+    fn start_fall_flying(&mut self) {
         self.set_fall_flying(true);
     }
 
     /// Mirrors vanilla `Player.tryToStartFallFlying()`.
-    fn try_to_start_fall_flying(&self) -> bool {
+    fn try_to_start_fall_flying(&mut self) -> bool {
         if !self.is_fall_flying() && self.can_glide() && !self.is_in_water() {
             self.start_fall_flying();
             return true;
@@ -4985,7 +5043,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Server AI hook called from vanilla `LivingEntity.aiStep()`.
-    fn server_ai_step(&self) {}
+    fn server_ai_step(&mut self) {}
 
     /// Returns vanilla `LivingEntity.getJumpBoostPower()`.
     fn get_jump_boost_power(&self) -> f32 {
@@ -5098,7 +5156,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.travelRidden()`.
-    fn travel_ridden(&self, controller: &Player, self_input: DVec3) -> Option<MoveResult> {
+    fn travel_ridden(&mut self, controller: &Player, self_input: DVec3) -> Option<MoveResult> {
         let ridden_input = self.ridden_input(controller, self_input);
         self.tick_ridden(controller, ridden_input);
         if self.can_simulate_movement() {
@@ -5114,7 +5172,7 @@ pub trait LivingEntity: Entity {
     ///
     /// This covers the shared travel state Steel currently has; mob AI and
     /// equipment ticking are still separate follow-up work.
-    fn default_ai_step(&self) -> Option<MoveResult> {
+    fn default_ai_step(&mut self) -> Option<MoveResult> {
         self.tick_no_jump_delay();
         if !self.can_simulate_movement() {
             self.set_velocity(self.velocity() * 0.98);
@@ -5144,9 +5202,9 @@ pub trait LivingEntity: Entity {
         );
         if Entity::is_alive(self)
             && let Some(controller_entity) = self.controlling_passenger()
-            && let Some(controller) = controller_entity.as_player()
+            && let Some(controller) = controller_entity.player()
         {
-            return self.travel_ridden(controller, input);
+            return self.travel_ridden(&controller, input);
         }
 
         if !self.can_simulate_movement() || !self.is_effective_ai() {
@@ -5157,7 +5215,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.aiStep()`.
-    fn ai_step(&self) -> Option<MoveResult> {
+    fn ai_step(&mut self) -> Option<MoveResult> {
         self.default_ai_step()
     }
 
@@ -5263,7 +5321,7 @@ pub trait LivingEntity: Entity {
 
     /// Mirrors vanilla `LivingEntity.handleRelativeFrictionAndCalculateMovement()`.
     fn handle_relative_friction_and_calculate_movement(
-        &self,
+        &mut self,
         input: DVec3,
         block_friction: f32,
     ) -> Option<(DVec3, MoveResult)> {
@@ -5281,7 +5339,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.travelInAir()`.
-    fn travel_in_air(&self, input: DVec3) -> Option<MoveResult> {
+    fn travel_in_air(&mut self, input: DVec3) -> Option<MoveResult> {
         let world = self.level()?;
         let pos_below = self.block_pos_below_that_affects_movement()?;
         let block_friction = if self.on_ground() {
@@ -5371,7 +5429,7 @@ pub trait LivingEntity: Entity {
 
     /// Mirrors vanilla `LivingEntity.travelInWater()`.
     fn travel_in_water(
-        &self,
+        &mut self,
         input: DVec3,
         base_gravity: f64,
         is_falling: bool,
@@ -5421,7 +5479,7 @@ pub trait LivingEntity: Entity {
 
     /// Mirrors vanilla `LivingEntity.travelInLava()`.
     fn travel_in_lava(
-        &self,
+        &mut self,
         input: DVec3,
         base_gravity: f64,
         is_falling: bool,
@@ -5455,7 +5513,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.travelInFluid()`.
-    fn travel_in_fluid(&self, input: DVec3) -> Option<MoveResult> {
+    fn travel_in_fluid(&mut self, input: DVec3) -> Option<MoveResult> {
         let is_falling = self.velocity().y <= 0.0;
         let old_y = self.position().y;
         let base_gravity = self.get_effective_gravity();
@@ -5469,7 +5527,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors the validation part of vanilla `LivingEntity.updateFallFlying()`.
-    fn update_fall_flying(&self) {
+    fn update_fall_flying(&mut self) {
         self.check_fall_distance_accumulation();
         if self.can_glide() {
             if let Some(free_fall_interval) =
@@ -5535,14 +5593,14 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.stopFallFlying()`.
-    fn stop_fall_flying(&self) {
+    fn stop_fall_flying(&mut self) {
         self.set_fall_flying(true);
         self.set_fall_flying(false);
     }
 
     /// Mirrors vanilla `LivingEntity.handleFallFlyingCollisions()`.
     fn handle_fall_flying_collisions(
-        &self,
+        &mut self,
         previous_horizontal_speed: f64,
         new_horizontal_speed: f64,
     ) {
@@ -5563,7 +5621,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.travelFallFlying()`.
-    fn travel_fall_flying(&self, input: DVec3) -> Option<MoveResult> {
+    fn travel_fall_flying(&mut self, input: DVec3) -> Option<MoveResult> {
         if self.on_climbable() {
             let result = self.travel_in_air(input);
             self.stop_fall_flying();
@@ -5580,7 +5638,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Default vanilla `LivingEntity.travel()` implementation for overrides.
-    fn default_travel(&self, input: DVec3) -> Option<MoveResult> {
+    fn default_travel(&mut self, input: DVec3) -> Option<MoveResult> {
         let world = self.level()?;
         let fluid_state = get_fluid_state(&world, self.block_position());
         if self.should_travel_in_fluid(fluid_state) {
@@ -5594,7 +5652,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.travel()`.
-    fn travel(&self, input: DVec3) -> Option<MoveResult> {
+    fn travel(&mut self, input: DVec3) -> Option<MoveResult> {
         self.default_travel(input)
     }
 
@@ -5629,7 +5687,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Sets whether the entity is sprinting.
-    fn set_sprinting(&self, sprinting: bool) {
+    fn set_sprinting(&mut self, sprinting: bool) {
         self.set_shared_sprinting(sprinting);
         self.living_base().set_sprinting(sprinting);
     }
@@ -5660,7 +5718,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Drains dirty attributes and applies server-side effects.
-    fn refresh_dirty_attributes(&self) {
+    fn refresh_dirty_attributes(&mut self) {
         let dirty = self.attributes().lock().drain_dirty_updates();
         for attr in dirty {
             if attr.key == vanilla_attributes::MAX_HEALTH.key {
@@ -5753,17 +5811,28 @@ fn living_entity_loot_ref<E: LivingEntity + ?Sized>(entity: &E) -> EntityRef<'_>
     }
 }
 
-fn entity_loot_ref(entity: &dyn Entity) -> EntityRef<'_> {
-    let living_entity = entity.as_living_entity();
+fn entity_loot_ref(entity: &EntityBase) -> EntityRef<'_> {
+    let flags = entity
+        .with_entity_ref(|e| {
+            let living_entity = e.as_living_entity();
+            EntityRefFlags {
+                is_on_fire: e.is_on_fire(),
+                is_sneaking: e.is_crouching(),
+                is_sprinting: living_entity.is_some_and(|entity| entity.is_sprinting()),
+                is_swimming: e.is_swimming(),
+                is_baby: living_entity.is_some_and(|entity| entity.is_baby()),
+            }
+        })
+        .unwrap_or(EntityRefFlags {
+            is_on_fire: false,
+            is_sneaking: false,
+            is_sprinting: false,
+            is_swimming: false,
+            is_baby: false,
+        });
     EntityRef {
         entity_type: Some(&entity.entity_type().key),
-        flags: EntityRefFlags {
-            is_on_fire: entity.is_on_fire(),
-            is_sneaking: entity.is_crouching(),
-            is_sprinting: living_entity.is_some_and(|entity| entity.is_sprinting()),
-            is_swimming: entity.is_swimming(),
-            is_baby: living_entity.is_some_and(|entity| entity.is_baby()),
-        },
+        flags,
         // TODO: Include equipment and custom name once loot contexts can snapshot entity data.
         equipment: None,
         custom_name: None,
@@ -5772,7 +5841,10 @@ fn entity_loot_ref(entity: &dyn Entity) -> EntityRef<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::{
+        ops::DerefMut,
+        sync::{Arc, Weak},
+    };
 
     use glam::DVec3;
     use steel_registry::blocks::{
@@ -5809,19 +5881,23 @@ mod tests {
     };
 
     struct PushableTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
     }
 
     impl PushableTestEntity {
         fn shared(id: i32, position: DVec3) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::new(id, position, vanilla_entities::ITEM.dimensions, Weak::new()),
-            })
+            EntityBase::pack_with(
+                id,
+                position,
+                vanilla_entities::ITEM.dimensions,
+                Weak::new(),
+                |base| Self { base },
+            )
         }
     }
 
     impl Entity for PushableTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -5835,22 +5911,41 @@ mod tests {
     }
 
     struct LeashNotificationTestEntity {
-        base: EntityBase,
-        holder_notifications: SyncMutex<Vec<i32>>,
-        removed_notifications: SyncMutex<Vec<i32>>,
+        base: Weak<EntityBase>,
+        holder_notifications: Arc<SyncMutex<Vec<i32>>>,
+        removed_notifications: Arc<SyncMutex<Vec<i32>>>,
     }
 
-    impl LeashNotificationTestEntity {
-        fn new(id: i32) -> Arc<Self> {
+    struct LeashNotifications {
+        entity: SharedEntity,
+        holder_notifications: Arc<SyncMutex<Vec<i32>>>,
+        removed_notifications: Arc<SyncMutex<Vec<i32>>>,
+    }
+
+    impl LeashNotifications {
+        fn new(id: i32) -> Self {
             Self::with_position(id, DVec3::ZERO)
         }
 
-        fn with_position(id: i32, position: DVec3) -> Arc<Self> {
-            Arc::new(Self {
-                base: EntityBase::new(id, position, vanilla_entities::ITEM.dimensions, Weak::new()),
-                holder_notifications: SyncMutex::new(Vec::new()),
-                removed_notifications: SyncMutex::new(Vec::new()),
-            })
+        fn with_position(id: i32, position: DVec3) -> Self {
+            let holder_notifications = Arc::new(SyncMutex::new(Vec::new()));
+            let removed_notifications = Arc::new(SyncMutex::new(Vec::new()));
+            let entity = EntityBase::pack_with(
+                id,
+                position,
+                vanilla_entities::ITEM.dimensions,
+                Weak::new(),
+                |base| LeashNotificationTestEntity {
+                    base,
+                    holder_notifications: holder_notifications.clone(),
+                    removed_notifications: removed_notifications.clone(),
+                },
+            );
+            Self {
+                entity,
+                holder_notifications,
+                removed_notifications,
+            }
         }
 
         fn holder_notifications(&self) -> Vec<i32> {
@@ -5863,7 +5958,7 @@ mod tests {
     }
 
     impl Entity for LeashNotificationTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -5881,24 +5976,23 @@ mod tests {
     }
 
     struct MultiPassengerTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
     }
 
     impl MultiPassengerTestEntity {
         fn shared(id: i32) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::new(
-                    id,
-                    DVec3::ZERO,
-                    vanilla_entities::ITEM.dimensions,
-                    Weak::new(),
-                ),
-            })
+            EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                vanilla_entities::ITEM.dimensions,
+                Weak::new(),
+                |base| Self { base },
+            )
         }
     }
 
     impl Entity for MultiPassengerTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -5922,6 +6016,7 @@ mod tests {
 
         fn on_move_committed(
             &self,
+            _entity: Option<&mut dyn crate::entity::Entity>,
             _old_pos: DVec3,
             _new_pos: DVec3,
         ) -> Result<(), EntityMoveError> {
@@ -5934,7 +6029,7 @@ mod tests {
     }
 
     struct KnownMovementTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         entity_type: EntityTypeRef,
         known_movement: DVec3,
         known_speed: DVec3,
@@ -5948,18 +6043,28 @@ mod tests {
             known_movement: DVec3,
             known_speed: DVec3,
         ) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::new(id, DVec3::ZERO, entity_type.dimensions, Weak::new()),
-                entity_type,
-                known_movement,
-                known_speed,
-                uses_client_movement_packets: entity_type == &vanilla_entities::PLAYER,
-            })
+            let entity = EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                entity_type.dimensions,
+                Weak::new(),
+                |base| Self {
+                    base,
+                    entity_type,
+                    known_movement,
+                    known_speed,
+                    uses_client_movement_packets: entity_type == &vanilla_entities::PLAYER,
+                },
+            );
+            // A real player controller reports `known_speed` from base state, which
+            // is what readers see through a `SharedEntity`. Mirror that here.
+            entity.set_known_speed(known_speed);
+            entity
         }
     }
 
     impl Entity for KnownMovementTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -5981,7 +6086,8 @@ mod tests {
     }
 
     struct LivingFluidTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
+        base_strong: Option<Arc<EntityBase>>,
         living_base: LivingEntityBase,
         entity_data: SyncMutex<SyncedLivingEntityData>,
         health: SyncMutex<f32>,
@@ -5993,12 +6099,12 @@ mod tests {
 
     impl LivingFluidTestEntity {
         fn new(water_height: f64, lava_height: f64, affected_by_fluids: bool) -> Self {
-            let base = EntityBase::new(
+            let base = Arc::new(EntityBase::new(
                 1,
                 DVec3::ZERO,
                 vanilla_entities::PLAYER.dimensions,
                 Weak::new(),
-            );
+            ));
             base.set_fluid_contact(EntityFluidContact::from_parts(
                 water_height,
                 lava_height,
@@ -6006,7 +6112,8 @@ mod tests {
                 false,
             ));
             Self {
-                base,
+                base: Arc::downgrade(&base),
+                base_strong: Some(base),
                 living_base: LivingEntityBase::new(&vanilla_entities::PLAYER),
                 entity_data: SyncMutex::new(SyncedLivingEntityData::new()),
                 health: SyncMutex::new(20.0),
@@ -6040,10 +6147,17 @@ mod tests {
         fn equip(&self, slot: EquipmentSlot, stack: ItemStack) {
             self.living_base.equipment().lock().set(slot, stack);
         }
+
+        /// Attaches this entity to its own base and returns the shared handle.
+        fn shared(mut self) -> SharedEntity {
+            let base = self.base_strong.take().expect("entity already shared");
+            base.attach_entity(Arc::new(SyncMutex::new(self)));
+            base
+        }
     }
 
     impl Entity for LivingFluidTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -6067,7 +6181,7 @@ mod tests {
             LivingEntity::get_attribute_gravity(self)
         }
 
-        fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+        fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
             LivingEntity::hurt_server(self, source, amount)
         }
 
@@ -6085,7 +6199,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health.clamp(0.0, self.get_max_health());
         }
 
@@ -6105,26 +6219,24 @@ mod tests {
     }
 
     struct ControlledVehicleTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         controller: Option<SharedEntity>,
     }
 
     impl ControlledVehicleTestEntity {
         fn shared(id: i32, controller: Option<SharedEntity>) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::new(
-                    id,
-                    DVec3::ZERO,
-                    vanilla_entities::ACACIA_BOAT.dimensions,
-                    Weak::new(),
-                ),
-                controller,
-            })
+            EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                vanilla_entities::ACACIA_BOAT.dimensions,
+                Weak::new(),
+                |base| Self { base, controller },
+            )
         }
     }
 
     impl Entity for ControlledVehicleTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -6174,11 +6286,11 @@ mod tests {
     #[test]
     fn default_tick_runs_vanilla_entity_base_tick() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
-        entity.base().set_boarding_cooldown(2);
+        entity.set_boarding_cooldown(2);
 
-        entity.default_tick();
+        entity.with_entity(|e| e.default_tick());
 
-        assert_eq!(entity.base().boarding_cooldown(), 1);
+        assert_eq!(entity.boarding_cooldown(), 1);
     }
 
     #[test]
@@ -6238,7 +6350,7 @@ mod tests {
         init_test_registry();
 
         let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
-        let attacker: SharedEntity = Arc::new(LivingFluidTestEntity::new(0.0, 0.0, true));
+        let attacker: SharedEntity = LivingFluidTestEntity::new(0.0, 0.0, true).shared();
         entity.advance_tick_count();
 
         entity.set_last_hurt_by_mob(Some(&attacker));
@@ -6262,14 +6374,13 @@ mod tests {
         init_test_registry();
 
         let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
-        let target = Arc::new(LivingFluidTestEntity::new(0.0, 0.0, true));
-        let target_entity: SharedEntity = target.clone();
+        let target: SharedEntity = LivingFluidTestEntity::new(0.0, 0.0, true).shared();
 
-        entity.set_last_hurt_mob(Some(&target_entity));
+        entity.set_last_hurt_mob(Some(&target));
         assert!(entity.last_hurt_mob().is_some());
         assert_eq!(entity.last_hurt_mob_timestamp(), 0);
 
-        target.set_health(0.0);
+        target.with_living_mut(|living| living.set_health(0.0));
         entity.living_base().tick_living_combat_memory(1);
 
         assert!(entity.last_hurt_mob().is_none());
@@ -6280,7 +6391,7 @@ mod tests {
     fn living_death_loot_table_uses_default_and_custom_mob_tables() {
         init_test_registry();
 
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let Some(default_table) = pig.death_loot_table() else {
             panic!("pig should resolve its default entity loot table");
         };
@@ -6350,7 +6461,9 @@ mod tests {
             entity_id: entity.id(),
         }));
 
-        let result = entity.move_without_physics(DVec3::new(1.0, 0.0, 0.0));
+        let result = entity
+            .with_entity(|e| e.move_without_physics(DVec3::new(1.0, 0.0, 0.0)))
+            .flatten();
 
         assert!(result.is_none());
         assert_vec3_close(entity.position(), DVec3::ZERO);
@@ -6402,14 +6515,17 @@ mod tests {
     fn look_angle_matches_vanilla_view_vector_axes() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
+        let look_angle =
+            |entity: &SharedEntity| entity.with_entity_ref(|e| e.look_angle()).unwrap();
+
         entity.set_rotation((0.0, 0.0));
-        assert_vec3_close(entity.look_angle(), DVec3::new(0.0, 0.0, 1.0));
+        assert_vec3_close(look_angle(&entity), DVec3::new(0.0, 0.0, 1.0));
 
         entity.set_rotation((90.0, 0.0));
-        assert_vec3_close(entity.look_angle(), DVec3::new(-1.0, 0.0, 0.0));
+        assert_vec3_close(look_angle(&entity), DVec3::new(-1.0, 0.0, 0.0));
 
         entity.set_rotation((0.0, 90.0));
-        assert_vec3_close(entity.look_angle(), DVec3::new(0.0, -1.0, 0.0));
+        assert_vec3_close(look_angle(&entity), DVec3::new(0.0, -1.0, 0.0));
     }
 
     #[test]
@@ -6553,11 +6669,14 @@ mod tests {
     #[test]
     fn living_visibility_percent_uses_discrete_and_invisible_scaling() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
 
         assert_f64_close(entity.get_visibility_percent(None), 1.0);
 
-        EntitySyncedData::set_base_invisible_flag(&entity.entity_data, true);
+        {
+            let mut data = entity.entity_data.lock();
+            EntitySyncedData::set_base_invisible_flag(data.deref_mut(), true);
+        }
 
         let invisible_without_armor = 0.7 * f64::from(0.1_f32);
         assert_f64_close(entity.get_visibility_percent(None), invisible_without_armor);
@@ -6671,7 +6790,7 @@ mod tests {
     #[test]
     fn try_to_start_fall_flying_uses_vanilla_glider_gate() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.equip(
             EquipmentSlot::Chest,
             ItemStack::new(&vanilla_items::ITEMS.elytra),
@@ -6685,7 +6804,7 @@ mod tests {
     #[test]
     fn try_to_start_fall_flying_rejects_levitation() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.equip(
             EquipmentSlot::Chest,
             ItemStack::new(&vanilla_items::ITEMS.elytra),
@@ -6700,7 +6819,7 @@ mod tests {
     #[test]
     fn update_fall_flying_damages_glider_every_second_event_interval() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.equip(
             EquipmentSlot::Chest,
             ItemStack::new(&vanilla_items::ITEMS.elytra),
@@ -6726,7 +6845,7 @@ mod tests {
     #[test]
     fn update_fall_flying_stops_when_glider_gate_fails() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_fall_flying(true);
 
         entity.update_fall_flying();
@@ -6752,7 +6871,7 @@ mod tests {
     #[test]
     fn stop_fall_flying_toggles_shared_state_back_to_false() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_fall_flying(true);
 
         entity.stop_fall_flying();
@@ -6774,7 +6893,7 @@ mod tests {
     #[test]
     fn fluid_falling_adjustment_is_skipped_while_sprinting() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_sprinting(true);
 
         let movement =
@@ -6819,7 +6938,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_applies_health_damage() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         let source = DamageSource::environment(&vanilla_damage_types::GENERIC);
 
         assert!(entity.hurt(&source, 4.0));
@@ -6830,7 +6949,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_ignores_fire_damage_with_fire_resistance() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_mob_effect(vanilla_mob_effects::FIRE_RESISTANCE, 0);
         let source = DamageSource::environment(&vanilla_damage_types::LAVA);
 
@@ -6842,7 +6961,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_processes_default_death_once() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true).with_health(3.0);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true).with_health(3.0);
         let source = DamageSource::environment(&vanilla_damage_types::GENERIC);
 
         assert!(entity.hurt(&source, 4.0));
@@ -6854,7 +6973,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_applies_source_position_knockback() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_on_ground(true);
         let source = DamageSource::environment(&vanilla_damage_types::PLAYER_ATTACK)
             .with_source_position(DVec3::new(1.0, 0.0, 0.0));
@@ -6880,7 +6999,7 @@ mod tests {
         assert_f32_close(living.get_health(), 20.0);
 
         let non_living = PushableTestEntity::shared(2, DVec3::ZERO);
-        assert!(non_living.as_living_entity().is_none());
+        assert!(non_living.with_living(|_| ()).is_none());
     }
 
     #[test]
@@ -6952,7 +7071,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_respects_no_knockback_damage_tag() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_on_ground(true);
         entity.set_velocity(DVec3::new(0.2, 0.3, -0.1));
         let initial_velocity = entity.velocity();
@@ -6968,7 +7087,7 @@ mod tests {
     #[test]
     fn generic_living_hurt_scales_knockback_by_resistance() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_on_ground(true);
         entity
             .attributes()
@@ -7004,7 +7123,7 @@ mod tests {
     #[test]
     fn sprint_jump_from_ground_adds_vanilla_horizontal_impulse() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         let jump_strength = f64::from(vanilla_attributes::JUMP_STRENGTH.default_value as f32);
         entity.set_sprinting(true);
         entity.set_rotation((0.0, 0.0));
@@ -7066,7 +7185,7 @@ mod tests {
     #[test]
     fn default_ai_step_resets_idle_jump_delay_and_dampens_input_before_travel() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_no_jump_delay(2);
         entity.set_travel_input(LivingTravelInput::new(1.0, 0.5, -1.0));
 
@@ -7082,7 +7201,7 @@ mod tests {
     #[test]
     fn default_ai_step_jumps_from_ground_and_sets_vanilla_cooldown() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         let jump_strength = f64::from(vanilla_attributes::JUMP_STRENGTH.default_value as f32);
         entity.set_on_ground(true);
         entity.set_jumping(true);
@@ -7172,13 +7291,13 @@ mod tests {
     fn push_impulse_updates_velocity_and_marks_sync() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
-        entity.push_impulse(DVec3::new(0.1, 0.2, 0.3));
+        entity.with_entity_ref(|e| e.push_impulse(DVec3::new(0.1, 0.2, 0.3)));
 
         assert_vec3_close(entity.velocity(), DVec3::new(0.1, 0.2, 0.3));
         assert!(entity.needs_velocity_sync());
 
         entity.clear_velocity_sync();
-        entity.push_impulse(DVec3::new(f64::INFINITY, 0.0, 0.0));
+        entity.with_entity_ref(|e| e.push_impulse(DVec3::new(f64::INFINITY, 0.0, 0.0)));
 
         assert_vec3_close(entity.velocity(), DVec3::new(0.1, 0.2, 0.3));
         assert!(!entity.needs_velocity_sync());
@@ -7188,7 +7307,7 @@ mod tests {
     fn default_below_world_hook_discards_entity() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
-        entity.on_below_world();
+        entity.with_entity_ref(|e| e.on_below_world());
 
         assert!(entity.is_removed());
     }
@@ -7198,7 +7317,11 @@ mod tests {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
         assert!(entity.controlling_passenger().is_none());
-        assert!(!entity.has_controlling_passenger());
+        assert!(
+            !entity
+                .with_entity_ref(|e| e.has_controlling_passenger())
+                .unwrap()
+        );
     }
 
     #[test]
@@ -7221,35 +7344,28 @@ mod tests {
     fn transfer_leashables_to_holder_moves_valid_mobs() {
         init_test_registry();
 
-        let old_holder: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let new_holder: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            2,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let leashable: SharedEntity = Arc::new(PigEntity::new(
+        let old_holder: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let new_holder: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = PigEntity::new(
             &vanilla_entities::PIG,
             3,
             DVec3::new(1.0, 0.0, 0.0),
             Weak::new(),
-        ));
-        let Some(mob) = leashable.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
-        assert!(mob.set_leashed_to(&old_holder));
+        );
+        assert!(
+            leashable
+                .with_mob(|mob| mob.set_leashed_to(&old_holder))
+                .unwrap()
+        );
 
         assert!(transfer_leashables_to_holder(
             vec![Arc::clone(&leashable)],
             &new_holder
         ));
 
-        let Some(holder) = mob.leash_holder() else {
+        let Some(holder) = leashable.with_mob(|mob| mob.leash_holder()).unwrap() else {
             panic!("transferred mob should stay leashed");
         };
         assert_eq!(holder.id(), new_holder.id());
@@ -7259,35 +7375,28 @@ mod tests {
     fn transfer_leashables_to_holder_skips_mobs_outside_snap_distance() {
         init_test_registry();
 
-        let old_holder: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            1,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let new_holder: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            2,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let leashable: SharedEntity = Arc::new(PigEntity::new(
+        let old_holder: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let new_holder: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = PigEntity::new(
             &vanilla_entities::PIG,
             3,
             DVec3::new(20.0, 0.0, 0.0),
             Weak::new(),
-        ));
-        let Some(mob) = leashable.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
-        assert!(mob.set_leashed_to(&old_holder));
+        );
+        assert!(
+            leashable
+                .with_mob(|mob| mob.set_leashed_to(&old_holder))
+                .unwrap()
+        );
 
         assert!(!transfer_leashables_to_holder(
             vec![Arc::clone(&leashable)],
             &new_holder
         ));
 
-        let Some(holder) = mob.leash_holder() else {
+        let Some(holder) = leashable.with_mob(|mob| mob.leash_holder()).unwrap() else {
             panic!("untransferred mob should stay leashed");
         };
         assert_eq!(holder.id(), old_holder.id());
@@ -7297,22 +7406,17 @@ mod tests {
     fn set_leashed_to_notifies_replaced_holder() {
         init_test_registry();
 
-        let old_holder_typed = LeashNotificationTestEntity::new(1);
-        let old_holder: SharedEntity = old_holder_typed.clone();
-        let new_holder_typed = LeashNotificationTestEntity::new(2);
-        let new_holder: SharedEntity = new_holder_typed.clone();
-        let leashable: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            3,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let Some(mob) = leashable.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
+        let old_holder_typed = LeashNotifications::new(1);
+        let old_holder: SharedEntity = old_holder_typed.entity.clone();
+        let new_holder_typed = LeashNotifications::new(2);
+        let new_holder: SharedEntity = new_holder_typed.entity.clone();
+        let leashable: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
-        assert!(mob.set_leashed_to(&old_holder));
-        assert!(mob.set_leashed_to(&new_holder));
+        leashable.with_mob(|mob| {
+            assert!(mob.set_leashed_to(&old_holder));
+            assert!(mob.set_leashed_to(&new_holder));
+        });
 
         assert_eq!(old_holder_typed.removed_notifications(), vec![3]);
         assert!(new_holder_typed.removed_notifications().is_empty());
@@ -7322,23 +7426,21 @@ mod tests {
     fn tick_leash_notifies_live_holder() {
         init_test_registry();
 
-        let holder_typed = LeashNotificationTestEntity::new(1);
-        let holder: SharedEntity = holder_typed.clone();
-        let leashable: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            3,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let Some(mob) = leashable.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
-        assert!(mob.set_leashed_to(&holder));
+        let holder_typed = LeashNotifications::new(1);
+        let holder: SharedEntity = holder_typed.entity.clone();
+        let leashable: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
-        mob.tick_leash();
+        let still_leashed = leashable
+            .with_mob(|mob| {
+                assert!(mob.set_leashed_to(&holder));
+                mob.tick_leash();
+                mob.is_leashed()
+            })
+            .unwrap();
 
         assert_eq!(holder_typed.holder_notifications(), vec![3]);
-        assert!(mob.is_leashed());
+        assert!(still_leashed);
         assert!(holder_typed.removed_notifications().is_empty());
     }
 
@@ -7346,25 +7448,22 @@ mod tests {
     fn tick_leash_snaps_live_holder_past_snap_distance() {
         init_test_registry();
 
-        let holder_typed =
-            LeashNotificationTestEntity::with_position(1, DVec3::new(13.0, 0.0, 0.0));
-        let holder: SharedEntity = holder_typed.clone();
-        let leashable: SharedEntity = Arc::new(PigEntity::new(
-            &vanilla_entities::PIG,
-            3,
-            DVec3::ZERO,
-            Weak::new(),
-        ));
-        let Some(mob) = leashable.as_mob() else {
-            panic!("pig should expose mob behavior");
-        };
-        assert!(mob.set_leashed_to(&holder));
+        let holder_typed = LeashNotifications::with_position(1, DVec3::new(13.0, 0.0, 0.0));
+        let holder: SharedEntity = holder_typed.entity.clone();
+        let leashable: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
-        mob.tick_leash();
+        let still_leashed = leashable
+            .with_mob(|mob| {
+                assert!(mob.set_leashed_to(&holder));
+                mob.tick_leash();
+                mob.is_leashed()
+            })
+            .unwrap();
 
         assert_eq!(holder_typed.holder_notifications(), vec![3]);
         assert_eq!(holder_typed.removed_notifications(), vec![3]);
-        assert!(!mob.is_leashed());
+        assert!(!still_leashed);
     }
 
     #[test]
@@ -7373,7 +7472,7 @@ mod tests {
 
         let passenger = PushableTestEntity::shared(1, DVec3::ZERO);
         let vehicle = PushableTestEntity::shared(2, DVec3::ZERO);
-        passenger.base().set_boarding_cooldown(2);
+        passenger.set_boarding_cooldown(2);
 
         assert!(!start_riding_entities(&passenger, &vehicle));
         assert!(!passenger.is_passenger());
@@ -7426,23 +7525,34 @@ mod tests {
         let vehicle = ControlledVehicleTestEntity::shared(2, Some(controller));
 
         assert!(vehicle.uses_client_movement_packets());
-        assert!(!vehicle.is_server_driven_movement());
-        assert!(!vehicle.can_simulate_movement());
-        assert!(!vehicle.is_effective_ai());
+        vehicle.with_entity_ref(|v| {
+            assert!(!v.is_server_driven_movement());
+            assert!(!v.can_simulate_movement());
+            assert!(!v.is_effective_ai());
+        });
 
         vehicle.set_velocity(DVec3::new(4.0, 0.0, 4.0));
-        vehicle.base().advance_base_tick_state();
-        vehicle.base().set_position_local(DVec3::new(2.0, 0.0, 0.0));
-        vehicle.base().advance_base_tick_state();
+        vehicle.advance_base_tick_state();
+        vehicle.set_position_local(DVec3::new(2.0, 0.0, 0.0));
+        vehicle.advance_base_tick_state();
 
-        assert!(vehicle.has_controlling_passenger());
-        assert_vec3_close(vehicle.known_movement(), player_movement);
-        assert_vec3_close(vehicle.known_speed(), player_speed);
+        let known_movement =
+            |vehicle: &SharedEntity| vehicle.with_entity_ref(|v| v.known_movement()).unwrap();
+        let known_speed =
+            |vehicle: &SharedEntity| vehicle.with_entity_ref(|v| v.known_speed()).unwrap();
+
+        assert!(
+            vehicle
+                .with_entity_ref(|v| v.has_controlling_passenger())
+                .unwrap()
+        );
+        assert_vec3_close(known_movement(&vehicle), player_movement);
+        assert_vec3_close(known_speed(&vehicle), player_speed);
 
         vehicle.set_removed(RemovalReason::Discarded);
 
-        assert_vec3_close(vehicle.known_movement(), DVec3::new(4.0, 0.0, 4.0));
-        assert_vec3_close(vehicle.known_speed(), DVec3::new(2.0, 0.0, 0.0));
+        assert_vec3_close(known_movement(&vehicle), DVec3::new(4.0, 0.0, 4.0));
+        assert_vec3_close(known_speed(&vehicle), DVec3::new(2.0, 0.0, 0.0));
     }
 
     #[test]
@@ -7455,12 +7565,18 @@ mod tests {
         );
         let vehicle = ControlledVehicleTestEntity::shared(2, Some(non_player_controller));
         vehicle.set_velocity(DVec3::new(4.0, 0.0, 4.0));
-        vehicle.base().advance_base_tick_state();
-        vehicle.base().set_position_local(DVec3::new(2.0, 0.0, 0.0));
-        vehicle.base().advance_base_tick_state();
+        vehicle.advance_base_tick_state();
+        vehicle.set_position_local(DVec3::new(2.0, 0.0, 0.0));
+        vehicle.advance_base_tick_state();
 
-        assert_vec3_close(vehicle.known_movement(), DVec3::new(4.0, 0.0, 4.0));
-        assert_vec3_close(vehicle.known_speed(), DVec3::new(2.0, 0.0, 0.0));
+        assert_vec3_close(
+            vehicle.with_entity_ref(|v| v.known_movement()).unwrap(),
+            DVec3::new(4.0, 0.0, 4.0),
+        );
+        assert_vec3_close(
+            vehicle.with_entity_ref(|v| v.known_speed()).unwrap(),
+            DVec3::new(2.0, 0.0, 0.0),
+        );
     }
 
     #[test]
@@ -7468,7 +7584,7 @@ mod tests {
         let left = PushableTestEntity::shared(1, DVec3::ZERO);
         let right = PushableTestEntity::shared(2, DVec3::new(1.0, 0.0, 0.0));
 
-        left.push_entity(right.as_ref());
+        right.with_entity_ref(|r| left.push_entity(r));
 
         assert_vec3_close(left.velocity(), DVec3::new(-0.05, 0.0, 0.0));
         assert_vec3_close(right.velocity(), DVec3::new(0.05, 0.0, 0.0));

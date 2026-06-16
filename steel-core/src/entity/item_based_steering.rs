@@ -90,13 +90,14 @@ pub trait ItemSteerable: Entity {
     fn boost_time_total(&self) -> i32;
 
     /// Sets the synced vanilla `boostTimeTotal`.
-    fn set_boost_time_total(&self, boost_time_total: i32);
+    fn set_boost_time_total(&mut self, boost_time_total: i32);
 
     /// Attempts to start an item-steering boost.
-    fn boost(&self) -> bool {
+    fn boost(&mut self) -> bool {
         let boost_time_total = {
             let mut steering = self.item_based_steering().lock();
-            let mut random = self.base().random().lock();
+            let self_base = self.base();
+            let mut random = self_base.random().lock();
             steering.boost(&mut *random)
         };
         let Some(boost_time_total) = boost_time_total else {

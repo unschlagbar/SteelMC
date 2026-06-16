@@ -6,27 +6,37 @@
 use std::{
     collections::{BTreeSet, VecDeque},
     mem,
-    sync::{Arc, Weak},
+    ops::DerefMut,
+    sync::{Arc, OnceLock, Weak},
 };
 
 use glam::DVec3;
 use simdnbt::owned::NbtCompound;
-use steel_registry::entity_data::EntityPose;
+use steel_protocol::packets::game::AttributeSnapshot;
+use steel_registry::entity_data::{DataValue, EntityPose};
 use steel_registry::entity_type::EntityDimensions;
 use steel_registry::vanilla_entities;
-use steel_utils::locks::SyncMutex;
-use steel_utils::random::{Random as _, legacy_random::LegacyRandom};
 use steel_utils::{BlockPos, BlockStateId, WorldAabb};
+use steel_utils::{
+    locks::ArcMutexGuard,
+    random::{Random as _, legacy_random::LegacyRandom},
+};
+use steel_utils::{locks::SyncMutex, types::InteractionHand};
 use text_components::TextComponent;
 use uuid::Uuid;
 
-use crate::entity::fluid_contact::EntityFluidContact;
-use crate::entity::{
-    EntityLevelCallback, EntityMoveError, InsideBlockEffectType, NullEntityCallback, RemovalReason,
-    SharedEntity, WeakEntity,
-};
-use crate::physics::EntityPhysicsState;
 use crate::world::World;
+use crate::{
+    behavior::InteractionResult,
+    entity::{
+        Entity, EntityLevelCallback, EntityMoveError, InsideBlockEffectType, LockedEntity,
+        NullEntityCallback, RemovalReason, SharedEntity, WeakEntity, damage::DamageSource,
+        kind::downcast_entity,
+    },
+    player::Player,
+};
+use crate::{entity::EntityIdentifier, physics::EntityPhysicsState};
+use crate::{entity::fluid_contact::EntityFluidContact, portal::TeleportTransition};
 
 const PISTON_MOVEMENT_LIMIT: f64 = 0.51;
 const PISTON_ZERO_MOVEMENT_EPSILON: f64 = 1.0e-7;
@@ -984,6 +994,13 @@ pub struct EntityBase {
     random: SyncMutex<LegacyRandom>,
     /// Callback for entity lifecycle events.
     level_callback: SyncMutex<Arc<dyn EntityLevelCallback>>,
+    /// The concrete entity implementation. Empty until `attach_entity` is called.
+    entity: OnceLock<Arc<SyncMutex<dyn Entity>>>,
+    /// Set only for player bases. Like every other entity, a player is reached
+    /// mutably by locking; `with_entity`/`with_entity_ref` lock through this weak
+    /// reference. Kept separate from the `entity` slot only because the player is
+    /// also held typed (`Arc<SyncMutex<Player>>`) by the player map and connection.
+    player: Weak<SyncMutex<Player>>,
 }
 
 impl EntityBase {
@@ -993,6 +1010,68 @@ impl EntityBase {
         Self::new_with_state(id, EntityBaseState::new(position, dimensions), world)
     }
 
+    /// Creates a `SharedEntity` by calling `make(weak)` inside `Arc::new_cyclic`.
+    ///
+    /// `make` receives a `Weak<EntityBase>` and must return the concrete entity.
+    /// The base is constructed from `id`, `position`, `dimensions`, and `world`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// EntityBase::pack_with(id, pos, entity_type.dimensions, world, |base| MyEntity {
+    ///     base,
+    ///     entity_type,
+    ///     data: SyncMutex::new(MyData::new()),
+    /// })
+    /// ```
+    #[must_use]
+    pub fn pack_with<E: Entity + 'static>(
+        id: i32,
+        position: DVec3,
+        dimensions: EntityDimensions,
+        world: Weak<World>,
+        make: impl FnOnce(Weak<Self>) -> E,
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|weak| {
+            let b = Self::new(id, position, dimensions, world);
+            b.attach_entity(Arc::new(SyncMutex::new(make(weak.clone()))));
+            b
+        })
+    }
+
+    /// Creates a `SharedEntity` from persisted load data, calling `make(weak)` inside `Arc::new_cyclic`.
+    ///
+    /// `make` receives a `Weak<EntityBase>` and must return the concrete entity.
+    #[must_use]
+    pub fn pack_loaded_with<E: Entity + 'static>(
+        load: EntityBaseLoad,
+        dimensions: EntityDimensions,
+        make: impl FnOnce(Weak<Self>) -> E,
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|weak| {
+            let b = Self::from_load(load, dimensions);
+            b.attach_entity(Arc::new(SyncMutex::new(make(weak.clone()))));
+            b
+        })
+    }
+
+    /// Creates a new `EntityBase` without an Entity and world.
+    #[must_use]
+    pub fn empty(id: i32, position: DVec3, dimensions: EntityDimensions) -> Self {
+        Self::with_uuid_and_state(
+            None,
+            id,
+            Uuid::new_v4(),
+            EntityBaseState::new(position, dimensions),
+            Weak::new(),
+        )
+    }
+
+    /// Creates a new `EntityBase` without an Entity and world.
+    #[must_use]
+    pub fn empty_with_state(id: i32, state: EntityBaseState) -> Self {
+        Self::with_uuid_and_state(None, id, Uuid::new_v4(), state, Weak::new())
+    }
+
     /// Creates a new `EntityBase` with a randomly generated UUID and explicit state.
     #[must_use]
     #[expect(
@@ -1000,7 +1079,7 @@ impl EntityBase {
         reason = "EntityBaseState is an owned construction snapshot built with with_* helpers"
     )]
     pub fn new_with_state(id: i32, state: EntityBaseState, world: Weak<World>) -> Self {
-        Self::with_uuid_and_state(id, Uuid::new_v4(), state, world)
+        Self::with_uuid_and_state(None, id, Uuid::new_v4(), state, world)
     }
 
     /// Creates a new `EntityBase` with the specified UUID.
@@ -1014,7 +1093,13 @@ impl EntityBase {
         dimensions: EntityDimensions,
         world: Weak<World>,
     ) -> Self {
-        Self::with_uuid_and_state(id, uuid, EntityBaseState::new(position, dimensions), world)
+        Self::with_uuid_and_state(
+            None,
+            id,
+            uuid,
+            EntityBaseState::new(position, dimensions),
+            world,
+        )
     }
 
     /// Creates a new `EntityBase` with the specified UUID and restored movement state.
@@ -1027,6 +1112,8 @@ impl EntityBase {
         reason = "EntityBaseState is an owned construction snapshot built with with_* helpers"
     )]
     pub fn with_uuid_and_state(
+        entity: Option<Arc<SyncMutex<dyn Entity>>>,
+
         id: i32,
         uuid: Uuid,
         state: EntityBaseState,
@@ -1043,6 +1130,8 @@ impl EntityBase {
             relationships: SyncMutex::new(EntityRelationshipState::default()),
             random: SyncMutex::new(LegacyRandom::from_seed(rand::random())),
             level_callback: SyncMutex::new(Arc::new(NullEntityCallback)),
+            entity: entity.map_or_else(OnceLock::new, |entity| OnceLock::from(entity)),
+            player: Weak::new(),
         }
     }
 
@@ -1050,6 +1139,7 @@ impl EntityBase {
     #[must_use]
     pub fn from_load(load: EntityBaseLoad, dimensions: EntityDimensions) -> Self {
         let base = Self::with_uuid_and_state(
+            None,
             load.id,
             load.uuid,
             EntityBaseState::new(load.position, dimensions)
@@ -1063,6 +1153,480 @@ impl EntityBase {
         base.replace_save_data(load.save_data);
         base
     }
+
+    // === Entity attachment and delegation ===
+
+    /// Attaches the concrete entity implementation to this base.
+    ///
+    /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
+    /// already attached (double-init is a programming error).
+    pub fn attach_entity(&self, entity: Arc<SyncMutex<dyn Entity>>) {
+        assert!(
+            self.entity.set(entity).is_ok(),
+            "attach_entity called twice on the same EntityBase"
+        );
+    }
+
+    /// Attaches a player to this base.
+    ///
+    /// Player bases do not use the `entity` behavior mutex; delegates reach the
+    /// player lock-free through this weak reference. Panics if an entity or
+    /// player is already attached (double-init is a programming error).
+    pub fn attach_player(&mut self, player: Weak<SyncMutex<Player>>) {
+        assert!(
+            self.entity.get().is_none() && self.player.strong_count() == 0,
+            "attach_player called on an EntityBase that already has an attachment"
+        );
+        self.player = player;
+    }
+
+    /// Returns the player behind this base, if this is a player base.
+    ///
+    /// Returns the shared `Arc<SyncMutex<Player>>`; lock it to access the player.
+    pub fn player(&self) -> Option<Arc<SyncMutex<Player>>> {
+        self.player.upgrade()
+    }
+
+    /// Returns `true` if this base belongs to a player.
+    pub fn is_player(&self) -> bool {
+        self.player.strong_count() > 0
+    }
+
+    /// Calls `tick` on the attached entity. No-op if no entity is attached.
+    pub(crate) fn tick_entity(&self) {
+        if let Some(entity) = self.entity.get() {
+            entity.lock().tick();
+        }
+    }
+
+    /// Calls `ride_tick` on the attached entity. No-op if no entity is attached.
+    pub(crate) fn ride_tick_entity(&self) {
+        if let Some(entity) = self.entity.get() {
+            entity.lock().ride_tick();
+        }
+    }
+
+    /// Runs a closure with a mutable reference to the attached entity or player.
+    /// Returns `None` if nothing is attached. Locks the player (or mob behavior
+    /// mutex) to obtain `&mut dyn Entity`, so the `&mut self` entity-trait methods
+    /// (and cross-entity mutation like `hurt`) work uniformly for players too.
+    pub fn with_entity<R>(&self, f: impl FnOnce(&mut dyn Entity) -> R) -> Option<R> {
+        if let Some(player) = self.player.upgrade() {
+            return Some(f(player.lock().deref_mut()));
+        }
+        Some(f(self.entity.get()?.lock().deref_mut()))
+    }
+
+    /// Runs a closure with a shared reference to the attached entity or player.
+    ///
+    /// For mobs this locks the behavior mutex; for players it upgrades the weak
+    /// player reference and takes no lock at all (players use `&self` methods
+    /// with internal locking). Returns `None` if nothing is attached.
+    ///
+    /// # Lock discipline
+    /// Must not be called from code already running inside this entity's
+    /// behavior lock (re-entrant deadlock) — inside `impl Entity` code, call
+    /// methods on `self` directly. Cross-entity code should hold at most one
+    /// behavior lock at a time and read everything else through base state.
+    pub fn with_entity_ref<R>(&self, f: impl FnOnce(&dyn Entity) -> R) -> Option<R> {
+        if let Some(player) = self.player.upgrade() {
+            return Some(f(&*player.lock()));
+        }
+        Some(f(&*self.entity.get()?.lock()))
+    }
+
+    /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
+    pub fn with_living<R>(
+        &self,
+        f: impl FnOnce(&dyn crate::entity::LivingEntity) -> R,
+    ) -> Option<R> {
+        self.with_entity_ref(|e| e.as_living_entity().map(f))
+            .flatten()
+    }
+
+    /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
+    pub fn with_living_mut<R>(
+        &self,
+        f: impl FnOnce(&mut dyn crate::entity::LivingEntity) -> R,
+    ) -> Option<R> {
+        self.with_entity(|e| e.as_living_entity_mut().map(f))
+            .flatten()
+    }
+
+    /// Runs a closure with the attached entity as a [`Mob`], if it is one.
+    pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&dyn crate::entity::Mob) -> R) -> Option<R> {
+        self.with_entity_ref(|e| e.as_mob().map(f)).flatten()
+    }
+
+    /// Runs a closure with the attached entity as a mutable [`Mob`], if it is one.
+    pub(crate) fn with_mob_mut<R>(
+        &self,
+        f: impl FnOnce(&mut dyn crate::entity::Mob) -> R,
+    ) -> Option<R> {
+        self.with_entity(|e| e.as_mob_mut().map(f)).flatten()
+    }
+
+    /// Runs a closure with the attached entity as a [`PathfinderMob`], if it is one.
+    pub(crate) fn with_pathfinder_mob<R>(
+        &self,
+        f: impl FnOnce(&dyn crate::entity::PathfinderMob) -> R,
+    ) -> Option<R> {
+        self.with_entity_ref(|e| e.as_pathfinder_mob().map(f))
+            .flatten()
+    }
+
+    /// Runs a closure with the attached entity as a mutable [`PathfinderMob`], if it is one.
+    pub(crate) fn with_pathfinder_mob_mut<R>(
+        &self,
+        f: impl FnOnce(&mut dyn crate::entity::PathfinderMob) -> R,
+    ) -> Option<R> {
+        self.with_entity(|e| e.as_pathfinder_mob_mut().map(f))
+            .flatten()
+    }
+
+    /// Runs a closure with the attached entity as an [`Animal`](crate::entity::Animal), if it is one.
+    pub(crate) fn with_animal<R>(
+        &self,
+        f: impl FnOnce(&mut dyn crate::entity::Animal) -> R,
+    ) -> Option<R> {
+        self.with_entity(|e| e.as_animal_mut().map(f)).flatten()
+    }
+
+    /// Runs a closure with a shared reference to the attached entity downcast to `T`.
+    ///
+    /// Pass the `EntityTypeRef` that belongs to `T`, e.g. `&vanilla_entities::PIG`.
+    /// Returns `None` if no entity is attached or the entity type does not match `kind`.
+    pub fn with_entity_as<T: EntityIdentifier, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+        self.with_entity(|e| downcast_entity::<T>(e).map(f))
+            .flatten()
+    }
+
+    /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
+    ///
+    /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
+    /// Use this when you need to hold the lock across multiple calls on the same entity.
+    pub fn lock_entity(&self) -> LockedEntity<'_> {
+        LockedEntity(self.entity.get().unwrap().lock())
+    }
+
+    /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
+    ///
+    /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
+    /// Use this when you need to hold the lock across multiple calls on the same entity.
+    pub fn arc_lock_entity(&self) -> ArcMutexGuard<'static, dyn Entity + 'static> {
+        self.entity.get().unwrap().lock_arc()
+    }
+
+    // === Entity-specific delegates ===
+    // These go through `with_entity_ref`: mobs take the behavior lock, players
+    // are reached lock-free. Never call these from code already inside this
+    // entity's behavior lock — use `self` directly there. Prefer direct base
+    // methods for lock-free state access.
+
+    /// Returns the entity type for this entity.
+    pub fn entity_type(&self) -> steel_registry::entity_type::EntityTypeRef {
+        self.with_entity_ref(|e| e.entity_type())
+            .expect("entity_type called before entity was attached")
+    }
+
+    /// Returns `true` if the entity can be targeted and damaged.
+    pub fn attackable(&self) -> bool {
+        self.with_entity_ref(|e| e.attackable()).unwrap_or(false)
+    }
+
+    /// Returns `true` if players can pick up this entity (items, orbs, etc.).
+    pub fn is_pickable(&self) -> bool {
+        self.with_entity_ref(|e| e.is_pickable()).unwrap_or(false)
+    }
+
+    /// Returns `true` if another entity can push this entity via physics.
+    pub fn is_pushable(&self) -> bool {
+        self.with_entity_ref(|e| e.is_pushable()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the entity is a spectator (no physical presence).
+    pub fn is_spectator(&self) -> bool {
+        self.with_entity_ref(|e| e.is_spectator()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the entity is alive (not dead/removed).
+    pub fn is_alive(&self) -> bool {
+        self.with_entity_ref(|e| e.is_alive()).unwrap_or(false)
+    }
+
+    /// Returns `true` if this entity can accept an additional passenger.
+    pub fn could_accept_passenger(&self) -> bool {
+        self.with_entity_ref(|e| e.could_accept_passenger())
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if `passenger` may board this entity.
+    pub fn can_add_passenger(&self, passenger: &EntityBase) -> bool {
+        passenger
+            .with_entity_ref(|pass| {
+                self.with_entity_ref(|e| e.can_add_passenger(pass))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if this entity should be broadcast to the given player.
+    pub fn broadcast_to_player(&self, player: &crate::player::Player) -> bool {
+        self.with_entity_ref(|e| e.broadcast_to_player(player))
+            .unwrap_or(true)
+    }
+
+    /// Runs vanilla despawn checking for this entity.
+    pub fn check_despawn(&self) {
+        self.with_entity_ref(|e| e.check_despawn());
+    }
+
+    /// Applies damage to this entity from the given source.
+    pub fn hurt(&self, source: &crate::entity::damage::DamageSource, amount: f32) -> bool {
+        self.with_entity(|e| e.hurt(source, amount))
+            .unwrap_or(false)
+    }
+
+    /// Returns the entity's head yaw in degrees.
+    pub fn head_yaw(&self) -> f32 {
+        self.with_entity_ref(|e| e.head_yaw()).unwrap_or(0.0)
+    }
+
+    /// Returns the entity's spawn position for the add-entity packet.
+    pub fn spawn_position(&self) -> DVec3 {
+        self.with_entity_ref(|e| e.spawn_position())
+            .unwrap_or(self.position())
+    }
+
+    /// Returns the entity's spawn data integer for the add-entity packet.
+    pub fn spawn_data(&self) -> i32 {
+        self.with_entity_ref(|e| e.spawn_data()).unwrap_or(0)
+    }
+
+    /// Packs only the dirty synced entity data values.
+    pub fn pack_dirty_entity_data(&self) -> Option<Vec<DataValue>> {
+        self.with_entity_ref(|e| e.pack_dirty_entity_data())
+            .flatten()
+    }
+
+    /// Packs all synced entity data values.
+    pub fn pack_all_entity_data(&self) -> Vec<DataValue> {
+        self.with_entity_ref(|e| e.pack_all_entity_data())
+            .unwrap_or_default()
+    }
+
+    /// Runs pre-sync entity data updates.
+    pub fn update_data_before_sync(&self) {
+        self.with_entity(|e| e.update_data_before_sync());
+    }
+
+    /// Packs all syncable attribute snapshots.
+    pub fn pack_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
+        self.with_entity_ref(|e| e.pack_syncable_attributes())
+            .unwrap_or_default()
+    }
+
+    /// Drains dirty syncable attribute snapshots.
+    pub fn drain_dirty_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
+        self.with_entity_ref(|e| e.drain_dirty_syncable_attributes())
+            .unwrap_or_default()
+    }
+
+    /// Drains dirty mob effect sync changes.
+    pub fn drain_dirty_mob_effects(&self) -> Vec<crate::entity::living_base::MobEffectSyncChange> {
+        self.with_entity_ref(|e| e.drain_dirty_mob_effects())
+            .unwrap_or_default()
+    }
+
+    /// Packs all equipment slots.
+    pub fn pack_all_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
+        self.with_entity_ref(|e| e.pack_all_equipment())
+            .unwrap_or_default()
+    }
+
+    /// Drains dirty equipment slots.
+    pub fn drain_dirty_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
+        self.with_entity_ref(|e| e.drain_dirty_equipment())
+            .unwrap_or_default()
+    }
+
+    /// Saves entity-type-specific NBT data.
+    pub fn save_additional(&self, nbt: &mut simdnbt::owned::NbtCompound) {
+        self.with_entity_ref(|e| e.save_additional(nbt));
+    }
+
+    /// Loads entity-type-specific NBT data.
+    pub fn load_additional(&mut self, nbt: simdnbt::borrow::NbtCompound<'_, '_>) {
+        self.with_entity(|e| e.load_additional(nbt));
+    }
+
+    /// Syncs base fire/freeze data to the entity's synced data.
+    pub fn sync_base_entity_data(&self) {
+        self.with_entity(|e| e.sync_base_entity_data());
+    }
+
+    /// Handles a player touching this entity during pickup processing.
+    pub fn player_touch(&self, player: &Arc<crate::player::Player>) {
+        self.with_entity(|e| e.player_touch(player));
+    }
+
+    /// Positions a rider on this vehicle entity.
+    pub fn position_rider(&self, passenger: &mut dyn Entity) {
+        self.with_entity(|e| e.position_rider(passenger));
+    }
+
+    /// Returns whether this entity uses client-authoritative movement packets.
+    pub fn uses_client_movement_packets(&self) -> bool {
+        self.with_entity_ref(|e| e.uses_client_movement_packets())
+            .unwrap_or(false)
+    }
+
+    /// Teleports this entity to a new world dimension.
+    pub fn change_world(&self, transition: &TeleportTransition) {
+        self.with_entity_ref(|e| e.change_world(transition));
+    }
+
+    /// Returns whether this entity blocks structure building.
+    pub fn blocks_building(&self) -> bool {
+        self.with_entity_ref(|e| e.blocks_building())
+            .unwrap_or(false)
+    }
+
+    /// Returns whether exactly one player is a passenger.
+    pub fn has_exactly_one_player_passenger(&self) -> bool {
+        self.with_entity_ref(|e| e.has_exactly_one_player_passenger())
+            .unwrap_or(false)
+    }
+
+    /// Returns the number of player passengers.
+    pub fn count_player_passengers(&self) -> usize {
+        self.with_entity_ref(|e| e.count_player_passengers())
+            .unwrap_or(0)
+    }
+
+    // === Additional entity-method delegates ===
+
+    pub fn is_passenger(&self) -> bool {
+        self.vehicle().is_some()
+    }
+
+    pub fn has_passenger(&self, passenger: &EntityBase) -> bool {
+        self.has_passenger_id(passenger.id())
+    }
+
+    /// Returns the passenger that drives this vehicle, if any.
+    pub fn controlling_passenger(&self) -> Option<SharedEntity> {
+        self.with_entity_ref(|e| e.controlling_passenger())
+            .flatten()
+    }
+
+    pub fn block_position(&self) -> BlockPos {
+        BlockPos::from(self.position())
+    }
+
+    pub fn is_living_entity(&self) -> bool {
+        self.with_entity_ref(|e| e.is_living_entity())
+            .unwrap_or(false)
+    }
+
+    pub fn is_mob(&self) -> bool {
+        self.with_entity_ref(|e| e.is_mob()).unwrap_or(false)
+    }
+
+    pub fn forces_fall_flying_velocity_sync(&self) -> bool {
+        self.with_entity_ref(|e| e.forces_fall_flying_velocity_sync())
+            .unwrap_or(false)
+    }
+
+    pub fn is_descending(&self) -> bool {
+        self.with_entity_ref(|e| e.is_descending()).unwrap_or(false)
+    }
+
+    pub fn can_be_collided_with(&self) -> bool {
+        self.with_entity_ref(|e| e.can_be_collided_with(None))
+            .unwrap_or(false)
+    }
+
+    pub fn can_interact_with_level(&self) -> bool {
+        self.with_entity_ref(|e| e.can_interact_with_level())
+            .unwrap_or(false)
+    }
+
+    pub fn get_eye_y(&self) -> f64 {
+        self.with_entity_ref(|e| e.get_eye_y())
+            .unwrap_or_else(|| self.dimensions().height as f64 * 0.85)
+    }
+
+    pub fn get_gravity(&self) -> f64 {
+        self.with_entity_ref(|e| e.get_gravity()).unwrap_or(0.08)
+    }
+
+    pub fn known_movement(&self) -> DVec3 {
+        self.with_entity_ref(|e| e.known_movement())
+            .unwrap_or(DVec3::ZERO)
+    }
+
+    pub fn on_climbable(&self) -> bool {
+        self.with_entity_ref(|e| e.on_climbable()).unwrap_or(false)
+    }
+
+    pub fn refresh_fluid_contact(&self) -> EntityFluidContact {
+        self.with_entity_ref(|e| e.refresh_fluid_contact())
+            .unwrap_or_default()
+    }
+
+    pub fn set_pose(&self, pose: EntityPose) {
+        self.with_entity(|e| e.set_pose(pose));
+    }
+
+    /// Notifies this entity that `leashable` is no longer leashed to it.
+    ///
+    /// Takes `&dyn Entity` because callers invoke this from inside the
+    /// leashee's own behavior code, where re-locking the leashee would deadlock.
+    pub fn notify_leashee_removed(&self, leashable: &dyn Entity) {
+        self.with_entity_ref(|e| e.notify_leashee_removed(leashable));
+    }
+
+    /// Pushes this entity away from `pusher` via vanilla physics.
+    ///
+    /// Takes `&dyn Entity` because pushers call this from inside their own
+    /// behavior code, where re-locking the pusher would deadlock.
+    pub fn push_entity(&self, pusher: &dyn Entity) {
+        self.with_entity_ref(|e| e.push_entity(pusher));
+    }
+
+    /// Returns `true` if an attack from `source` should be skipped.
+    pub fn skip_attack_interaction(&self, source: &dyn Entity) -> bool {
+        self.with_entity_ref(|e| e.skip_attack_interaction(source))
+            .unwrap_or(false)
+    }
+
+    pub fn can_ride(&self, vehicle: &EntityBase) -> bool {
+        vehicle
+            .with_entity_ref(|v| self.with_entity_ref(|e| e.can_ride(v)).unwrap_or(false))
+            .unwrap_or(false)
+    }
+
+    pub fn move_entity(
+        &self,
+        mover_type: crate::physics::entity_move::MoverType,
+        delta: DVec3,
+    ) -> Option<crate::physics::entity_move::MoveResult> {
+        self.with_entity(|e| e.move_entity(mover_type, delta))
+            .flatten()
+    }
+
+    /// Applies accepted client-authored vehicle movement.
+    /// Returns `None` if nothing is attached.
+    pub fn apply_accepted_client_vehicle_movement(
+        &self,
+        world: &Arc<World>,
+        accepted: crate::entity::AcceptedClientMovement,
+    ) -> Option<Result<crate::entity::AcceptedClientMovementOutcome, EntityMoveError>> {
+        self.with_entity(|e| e.apply_accepted_client_vehicle_movement(world, accepted))
+    }
+
+    // === Accessors for Entity trait delegation ===
 
     /// Gets the entity's unique network ID.
     #[inline]
@@ -1098,6 +1662,13 @@ impl EntityBase {
     #[inline]
     pub fn known_speed(&self) -> DVec3 {
         self.state.lock().last_known_speed
+    }
+
+    /// Sets `lastKnownSpeed` directly. Test-only: production derives this from
+    /// the base-tick position delta via [`compute_known_speed`](Self::compute_known_speed).
+    #[cfg(test)]
+    pub(crate) fn set_known_speed(&self, known_speed: DVec3) {
+        self.state.lock().last_known_speed = known_speed;
     }
 
     /// Returns vanilla `Entity.tickCount`.
@@ -1389,24 +1960,24 @@ impl EntityBase {
 
     /// Restores a persisted passenger relationship without applying gameplay boarding rules.
     pub(crate) fn restore_passenger_relationship(vehicle: &SharedEntity, passenger: &SharedEntity) {
-        passenger.base().stop_riding_relationship();
+        passenger.stop_riding_relationship();
         Self::add_passenger_relationship(vehicle, passenger);
     }
 
     /// Starts a gameplay passenger relationship after vanilla boarding rules pass.
     pub(crate) fn start_riding_relationship(vehicle: &SharedEntity, passenger: &SharedEntity) {
-        passenger.base().stop_riding_relationship();
+        passenger.stop_riding_relationship();
         Self::add_passenger_relationship(vehicle, passenger);
     }
 
     fn add_passenger_relationship(vehicle: &SharedEntity, passenger: &SharedEntity) {
-        if vehicle.base().has_passenger_id(passenger.id()) {
+        if vehicle.has_passenger_id(passenger.id()) {
             return;
         }
 
-        passenger.base().relationships.lock().vehicle = Some(Arc::downgrade(vehicle));
+        passenger.relationships.lock().vehicle = Some(Arc::downgrade(vehicle));
         let passenger_ref = Arc::downgrade(passenger);
-        let mut vehicle_relationships = vehicle.base().relationships.lock();
+        let mut vehicle_relationships = vehicle.relationships.lock();
         let first_passenger_is_player = vehicle_relationships
             .first_passenger()
             .is_some_and(|first| first.entity_type() == &vanilla_entities::PLAYER);
@@ -1549,7 +2120,7 @@ impl EntityBase {
         };
 
         if let Some(vehicle) = vehicle {
-            vehicle.base().remove_passenger_id(self.id);
+            vehicle.remove_passenger_id(self.id);
             self.set_boarding_cooldown(60);
         }
     }
@@ -1563,8 +2134,8 @@ impl EntityBase {
         };
 
         for passenger in passengers {
-            if passenger.base().clear_vehicle_if(self.id) {
-                passenger.base().set_boarding_cooldown(60);
+            if passenger.clear_vehicle_if(self.id) {
+                passenger.set_boarding_cooldown(60);
             }
         }
     }
@@ -1616,14 +2187,38 @@ impl EntityBase {
     }
 
     /// Sets the entity's position through the active level callback.
+    ///
+    /// Use this for base-direct moves made with no behavior lock held (construction,
+    /// loading). Moves originating from inside the entity's behavior lock (e.g. during
+    /// `tick`) must go through [`try_set_position_with_entity`](Self::try_set_position_with_entity)
+    /// so the lifecycle callback can reuse the already-locked entity instead of re-locking.
     #[must_use = "movement commits can fail when world entity state rejects the update"]
     pub fn try_set_position(&self, pos: DVec3) -> Result<(), EntityMoveError> {
+        self.try_set_position_inner(None, pos)
+    }
+
+    /// Sets the entity's position, threading the already-locked concrete entity to the
+    /// lifecycle callback so tracker work avoids re-entering the behavior lock.
+    #[must_use = "movement commits can fail when world entity state rejects the update"]
+    pub fn try_set_position_with_entity(
+        &self,
+        entity: &mut dyn Entity,
+        pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
+        self.try_set_position_inner(Some(entity), pos)
+    }
+
+    fn try_set_position_inner(
+        &self,
+        entity: Option<&mut dyn Entity>,
+        pos: DVec3,
+    ) -> Result<(), EntityMoveError> {
         require_finite_position(pos, "position");
         let old_pos = self.state.lock().position;
         let callback = self.level_callback.lock().clone();
         callback.validate_move(old_pos, pos)?;
         self.set_position_local_unchecked(pos);
-        if let Err(error) = callback.on_move_committed(old_pos, pos) {
+        if let Err(error) = callback.on_move_committed(entity, old_pos, pos) {
             self.set_position_local_unchecked(old_pos);
             return Err(error);
         }
@@ -2211,6 +2806,28 @@ impl EntityBase {
             movement
         }
     }
+
+    /// Handles vanilla entity right-click interaction.
+    pub fn interact(
+        &mut self,
+        player: &Player,
+        hand: InteractionHand,
+        location: DVec3,
+    ) -> InteractionResult {
+        self.with_entity(|e| e.interact(player, hand, location))
+            .unwrap()
+    }
+
+    /// Applies vanilla fall damage. Base entities only propagate to passengers.
+    pub fn cause_fall_damage(
+        &self,
+        fall_distance: f64,
+        damage_modifier: f32,
+        source: &DamageSource,
+    ) -> bool {
+        self.with_entity_ref(|e| e.cause_fall_damage(fall_distance, damage_modifier, source))
+            .unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -2262,18 +2879,12 @@ mod tests {
     }
 
     fn raw_entity(id: i32) -> SharedEntity {
-        Arc::new(RawEntity::new(
-            id,
-            DVec3::ZERO,
-            Weak::<World>::new(),
-            &vanilla_entities::ITEM,
-        ))
+        RawEntity::new_raw(id, &vanilla_entities::ITEM)
     }
 
     fn link_vehicle_and_passenger(vehicle: &SharedEntity, passenger: &SharedEntity) {
-        passenger.base().relationships.lock().vehicle = Some(Arc::downgrade(vehicle));
+        passenger.relationships.lock().vehicle = Some(Arc::downgrade(vehicle));
         vehicle
-            .base()
             .relationships
             .lock()
             .passengers
@@ -2281,26 +2892,31 @@ mod tests {
     }
 
     struct FallDamageTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         fall_damage_calls: SyncMutex<Vec<(f64, f32)>>,
     }
 
     impl FallDamageTestEntity {
-        fn new(id: i32) -> Arc<Self> {
-            Arc::new(Self {
-                base: EntityBase::new(
+        fn new(id: i32) -> Arc<EntityBase> {
+            Arc::new_cyclic(|base| {
+                let inner = Arc::new(SyncMutex::new(Self {
+                    base: base.clone(),
+                    fall_damage_calls: SyncMutex::new(Vec::new()),
+                }));
+                let b = EntityBase::new(
                     id,
                     DVec3::ZERO,
                     vanilla_entities::ITEM.dimensions,
-                    Weak::<World>::new(),
-                ),
-                fall_damage_calls: SyncMutex::new(Vec::new()),
+                    Weak::new(),
+                );
+                b.attach_entity(inner);
+                b
             })
         }
     }
 
     impl Entity for FallDamageTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -2333,6 +2949,7 @@ mod tests {
 
         fn on_move_committed(
             &self,
+            _entity: Option<&mut dyn crate::entity::Entity>,
             _old_pos: DVec3,
             _new_pos: DVec3,
         ) -> Result<(), EntityMoveError> {
@@ -2353,6 +2970,7 @@ mod tests {
 
         fn on_move_committed(
             &self,
+            _entity: Option<&mut dyn crate::entity::Entity>,
             _old_pos: DVec3,
             _new_pos: DVec3,
         ) -> Result<(), EntityMoveError> {
@@ -2454,12 +3072,7 @@ mod tests {
 
     #[test]
     fn base_tick_count_advances_like_vanilla_entity_tick_count() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         assert_eq!(base.tick_count(), 0);
         base.advance_tick_count();
@@ -2488,12 +3101,8 @@ mod tests {
 
     #[test]
     fn lifecycle_state_tracks_removal() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
+
         let callback = Arc::new(CountingCallback::default());
         base.set_level_callback(callback.clone());
 
@@ -2512,11 +3121,10 @@ mod tests {
 
     #[test]
     fn try_set_position_rolls_back_when_commit_fails() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(1.0, 2.0, 3.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
         base.set_level_callback(Arc::new(CommitRejectingCallback));
 
@@ -2532,11 +3140,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "entity 1 local position update bypassed world entity manager")]
     fn set_position_local_panics_when_callback_requires_manager_commit() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(1.0, 2.0, 3.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
         base.set_level_callback(Arc::new(CountingCallback::default()));
 
@@ -2545,12 +3152,7 @@ mod tests {
 
     #[test]
     fn base_state_caches_fluid_contact() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
         let water_contact = EntityFluidContact::from_parts(0.4, 0.0, true, false);
         let air_contact = EntityFluidContact::default();
 
@@ -2573,12 +3175,7 @@ mod tests {
 
     #[test]
     fn fire_freeze_state_applies_inside_block_effects() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.apply_inside_block_effect(
             InsideBlockEffectType::Freeze,
@@ -2625,12 +3222,7 @@ mod tests {
 
     #[test]
     fn fire_ignite_respects_remaining_fire_tick_cap() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.apply_inside_block_effect(
             InsideBlockEffectType::LavaIgnite,
@@ -2667,12 +3259,7 @@ mod tests {
 
     #[test]
     fn fire_ignite_respects_vanilla_cooldown_shape() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_remaining_fire_ticks(-2);
         base.apply_inside_block_effect(
@@ -2720,12 +3307,7 @@ mod tests {
 
     #[test]
     fn base_tick_advances_powder_snow_and_fire_state() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.apply_inside_block_effect(
             InsideBlockEffectType::Freeze,
@@ -2753,7 +3335,7 @@ mod tests {
     #[test]
     fn player_respawn_reset_restores_fresh_base_state_and_preserves_tags() {
         let dimensions = EntityDimensions::new(0.6, 1.8, 1.62);
-        let base = EntityBase::new(1, DVec3::new(1.0, 64.0, 1.0), dimensions, Weak::new());
+        let base = EntityBase::empty(1, DVec3::new(1.0, 64.0, 1.0), dimensions);
 
         base.set_velocity(DVec3::new(0.4, -0.2, 0.3));
         base.set_no_physics(true);
@@ -2831,12 +3413,7 @@ mod tests {
 
     #[test]
     fn no_physics_is_stored_on_base_state() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         assert!(!base.no_physics());
         base.set_no_physics(true);
@@ -2850,6 +3427,12 @@ mod tests {
 
         link_vehicle_and_passenger(&vehicle, &passenger);
 
+        let mut vehicle_guard = vehicle.lock_entity();
+        let passenger_guard = passenger.lock_entity();
+
+        let vehicle = vehicle_guard.get_mut();
+        let passenger = passenger_guard.get();
+
         assert!(passenger.is_passenger());
         assert_eq!(passenger.vehicle().map(|entity| entity.id()), Some(1));
         assert!(vehicle.is_vehicle());
@@ -2862,9 +3445,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2]
         );
-        assert!(vehicle.has_passenger(passenger.as_ref()));
+        assert!(vehicle.has_passenger(passenger));
         assert_eq!(passenger.root_vehicle_id(), 1);
-        assert!(passenger.is_passenger_of_same_vehicle(vehicle.as_ref()));
+        assert!(passenger.is_passenger_of_same_vehicle(vehicle));
     }
 
     #[test]
@@ -2876,12 +3459,20 @@ mod tests {
         link_vehicle_and_passenger(&root, &middle);
         link_vehicle_and_passenger(&middle, &passenger);
 
+        let root_guard = root.lock_entity();
+        let middle_guard = middle.lock_entity();
+        let passenger_guard = passenger.lock_entity();
+
+        let root = root_guard.get();
+        let middle = middle_guard.get();
+        let passenger = passenger_guard.get();
+
         assert_eq!(passenger.root_vehicle_id(), 1);
         assert_eq!(middle.root_vehicle_id(), 1);
-        assert!(root.has_indirect_passenger(passenger.as_ref()));
-        assert!(middle.has_indirect_passenger(passenger.as_ref()));
-        assert!(!passenger.has_indirect_passenger(root.as_ref()));
-        assert!(middle.is_passenger_of_same_vehicle(passenger.as_ref()));
+        assert!(root.has_indirect_passenger(passenger));
+        assert!(middle.has_indirect_passenger(passenger));
+        assert!(!passenger.has_indirect_passenger(root));
+        assert!(middle.is_passenger_of_same_vehicle(passenger));
     }
 
     #[test]
@@ -2896,7 +3487,7 @@ mod tests {
         assert!(vehicle.is_removed());
         assert!(!vehicle.is_vehicle());
         assert!(!passenger.is_passenger());
-        assert_eq!(passenger.base().boarding_cooldown(), 60);
+        assert_eq!(passenger.boarding_cooldown(), 60);
     }
 
     #[test]
@@ -2912,14 +3503,18 @@ mod tests {
             1.5,
             &DamageSource::environment(&vanilla_damage_types::FALL),
         ));
-        assert_eq!(*passenger.fall_damage_calls.lock(), vec![(8.0, 1.5)]);
+        {
+            let mut passenger = passenger.lock_entity();
+            let passenger: &FallDamageTestEntity = unsafe { passenger.downcast_unchecked() };
+            assert_eq!(*passenger.fall_damage_calls.lock(), vec![(8.0, 1.5)]);
+        }
     }
 
     #[test]
     fn physics_state_uses_current_base_bounding_box() {
         let position = DVec3::new(10.0, 64.0, -5.0);
         let custom_box = WorldAabb::new(9.75, 64.0, -5.75, 10.75, 66.0, -4.75);
-        let base = EntityBase::new_with_state(
+        let base = EntityBase::empty_with_state(
             1,
             EntityBaseState::new_with_bounding_box(
                 position,
@@ -2928,7 +3523,6 @@ mod tests {
             )
             .with_on_ground(true)
             .with_fall_distance(3.5),
-            Weak::<World>::new(),
         );
 
         let physics_state = base.physics_state(EntityPhysicsStateInput {
@@ -2952,11 +3546,10 @@ mod tests {
 
     #[test]
     fn old_position_is_explicit_movement_trace_state() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(1.0, 2.0, 3.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
 
         assert_vec3_close(base.old_position(), DVec3::new(1.0, 2.0, 3.0));
@@ -2972,12 +3565,7 @@ mod tests {
 
     #[test]
     fn set_velocity_ignores_non_finite_updates_like_vanilla() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         let velocity = DVec3::new(0.25, -0.5, 0.75);
         base.set_velocity(velocity);
@@ -2991,12 +3579,7 @@ mod tests {
 
     #[test]
     fn set_rotation_wraps_yaw_and_clamps_pitch_like_vanilla_snap() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_rotation((450.0, 120.0));
         let rotation = base.rotation();
@@ -3021,12 +3604,7 @@ mod tests {
 
     #[test]
     fn old_rotation_is_base_tick_snapshot_state() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_rotation((30.0, 40.0));
         assert_eq!(base.old_rotation(), (0.0, 0.0));
@@ -3047,12 +3625,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "entity position must be finite")]
     fn set_position_rejects_non_finite_values() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_position_local(DVec3::new(f64::NAN, 0.0, 0.0));
     }
@@ -3060,12 +3633,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "entity old position must be finite")]
     fn set_old_position_rejects_non_finite_values() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_old_position(DVec3::new(0.0, f64::INFINITY, 0.0));
     }
@@ -3073,23 +3641,17 @@ mod tests {
     #[test]
     #[should_panic(expected = "entity rotation must be finite")]
     fn set_rotation_rejects_non_finite_values() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_rotation((f32::NAN, 0.0));
     }
 
     #[test]
     fn known_speed_is_base_tick_position_delta() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(1.0, 2.0, 3.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
 
         base.set_position_local(DVec3::new(4.0, 2.0, 3.0));
@@ -3103,12 +3665,7 @@ mod tests {
 
     #[test]
     fn base_tick_state_decrements_boarding_cooldown() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_boarding_cooldown(2);
         base.advance_base_tick_state();
@@ -3121,12 +3678,7 @@ mod tests {
 
     #[test]
     fn base_tick_state_decrements_portal_cooldown() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_portal_cooldown(2);
         base.advance_base_tick_state();
@@ -3139,12 +3691,7 @@ mod tests {
 
     #[test]
     fn entity_tags_respect_vanilla_limit() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         for index in 0..MAX_ENTITY_TAGS {
             assert!(base.add_tag(format!("tag_{index}")));
@@ -3159,11 +3706,10 @@ mod tests {
 
     #[test]
     fn movement_trace_falls_back_to_old_position_when_no_moves_were_recorded() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(1.0, 2.0, 3.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
         base.set_old_position(DVec3::new(-1.0, 2.0, -3.0));
 
@@ -3180,12 +3726,7 @@ mod tests {
 
     #[test]
     fn movement_trace_replays_last_finalized_movements() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
         assert!(base.last_movements_for_block_effects().is_empty());
 
         base.record_movement_this_tick(EntityMovement::new(DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)));
@@ -3202,11 +3743,10 @@ mod tests {
 
     #[test]
     fn movement_trace_appends_direct_position_change_after_recorded_moves() {
-        let base = EntityBase::new(
+        let base = EntityBase::empty(
             1,
             DVec3::new(0.0, 64.0, 0.0),
             EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
         );
         base.record_movement_this_tick(EntityMovement::with_axis_dependent_original_movement(
             DVec3::new(0.0, 64.0, 0.0),
@@ -3232,12 +3772,7 @@ mod tests {
 
     #[test]
     fn movement_trace_removes_latest_movement_recording() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
         base.record_movement_this_tick(EntityMovement::new(DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)));
         base.record_movement_this_tick(EntityMovement::new(
             DVec3::new(1.0, 0.0, 0.0),
@@ -3257,12 +3792,7 @@ mod tests {
 
     #[test]
     fn movement_trace_compacts_oldest_moves_at_vanilla_limit() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         for x in 0..101 {
             let from = DVec3::new(f64::from(x), 0.0, 0.0);
@@ -3286,12 +3816,7 @@ mod tests {
 
     #[test]
     fn fall_distance_is_stored_on_base_state() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_fall_distance(4.5);
         assert_f64_close(base.fall_distance(), 4.5);
@@ -3301,12 +3826,7 @@ mod tests {
 
     #[test]
     fn fall_distance_accumulation_uses_vanilla_float_cast() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         let vertical_movement = -1.0 / 3.0;
         base.accumulate_fall_distance(vertical_movement);
@@ -3321,12 +3841,7 @@ mod tests {
 
     #[test]
     fn base_tick_lava_contact_dampens_fall_distance() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_fall_distance(8.0);
         base.set_fluid_contact(EntityFluidContact::from_parts(0.0, 0.25, false, false));
@@ -3337,12 +3852,7 @@ mod tests {
 
     #[test]
     fn base_tick_water_contact_resets_fall_distance() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_fall_distance(8.0);
         base.set_fluid_contact(EntityFluidContact::from_parts(0.25, 0.0, false, false));
@@ -3353,12 +3863,7 @@ mod tests {
 
     #[test]
     fn water_reset_runs_before_lava_fall_distance_damping() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
 
         base.set_fall_distance(8.0);
         base.set_fluid_contact(EntityFluidContact::from_parts(0.25, 0.25, false, false));
@@ -3370,12 +3875,7 @@ mod tests {
 
     #[test]
     fn stuck_speed_multiplier_resets_fall_distance_and_applies_once() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
         base.set_velocity(DVec3::new(0.4, -0.2, 0.3));
         base.set_fall_distance(3.0);
         base.make_stuck_in_block(DVec3::new(0.8, 0.75, 0.8));
@@ -3394,12 +3894,7 @@ mod tests {
 
     #[test]
     fn stuck_speed_multiplier_can_be_consumed_without_applying_for_pistons() {
-        let base = EntityBase::new(
-            1,
-            DVec3::ZERO,
-            EntityDimensions::new(0.25, 0.25, 0.125),
-            Weak::<World>::new(),
-        );
+        let base = EntityBase::empty(1, DVec3::ZERO, EntityDimensions::new(0.25, 0.25, 0.125));
         base.set_velocity(DVec3::new(0.4, -0.2, 0.3));
         base.make_stuck_in_block(DVec3::new(0.8, 0.75, 0.8));
 

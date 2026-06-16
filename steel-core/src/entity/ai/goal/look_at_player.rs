@@ -130,7 +130,7 @@ impl Goal for LookAtPlayerGoal {
                     !mob.has_indirect_passenger(player)
                         && self.look_at_context.test(world.as_ref(), Some(mob), player)
                 })
-                .map(|player| -> SharedEntity { player }),
+                .map(|player| player.shared_entity()),
             LookAtTargetType::LivingEntity(selector) => {
                 let search_box =
                     mob.bounding_box()
@@ -163,15 +163,15 @@ impl Goal for LookAtPlayerGoal {
         self.look_time > 0
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_time = reduced_tick_delay(40 + mob.base().random().lock().next_i32_bounded(40));
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.look_at = None;
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(look_at) = &self.look_at else {
             return;
         };
@@ -237,14 +237,14 @@ mod tests {
     #[test]
     fn look_at_player_goal_uses_vanilla_adjusted_look_time() {
         init_test_registry();
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let mut goal = LookAtPlayerGoal::new(6.0);
         let seed = 12345;
         pig.base().random().lock().set_seed(seed);
         let mut expected_random = LegacyRandom::from_seed(seed as u64);
         let expected = reduced_tick_delay(40 + expected_random.next_i32_bounded(40));
 
-        goal.start(&pig);
+        goal.start(&mut pig);
 
         assert_eq!(goal.look_time, expected);
     }

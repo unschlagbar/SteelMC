@@ -65,7 +65,8 @@ impl RandomStrollGoal {
             }
 
             let should_skip = {
-                let mut random = mob.base().random().lock();
+                let mob_base = mob.base();
+                let mut random = mob_base.random().lock();
                 random.next_i32_bounded(reduced_tick_delay(self.interval)) != 0
             };
             if should_skip {
@@ -96,13 +97,13 @@ impl Goal for RandomStrollGoal {
         !mob.mob_base().navigation().lock().is_done() && !mob.has_controlling_passenger()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if let Some(wanted_position) = self.wanted_position {
             mob.move_to_pos(wanted_position, self.speed_modifier);
         }
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         mob.mob_base().navigation().lock().stop();
     }
 }

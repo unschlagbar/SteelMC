@@ -1,6 +1,7 @@
 //! Player inventory management.
 
 use std::{
+use steel_utils::locks::SyncMutex;
     array,
     f32::consts::TAU,
     mem,
@@ -19,7 +20,7 @@ use steel_utils::random::Random;
 use steel_utils::types::{GameType, InteractionHand};
 
 use crate::{
-    entity::Entity,
+    entity::{Entity, entities::ItemEntity},
     inventory::{
         MenuProvider,
         container::Container,
@@ -78,7 +79,7 @@ pub struct PlayerInventory {
     /// Whether the selected hotbar item must be synced as main-hand equipment.
     dirty_main_hand: bool,
     /// Weak reference to the player.
-    player: Weak<Player>,
+    player: Weak<SyncMutex<Player>>,
     /// Currently selected hotbar slot (0-8).
     selected: u8,
     /// Counter incremented on every change.
@@ -95,7 +96,7 @@ impl PlayerInventory {
 
     /// Creates a new player inventory with empty slots.
     #[must_use]
-    pub fn new(player: Weak<Player>) -> Self {
+    pub fn new(player: Weak<SyncMutex<Player>>) -> Self {
         Self {
             items: array::from_fn(|_| ItemStack::empty()),
             equipment: EntityEquipment::new(),
@@ -1101,6 +1102,8 @@ impl Player {
             .get_world()
             .spawn_item_with_velocity(spawn_pos, item, velocity)
         {
+            let mut entity = entity.lock_entity();
+            let entity: &mut ItemEntity = entity.downcast().unwrap();
             entity.set_pickup_delay(40);
             if thrown_from_hand {
                 entity.set_thrower(self.gameprofile.id);

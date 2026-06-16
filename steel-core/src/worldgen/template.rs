@@ -910,7 +910,7 @@ impl StructureTemplate {
                 },
                 &nbt,
             );
-            let _ = region.add_fresh_entity(runtime_entity);
+            let _ = region.add_cooked_entity(runtime_entity);
         }
     }
 

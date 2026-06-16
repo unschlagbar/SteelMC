@@ -75,14 +75,14 @@ impl Goal for PanicGoal {
         !mob.mob_base().navigation().lock().is_done()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         if let Some(wanted_position) = self.wanted_position {
             mob.move_to_pos(wanted_position, self.speed_modifier);
         }
         self.is_running = true;
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.is_running = false;
     }
 }
@@ -138,7 +138,7 @@ mod tests {
     fn panic_goal_uses_vanilla_panic_damage_tag() {
         init_test_registry();
         let goal = PanicGoal::new(1.25);
-        let pig = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.should_panic(&pig));
 

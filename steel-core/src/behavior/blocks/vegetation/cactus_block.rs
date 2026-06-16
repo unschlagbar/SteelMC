@@ -200,7 +200,7 @@ impl BlockBehavior for CactusBlock {
         _state: BlockStateId,
         _world: &Arc<World>,
         _pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         _effect_collector: &mut InsideBlockEffectCollector,
         _is_precise: bool,
     ) {

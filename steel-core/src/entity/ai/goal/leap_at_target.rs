@@ -65,7 +65,7 @@ impl Goal for LeapAtTargetGoal {
         !mob.on_ground()
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         let Some(target) = &self.target else {
             return;
         };
@@ -80,14 +80,14 @@ impl Goal for LeapAtTargetGoal {
         mob.set_velocity(DVec3::new(delta.x, f64::from(self.yd), delta.z));
     }
 
-    fn stop(&mut self, _mob: &dyn PathfinderMob) {
+    fn stop(&mut self, _mob: &mut dyn PathfinderMob) {
         self.target = None;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::sync::Weak;
 
     use glam::DVec3;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
@@ -96,11 +96,11 @@ mod tests {
     use crate::entity::{Entity, Mob, entities::PigEntity};
 
     fn pig(id: i32, position: DVec3) -> PigEntity {
-        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
+        PigEntity::create(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     fn shared_pig(id: i32, position: DVec3) -> SharedEntity {
-        Arc::new(pig(id, position))
+        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     fn set_target(mob: &PigEntity, target: &SharedEntity) {
@@ -162,7 +162,7 @@ mod tests {
     fn leap_at_target_goal_applies_vanilla_leap_velocity() {
         init_test_registry();
         let mut goal = LeapAtTargetGoal::new(0.42);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         mob.base().set_on_ground(true);
         mob.base().random().lock().set_seed(0);
         mob.set_velocity(DVec3::new(1.0, 0.0, 0.0));
@@ -170,7 +170,7 @@ mod tests {
         set_target(&mob, &target);
 
         assert!(goal.can_use(&mob));
-        goal.start(&mob);
+        goal.start(&mut mob);
 
         assert_vec3_close(mob.velocity(), DVec3::new(0.6, f64::from(0.42_f32), 0.0));
     }

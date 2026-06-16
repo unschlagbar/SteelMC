@@ -11,7 +11,7 @@ use steel_registry::entity_type::EntityTypeRef;
 use steel_utils::Identifier;
 use steel_utils::locks::SyncMutex;
 
-use crate::entity::{Entity, EntityBase, EntityBaseLoad};
+use crate::entity::{Entity, EntityBase, EntityBaseLoad, SharedEntity};
 use crate::world::World;
 
 /// Chest minecart entity state used by mineshaft generation.
@@ -19,9 +19,9 @@ use crate::world::World;
 /// Steel does not yet implement minecart movement or container interaction, so this
 /// entity currently preserves the vanilla placement and loot-table state that
 /// structure generation creates.
-#[entity_behavior(class = "MinecartChest")]
+#[entity_behavior(class = "minecart_chest", identifier = "chest_minecart")]
 pub struct ChestMinecartEntity {
-    base: EntityBase,
+    base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     state: SyncMutex<ChestMinecartState>,
 }
@@ -46,22 +46,27 @@ impl ChestMinecartState {
 impl ChestMinecartEntity {
     /// Creates a new chest minecart entity.
     #[must_use]
-    pub fn new(entity_type: EntityTypeRef, id: i32, position: DVec3, world: Weak<World>) -> Self {
-        Self {
-            base: EntityBase::new(id, position, entity_type.dimensions, world),
+    pub fn new(
+        entity_type: EntityTypeRef,
+        id: i32,
+        position: DVec3,
+        world: Weak<World>,
+    ) -> SharedEntity {
+        EntityBase::pack_with(id, position, entity_type.dimensions, world, |base| Self {
+            base,
             entity_type,
             state: SyncMutex::new(ChestMinecartState::new(true)),
-        }
+        })
     }
 
-    /// Creates a chest minecart entity from saved data.
+    /// Restores a chest minecart `SharedEntity` from persistent data.
     #[must_use]
-    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> Self {
-        Self {
-            base: EntityBase::from_load(load, entity_type.dimensions),
+    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> SharedEntity {
+        EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| Self {
+            base,
             entity_type,
-            state: SyncMutex::new(ChestMinecartState::new(false)),
-        }
+            state: SyncMutex::new(ChestMinecartState::new(true)),
+        })
     }
 
     /// Sets the deferred loot table used when the container is first opened.
@@ -77,7 +82,7 @@ impl ChestMinecartEntity {
 }
 
 impl Entity for ChestMinecartEntity {
-    fn base(&self) -> &EntityBase {
+    fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
 
@@ -110,7 +115,7 @@ impl Entity for ChestMinecartEntity {
         }
     }
 
-    fn load_additional(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         let loot_table = nbt
             .string("LootTable")
             .and_then(|value| Identifier::from_str(&value.to_string()).ok());
@@ -132,17 +137,22 @@ mod tests {
     fn chest_minecart_saves_structure_loot_table_state() {
         let minecart = ChestMinecartEntity::new(
             &vanilla_entities::CHEST_MINECART,
-            1,
-            DVec3::new(1.5, 2.5, 3.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
         );
-        minecart.set_loot_table(
-            Identifier::new_static("minecraft", "chests/abandoned_mineshaft"),
-            42,
-        );
-
         let mut nbt = NbtCompound::new();
-        minecart.save_additional(&mut nbt);
+
+        {
+            let mut minecart = minecart.lock_entity();
+            let minecart: &mut ChestMinecartEntity = minecart.downcast().unwrap();
+
+            minecart.set_loot_table(
+                Identifier::new_static("minecraft", "chests/abandoned_mineshaft"),
+                42,
+            );
+            minecart.save_additional(&mut nbt);
+        }
 
         assert_eq!(
             nbt.string("LootTable").map(ToString::to_string),
@@ -157,8 +167,8 @@ mod tests {
     fn chest_minecart_is_pickable_and_pushable_like_vanilla() {
         let minecart = ChestMinecartEntity::new(
             &vanilla_entities::CHEST_MINECART,
-            1,
-            DVec3::new(1.5, 2.5, 3.5),
+            crate::entity::next_entity_id(),
+            DVec3::ZERO,
             Weak::new(),
         );
 

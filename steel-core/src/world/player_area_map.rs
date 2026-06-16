@@ -4,6 +4,7 @@
 //! Maps chunk coordinates to sets of players for O(1) nearby player lookup.
 
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use rustc_hash::FxHashSet;
 use steel_utils::ChunkPos;
@@ -63,13 +64,13 @@ impl PlayerAreaMap {
     }
 
     /// Removes a player from all tracked chunks.
-    pub fn on_player_leave(&self, player: &Arc<Player>) {
+    pub fn on_player_leave(&self, player: &Arc<SyncMutex<Player>>) {
         self.remove_by_entity_id(player.id());
     }
 
     /// Removes a player from all tracked chunks by entity ID.
     ///
-    /// This is useful when you don't have an `Arc<Player>` reference,
+    /// This is useful when you don't have an `Arc<SyncMutex<Player>>` reference,
     /// such as during respawn cleanup.
     pub fn remove_by_entity_id(&self, entity_id: i32) {
         if let Some((_, chunks)) = self.player_chunks.remove_sync(&entity_id) {

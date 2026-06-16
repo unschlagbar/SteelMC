@@ -38,7 +38,7 @@ use crate::command::commands::gamemode::get_gamemode_translation;
 use crate::enchantment_helper::{self, EnchantmentDamageContext, EnchantmentPostAttackContext};
 use crate::entity::attribute::{AttributeModifier, AttributeModifierOperation};
 use crate::entity::damage::DamageSource;
-use crate::entity::{Entity, LivingEntity, SharedEntity};
+use crate::entity::{Entity, EntityBase, LivingEntity, SharedEntity};
 use crate::inventory::equipment::EquipmentSlot;
 use crate::inventory::menu::Menu;
 use crate::player::Player;
@@ -797,7 +797,7 @@ impl Player {
     /// Interacts with an entity using the held item.
     pub fn interact_on(
         &self,
-        entity: &dyn Entity,
+        entity: SharedEntity,
         hand: InteractionHand,
         location: DVec3,
     ) -> InteractionResult {

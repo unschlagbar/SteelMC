@@ -33,7 +33,11 @@ pub use serializer::{
 };
 pub use vanilla_serializers::register_vanilla_entity_data_serializers;
 
-use std::{io, str::FromStr};
+use std::{
+    io,
+    str::FromStr,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use steel_utils::{
     BlockStateId, Identifier,
@@ -49,15 +53,15 @@ use crate::item_stack::ItemStack;
 pub use crate::blocks::properties::Direction;
 pub use steel_utils::BlockPos;
 
-/// Wrapper that tracks modifications per-field.
+/// Wrapper that holds a synced value alongside its default.
 ///
-/// Each field in an entity data struct is wrapped in `SyncedValue` to track
-/// whether it has been modified and needs to be synced to clients.
+/// Each field in an entity data struct is wrapped in `SyncedValue`. Dirty tracking
+/// lives in the owning layer's [`DirtyBits`] bitfield, not here, so that a whole
+/// layer needs only a single atomic instead of one flag per field.
 #[derive(Debug, Clone)]
 pub struct SyncedValue<T> {
     value: T,
     default: T,
-    dirty: bool,
 }
 
 impl<T: Clone + PartialEq> SyncedValue<T> {
@@ -66,7 +70,6 @@ impl<T: Clone + PartialEq> SyncedValue<T> {
         Self {
             value: default.clone(),
             default,
-            dirty: false,
         }
     }
 
@@ -76,31 +79,64 @@ impl<T: Clone + PartialEq> SyncedValue<T> {
         &self.value
     }
 
-    /// Set the value. Only marks as dirty if the value actually changed.
+    /// Set the value, returning `true` if it actually changed.
+    ///
+    /// The caller (a generated `set_<field>` method) is responsible for marking the
+    /// corresponding bit in the layer's [`DirtyBits`] when this returns `true`.
     #[inline]
-    pub fn set(&mut self, value: T) {
+    pub fn set(&mut self, value: T) -> bool {
         if self.value != value {
             self.value = value;
-            self.dirty = true;
+            true
+        } else {
+            false
         }
-    }
-
-    /// Returns true if the value has been modified since last sync.
-    #[inline]
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// Clear the dirty flag after syncing.
-    #[inline]
-    pub fn clear_dirty(&mut self) {
-        self.dirty = false;
     }
 
     /// Returns true if the current value equals the default.
     #[inline]
     pub fn is_default(&self) -> bool {
         self.value == self.default
+    }
+}
+
+/// Per-layer dirty bitfield.
+///
+/// Each generated entity-data layer owns a single `DirtyBits`. A field's dirty state
+/// is stored at a fixed bit position (its ordinal within the layer), assigned by the
+/// build script. Being atomic lets `pack_dirty`/`is_dirty` run behind `&self`.
+#[derive(Debug, Default)]
+pub struct DirtyBits(AtomicU32);
+
+impl DirtyBits {
+    /// Create an empty (all-clean) bitfield.
+    #[inline]
+    pub const fn new() -> Self {
+        Self(AtomicU32::new(0))
+    }
+
+    /// Mark the field at `bit` as dirty.
+    #[inline]
+    pub fn mark(&self, bit: u32) {
+        self.0.fetch_or(1 << bit, Ordering::Relaxed);
+    }
+
+    /// Snapshot the current dirty bits and clear them in one atomic operation.
+    #[inline]
+    pub fn take(&self) -> u32 {
+        self.0.swap(0, Ordering::Relaxed)
+    }
+
+    /// Returns true if any field is dirty.
+    #[inline]
+    pub fn any(&self) -> bool {
+        self.0.load(Ordering::Relaxed) != 0
+    }
+}
+
+impl Clone for DirtyBits {
+    fn clone(&self) -> Self {
+        Self(AtomicU32::new(self.0.load(Ordering::Relaxed)))
     }
 }
 

@@ -12,7 +12,6 @@ use steel_protocol::packets::game::{
     CChunkBatchFinished, CChunkBatchStart, CForgetLevelChunk, CLevelChunkWithLight,
 };
 use steel_protocol::utils::ConnectionProtocol;
-use steel_utils::locks::SyncMutex;
 use steel_utils::{ChunkPos, PackedChunkPos};
 
 use crate::{
@@ -92,7 +91,7 @@ impl ChunkSender {
         &mut self,
         world: &Arc<World>,
         player_chunk_pos: ChunkPos,
-        chunk_send_epoch: &SyncMutex<u32>,
+        chunk_send_epoch: u32,
     ) -> Option<PreparedBatch> {
         if self.unacknowledged_batches >= self.max_unacknowledged_batches {
             return None;
@@ -110,11 +109,9 @@ impl ChunkSender {
             return None;
         }
 
-        let epoch_snapshot = *chunk_send_epoch.lock();
-
         Some(PreparedBatch {
             holders,
-            epoch_snapshot,
+            epoch_snapshot: chunk_send_epoch,
         })
     }
 
@@ -175,10 +172,9 @@ impl ChunkSender {
         batch: &PreparedBatch,
         encoded_chunks: Vec<EncodedPacket>,
         connection: &PlayerConnection,
-        chunk_send_epoch: &SyncMutex<u32>,
+        chunk_send_epoch: u32,
     ) {
-        let epoch = chunk_send_epoch.lock();
-        if *epoch != batch.epoch_snapshot {
+        if chunk_send_epoch != batch.epoch_snapshot {
             return;
         }
 

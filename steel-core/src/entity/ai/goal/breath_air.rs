@@ -43,12 +43,12 @@ impl Goal for BreathAirGoal {
         false
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         find_air_position(mob);
         mob.mob_base().navigation().lock().stop();
     }
 
-    fn tick(&mut self, mob: &dyn PathfinderMob) {
+    fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         find_air_position(mob);
         let input = mob.travel_input();
         mob.move_relative(
@@ -147,7 +147,7 @@ mod tests {
     fn breath_air_goal_uses_vanilla_air_threshold() {
         init_test_registry();
         let mut goal = BreathAirGoal::new();
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         mob.set_air_supply(BREATH_AIR_THRESHOLD);
         assert!(!goal.can_use(&mob));
@@ -161,10 +161,10 @@ mod tests {
     fn breath_air_goal_tick_applies_travel_input_to_velocity() {
         init_test_registry();
         let mut goal = BreathAirGoal::new();
-        let mob = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_travel_input(LivingTravelInput::new(1.0, 0.0, 0.0));
 
-        goal.tick(&mob);
+        goal.tick(&mut mob);
 
         assert!(mob.velocity().length_squared() > 0.0);
     }

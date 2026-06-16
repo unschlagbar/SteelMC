@@ -183,7 +183,7 @@ impl PlayerDataStorage {
     }
 
     /// Saves multiple players' data.
-    pub async fn save_all(&self, players: &[Arc<Player>]) -> io::Result<usize> {
+    pub async fn save_all(&self, players: &[Arc<SyncMutex<Player>>]) -> io::Result<usize> {
         let mut saved = 0;
         for player in players {
             match self.save(player).await {

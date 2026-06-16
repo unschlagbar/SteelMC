@@ -205,13 +205,21 @@ impl MobHomeRestriction {
 }
 
 impl LeashData {
+    /// Computes the vanilla leash attachment for a holder handle: fence knots
+    /// attach by block position, everything else by UUID.
+    fn holder_attachment(holder: &SharedEntity) -> LeashAttachment {
+        holder
+            .with_entity_ref(|e| {
+                e.as_leash_fence_knot()
+                    .map(|knot| LeashAttachment::FenceKnot(knot.block_pos()))
+            })
+            .flatten()
+            .unwrap_or_else(|| LeashAttachment::Entity(holder.uuid()))
+    }
+
     fn from_entity(holder: &SharedEntity) -> Self {
-        let attachment = holder.as_leash_fence_knot().map_or_else(
-            || LeashAttachment::Entity(holder.uuid()),
-            |knot| LeashAttachment::FenceKnot(knot.block_pos()),
-        );
         Self {
-            attachment,
+            attachment: Self::holder_attachment(holder),
             holder: Some(Arc::downgrade(holder)),
             angular_momentum: 0.0,
         }
@@ -230,19 +238,12 @@ impl LeashData {
     }
 
     fn saved_attachment(&self) -> LeashAttachment {
-        self.holder().map_or(self.attachment, |holder| {
-            holder.as_leash_fence_knot().map_or_else(
-                || LeashAttachment::Entity(holder.uuid()),
-                |knot| LeashAttachment::FenceKnot(knot.block_pos()),
-            )
-        })
+        self.holder()
+            .map_or(self.attachment, |holder| Self::holder_attachment(&holder))
     }
 
     fn set_holder(&mut self, holder: &SharedEntity) {
-        self.attachment = holder.as_leash_fence_knot().map_or_else(
-            || LeashAttachment::Entity(holder.uuid()),
-            |knot| LeashAttachment::FenceKnot(knot.block_pos()),
-        );
+        self.attachment = Self::holder_attachment(holder);
         self.holder = Some(Arc::downgrade(holder));
         self.angular_momentum = 0.0;
     }
@@ -532,11 +533,11 @@ pub trait Mob: LivingEntity {
 
     fn mob_flags(&self) -> i8;
 
-    fn set_mob_flags(&self, flags: i8);
+    fn set_mob_flags(&mut self, flags: i8);
 
     fn custom_server_ai_step(&self) {}
 
-    fn tick_goal_selectors(&self) {}
+    fn tick_goal_selectors(&mut self) {}
 
     fn xp_reward(&self) -> i32 {
         self.mob_base().xp_reward()
@@ -628,7 +629,7 @@ pub trait Mob: LivingEntity {
     }
 
     fn finalize_spawn(
-        &self,
+        &mut self,
         world: &Arc<World>,
         spawn_reason: EntitySpawnReason,
         group_data: Option<SpawnGroupData>,
@@ -637,7 +638,7 @@ pub trait Mob: LivingEntity {
     }
 
     fn finalize_spawn_mob_base(
-        &self,
+        &mut self,
         world: &Arc<World>,
         _spawn_reason: EntitySpawnReason,
         group_data: Option<SpawnGroupData>,
@@ -671,7 +672,7 @@ pub trait Mob: LivingEntity {
 
     /// Handles vanilla `Mob.interact`.
     fn interact_mob(
-        &self,
+        &mut self,
         player: &Player,
         hand: InteractionHand,
         location: DVec3,
@@ -701,7 +702,7 @@ pub trait Mob: LivingEntity {
     }
 
     /// Handles vanilla `Mob.mobInteract`.
-    fn mob_interact(&self, _player: &Player, _hand: InteractionHand) -> InteractionResult {
+    fn mob_interact(&mut self, _player: &Player, _hand: InteractionHand) -> InteractionResult {
         InteractionResult::Pass
     }
 
@@ -801,7 +802,8 @@ pub trait Mob: LivingEntity {
             if !preserve && item_stack.is_damageable_item() {
                 let max_damage = item_stack.get_max_damage();
                 let damage = {
-                    let mut random = self.base().random().lock();
+                    let self_base = self.base();
+                    let mut random = self_base.random().lock();
                     let inner = random.next_i32_bounded((max_damage - 3).max(1));
                     max_damage - random.next_i32_bounded(1 + inner)
                 };
@@ -849,7 +851,7 @@ pub trait Mob: LivingEntity {
         }
     }
 
-    fn load_mob(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_mob(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         self.set_can_pick_up_loot(nbt.byte("CanPickUpLoot").is_some_and(|value| value != 0));
         *self.mob_base().persistence_required().lock() = nbt
             .byte("PersistenceRequired")
@@ -1084,8 +1086,10 @@ pub trait Mob: LivingEntity {
                 return;
             }
 
-            let distance_to = self.leash_distance_to(holder.as_ref());
-            self.when_leashed_to(holder.as_ref());
+            let distance_to = holder
+                .with_entity_ref(|h| self.leash_distance_to(h))
+                .unwrap_or(0.0);
+            holder.with_entity_ref(|h| self.when_leashed_to(h));
             let angular_momentum_before_distance_action = self.leash_angular_momentum();
             if distance_to > self.leash_snap_distance() {
                 if let Some(world) = self.level() {
@@ -1101,13 +1105,15 @@ pub trait Mob: LivingEntity {
                 self.leash_too_far_behaviour();
             } else if distance_to
                 > self.leash_elastic_distance()
-                    - f64::from(holder.base().dimensions().width)
+                    - f64::from(holder.dimensions().width)
                     - f64::from(self.base().dimensions().width)
-                && self.check_elastic_interactions(holder.as_ref())
+                && holder
+                    .with_entity_ref(|h| self.check_elastic_interactions(h))
+                    .unwrap_or(false)
             {
                 self.on_elastic_leash_pull();
             } else {
-                self.close_range_leash_behaviour(holder.as_ref());
+                holder.with_entity_ref(|h| self.close_range_leash_behaviour(h));
             }
             if !self.apply_leash_angular_momentum()
                 && let Some(angular_momentum) = angular_momentum_before_distance_action
@@ -1251,7 +1257,8 @@ pub trait Mob: LivingEntity {
             && self.remove_when_far_away(nearest_player_dist_sqr)
         {
             let should_discard = {
-                let mut random = self.base().random().lock();
+                let self_base = self.base();
+                let mut random = self_base.random().lock();
                 random.next_i32_bounded(800) == 0
             };
             if should_discard {
@@ -1296,7 +1303,7 @@ pub trait Mob: LivingEntity {
         self.mob_flags() & MOB_FLAG_NO_AI != 0
     }
 
-    fn set_no_ai(&self, no_ai: bool) {
+    fn set_no_ai(&mut self, no_ai: bool) {
         self.set_mob_flag(MOB_FLAG_NO_AI, no_ai);
     }
 
@@ -1304,7 +1311,7 @@ pub trait Mob: LivingEntity {
         self.mob_flags() & MOB_FLAG_LEFT_HANDED != 0
     }
 
-    fn set_left_handed(&self, left_handed: bool) {
+    fn set_left_handed(&mut self, left_handed: bool) {
         self.set_mob_flag(MOB_FLAG_LEFT_HANDED, left_handed);
     }
 
@@ -1324,7 +1331,7 @@ pub trait Mob: LivingEntity {
 
     /// Handles vanilla `Mob.doHurtTarget`.
     #[must_use]
-    fn do_hurt_target(&self, target: &SharedEntity) -> bool {
+    fn do_hurt_target(&mut self, target: &SharedEntity) -> bool {
         LivingEntity::refresh_equipment_attribute_modifiers(self, EquipmentSlot::MainHand);
         let weapon_item = {
             let mut main_hand = ItemStack::empty();
@@ -1351,22 +1358,23 @@ pub trait Mob: LivingEntity {
         let old_movement = target.velocity();
         let was_hurt = target.hurt(&damage_source, damage);
         if was_hurt {
-            self.cause_extra_knockback(
-                target.as_ref(),
-                self.get_attack_knockback(target.as_ref(), &weapon_item, &damage_source),
-                old_movement,
-            );
-            // TODO: Run ItemStack.hurtEnemy once weapon durability hooks exist.
-            let post_attack_context = EnchantmentPostAttackContext::new(
-                target.as_ref(),
-                Some(self.as_entity_event_source()),
-                Some(self.as_entity_event_source()),
-                &damage_source,
-            );
-            enchantment_helper::do_post_attack_effects_from_item(
-                &weapon_item,
-                &post_attack_context,
-            );
+            target.with_entity(|target_entity| {
+                self.cause_extra_knockback(
+                    target_entity,
+                    self.get_attack_knockback(target_entity, &weapon_item, &damage_source),
+                    old_movement,
+                );
+                let post_attack_context = EnchantmentPostAttackContext::new(
+                    target_entity,
+                    Some(self.as_entity_event_source_mut()),
+                    Some(self.as_entity_event_source_mut()),
+                    &damage_source,
+                );
+                enchantment_helper::do_post_attack_effects_from_item(
+                    &weapon_item,
+                    &post_attack_context,
+                );
+            });
             self.set_last_hurt_mob(Some(target));
             self.play_attack_sound();
         }
@@ -1471,11 +1479,11 @@ pub trait Mob: LivingEntity {
         base.inflate_xyz(horizontal_expansion, 0.0, horizontal_expansion)
     }
 
-    fn set_aggressive(&self, aggressive: bool) {
+    fn set_aggressive(&mut self, aggressive: bool) {
         self.set_mob_flag(MOB_FLAG_AGGRESSIVE, aggressive);
     }
 
-    fn set_mob_flag(&self, flag: i8, enabled: bool) {
+    fn set_mob_flag(&mut self, flag: i8, enabled: bool) {
         let flags = self.mob_flags();
         let next = if enabled { flags | flag } else { flags & !flag };
         self.set_mob_flags(next);
@@ -1523,7 +1531,7 @@ pub trait Mob: LivingEntity {
         ));
     }
 
-    fn mob_server_ai_step(&self) {
+    fn mob_server_ai_step(&mut self) {
         self.increment_no_action_time();
         self.mob_base().sensing().lock().tick();
         if self.tick_count() % 5 == 0 {
@@ -1917,7 +1925,7 @@ pub trait PathfinderMob: Mob {
         tick_path_navigation_target(self, &world, game_time, self.can_update_path());
     }
 
-    fn tick_pathfinder_goal_selectors(&self)
+    fn tick_pathfinder_goal_selectors(&mut self)
     where
         Self: Sized,
     {
@@ -2311,7 +2319,8 @@ mod tests {
     }
 
     struct DespawnTestMob {
-        base: EntityBase,
+        base: Weak<EntityBase>,
+        base_strong: Option<Arc<EntityBase>>,
         entity_type: EntityTypeRef,
         living_base: LivingEntityBase,
         mob_base: MobBase,
@@ -2323,6 +2332,18 @@ mod tests {
     }
 
     impl DespawnTestMob {
+        /// Returns the shared handle backing this plain test mob.
+        fn entity(&self) -> SharedEntity {
+            self.base_strong.clone().expect("entity already shared")
+        }
+
+        /// Attaches this mob to its own base and returns the shared handle.
+        fn shared(mut self) -> SharedEntity {
+            let base = self.base_strong.take().expect("entity already shared");
+            base.attach_entity(Arc::new(SyncMutex::new(self)));
+            base
+        }
+
         fn new(nearest_player_distance_sqr: Option<f64>, remove_when_far_away: bool) -> Self {
             Self::with_position(
                 1,
@@ -2356,8 +2377,15 @@ mod tests {
         ) -> Self {
             init_test_registry();
 
+            let base = Arc::new(EntityBase::new(
+                id,
+                position,
+                entity_type.dimensions,
+                Weak::new(),
+            ));
             Self {
-                base: EntityBase::new(id, position, entity_type.dimensions, Weak::new()),
+                base: Arc::downgrade(&base),
+                base_strong: Some(base),
                 entity_type,
                 living_base: LivingEntityBase::new(entity_type),
                 mob_base: MobBase::new(),
@@ -2375,7 +2403,7 @@ mod tests {
     }
 
     impl Entity for DespawnTestMob {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -2403,7 +2431,7 @@ mod tests {
             self.controlling_passenger.lock().clone()
         }
 
-        fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+        fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
             LivingEntity::hurt_server(self, source, amount)
         }
     }
@@ -2417,7 +2445,7 @@ mod tests {
             *self.health.lock()
         }
 
-        fn set_health(&self, health: f32) {
+        fn set_health(&mut self, health: f32) {
             *self.health.lock() = health;
         }
     }
@@ -2488,7 +2516,7 @@ mod tests {
             *self.flags.lock()
         }
 
-        fn set_mob_flags(&self, flags: i8) {
+        fn set_mob_flags(&mut self, flags: i8) {
             *self.flags.lock() = flags;
         }
 
@@ -2504,21 +2532,24 @@ mod tests {
     impl PathfinderMob for DespawnTestMob {}
 
     struct MobControlVehicleEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
         entity_type: EntityTypeRef,
     }
 
     impl MobControlVehicleEntity {
-        fn new(id: i32, entity_type: EntityTypeRef) -> Self {
-            Self {
-                base: EntityBase::new(id, DVec3::ZERO, entity_type.dimensions, Weak::new()),
-                entity_type,
-            }
+        fn new(id: i32, entity_type: EntityTypeRef) -> SharedEntity {
+            EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                entity_type.dimensions,
+                Weak::new(),
+                |base| Self { base, entity_type },
+            )
         }
     }
 
     impl Entity for MobControlVehicleEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -2556,7 +2587,7 @@ mod tests {
 
     #[test]
     fn mob_server_ai_step_increments_no_action_time() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
 
         mob.set_no_action_time(12);
         mob.mob_server_ai_step();
@@ -2586,7 +2617,7 @@ mod tests {
     fn mob_control_flags_disable_goals_for_mob_controller() {
         let mob = DespawnTestMob::new(None, false);
         let controller: SharedEntity =
-            Arc::new(DespawnTestMob::with_position(2, DVec3::ZERO, None, false));
+            DespawnTestMob::with_position(2, DVec3::ZERO, None, false).shared();
         mob.set_controlling_passenger(controller);
 
         mob.update_control_flags();
@@ -2599,25 +2630,25 @@ mod tests {
 
     #[test]
     fn mob_control_flags_disable_jump_when_riding_boat() {
-        let mob = Arc::new(DespawnTestMob::new(None, false));
-        let mob_entity: SharedEntity = mob.clone();
-        let boat: SharedEntity =
-            Arc::new(MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT));
+        let mob_entity: SharedEntity = DespawnTestMob::new(None, false).shared();
+        let boat: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
         EntityBase::restore_passenger_relationship(&boat, &mob_entity);
 
-        mob.update_control_flags();
+        mob_entity.with_mob(|mob| {
+            mob.update_control_flags();
 
-        let selector = mob.mob_base().goal_selector().lock();
-        assert!(!selector.is_control_disabled(GoalControl::Move));
-        assert!(selector.is_control_disabled(GoalControl::Jump));
-        assert!(!selector.is_control_disabled(GoalControl::Look));
+            let selector = mob.mob_base().goal_selector().lock();
+            assert!(!selector.is_control_disabled(GoalControl::Move));
+            assert!(selector.is_control_disabled(GoalControl::Jump));
+            assert!(!selector.is_control_disabled(GoalControl::Look));
+        });
     }
 
     #[test]
     fn mob_target_stores_living_target_weakly() {
         let mob = DespawnTestMob::new(None, false);
         let target: SharedEntity =
-            Arc::new(DespawnTestMob::with_position(2, DVec3::ZERO, None, false));
+            DespawnTestMob::with_position(2, DVec3::ZERO, None, false).shared();
 
         assert!(mob.set_target(Some(&target)));
 
@@ -2629,7 +2660,7 @@ mod tests {
     fn mob_target_can_be_cleared() {
         let mob = DespawnTestMob::new(None, false);
         let target: SharedEntity =
-            Arc::new(DespawnTestMob::with_position(2, DVec3::ZERO, None, false));
+            DespawnTestMob::with_position(2, DVec3::ZERO, None, false).shared();
         assert!(mob.set_target(Some(&target)));
 
         assert!(mob.set_target(None));
@@ -2642,7 +2673,7 @@ mod tests {
         let mob = DespawnTestMob::new(None, false);
         {
             let target: SharedEntity =
-                Arc::new(DespawnTestMob::with_position(2, DVec3::ZERO, None, false));
+                DespawnTestMob::with_position(2, DVec3::ZERO, None, false).shared();
             assert!(mob.set_target(Some(&target)));
         }
 
@@ -2652,8 +2683,7 @@ mod tests {
     #[test]
     fn mob_target_rejects_non_living_entities() {
         let mob = DespawnTestMob::new(None, false);
-        let target: SharedEntity =
-            Arc::new(MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT));
+        let target: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
 
         assert!(!mob.set_target(Some(&target)));
 
@@ -2712,22 +2742,24 @@ mod tests {
 
     #[test]
     fn melee_attack_range_uses_vehicle_expanded_attack_box() {
-        let mob = Arc::new(DespawnTestMob::with_position(
-            1,
-            DVec3::new(4.0, 0.0, 0.0),
-            None,
-            false,
-        ));
+        let mob_entity: SharedEntity =
+            DespawnTestMob::with_position(1, DVec3::new(4.0, 0.0, 0.0), None, false).shared();
         let target = DespawnTestMob::with_position(2, DVec3::new(1.1, 0.0, 0.0), None, false);
 
-        assert!(!mob.is_within_melee_attack_range(&target));
+        assert!(
+            !mob_entity
+                .with_mob(|mob| mob.is_within_melee_attack_range(&target))
+                .unwrap()
+        );
 
-        let mob_entity: SharedEntity = mob.clone();
-        let vehicle: SharedEntity =
-            Arc::new(MobControlVehicleEntity::new(3, &vanilla_entities::PIG));
+        let vehicle: SharedEntity = MobControlVehicleEntity::new(3, &vanilla_entities::PIG);
         EntityBase::restore_passenger_relationship(&vehicle, &mob_entity);
 
-        assert!(mob.is_within_melee_attack_range(&target));
+        assert!(
+            mob_entity
+                .with_mob(|mob| mob.is_within_melee_attack_range(&target))
+                .unwrap()
+        );
     }
 
     #[test]
@@ -2777,7 +2809,7 @@ mod tests {
 
     #[test]
     fn mob_do_hurt_target_applies_attack_damage_and_records_target() {
-        let mob = DespawnTestMob::with_entity_type(
+        let mut mob = DespawnTestMob::with_entity_type(
             1,
             DVec3::ZERO,
             &vanilla_entities::ZOMBIE,
@@ -2787,26 +2819,22 @@ mod tests {
         mob.attributes()
             .lock()
             .set_base_value(vanilla_attributes::ATTACK_DAMAGE, 4.0);
-        let target = Arc::new(DespawnTestMob::with_position(
-            2,
-            DVec3::new(1.0, 0.0, 0.0),
-            None,
-            false,
-        ));
-        let target_entity: SharedEntity = target.clone();
+        let target: SharedEntity =
+            DespawnTestMob::with_position(2, DVec3::new(1.0, 0.0, 0.0), None, false).shared();
 
-        assert!(mob.do_hurt_target(&target_entity));
+        assert!(mob.do_hurt_target(&target));
 
-        assert_eq!(target.get_health().to_bits(), 6.0_f32.to_bits());
+        let target_health = target.with_living(|living| living.get_health()).unwrap();
+        assert_eq!(target_health.to_bits(), 6.0_f32.to_bits());
         let stored_target = mob
             .last_hurt_mob()
             .expect("successful mob attack should record target");
-        assert!(Arc::ptr_eq(&stored_target, &target_entity));
+        assert!(Arc::ptr_eq(&stored_target, &target));
     }
 
     #[test]
     fn mob_do_hurt_target_applies_vanilla_extra_knockback() {
-        let mob = DespawnTestMob::with_entity_type(
+        let mut mob = DespawnTestMob::with_entity_type(
             1,
             DVec3::ZERO,
             &vanilla_entities::ZOMBIE,
@@ -2819,15 +2847,10 @@ mod tests {
             attributes.set_base_value(vanilla_attributes::ATTACK_KNOCKBACK, 2.0);
         }
         mob.set_velocity(DVec3::new(1.0, 0.0, 1.0));
-        let target = Arc::new(DespawnTestMob::with_position(
-            2,
-            DVec3::new(1.0, 0.0, 0.0),
-            None,
-            false,
-        ));
-        let target_entity: SharedEntity = target.clone();
+        let target: SharedEntity =
+            DespawnTestMob::with_position(2, DVec3::new(1.0, 0.0, 0.0), None, false).shared();
 
-        assert!(mob.do_hurt_target(&target_entity));
+        assert!(mob.do_hurt_target(&target));
 
         assert_eq!(mob.velocity().x.to_bits(), 0.6_f64.to_bits());
         assert_eq!(mob.velocity().z.to_bits(), 0.6_f64.to_bits());
@@ -2873,7 +2896,7 @@ mod tests {
     fn mob_body_rotation_control_uses_tick_position_delta() {
         let mob = DespawnTestMob::new(None, false);
         mob.set_old_position(DVec3::ZERO);
-        mob.base.set_position_local(DVec3::new(1.0, 0.0, 0.0));
+        mob.entity().set_position_local(DVec3::new(1.0, 0.0, 0.0));
         mob.set_rotation((90.0, 0.0));
         mob.set_y_body_rot(0.0);
         mob.set_y_head_rot(200.0);
@@ -2886,15 +2909,10 @@ mod tests {
 
     #[test]
     fn mob_tick_leash_applies_default_elastic_pull() {
-        let mob = Arc::new(DespawnTestMob::with_position(1, DVec3::ZERO, None, false));
-        let holder = Arc::new(DespawnTestMob::with_position(
-            2,
-            DVec3::new(7.0, 0.0, 0.0),
-            None,
-            false,
-        ));
-        let holder_entity: SharedEntity = holder.clone();
-        assert!(mob.set_leashed_to(&holder_entity));
+        let mob = DespawnTestMob::with_position(1, DVec3::ZERO, None, false);
+        let holder: SharedEntity =
+            DespawnTestMob::with_position(2, DVec3::new(7.0, 0.0, 0.0), None, false).shared();
+        assert!(mob.set_leashed_to(&holder));
 
         mob.tick_leash();
 

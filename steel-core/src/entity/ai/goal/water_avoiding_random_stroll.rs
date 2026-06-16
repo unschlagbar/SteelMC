@@ -43,11 +43,11 @@ impl Goal for WaterAvoidingRandomStrollGoal {
         self.stroll.can_continue_to_use(mob)
     }
 
-    fn start(&mut self, mob: &dyn PathfinderMob) {
+    fn start(&mut self, mob: &mut dyn PathfinderMob) {
         self.stroll.start(mob);
     }
 
-    fn stop(&mut self, mob: &dyn PathfinderMob) {
+    fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.stroll.stop(mob);
     }
 }
@@ -58,7 +58,8 @@ fn random_stroll_pos(mob: &dyn PathfinderMob, probability: f32) -> Option<DVec3>
     }
 
     let use_land_random_pos = {
-        let mut random = mob.base().random().lock();
+        let mob_base = mob.base();
+        let mut random = mob_base.random().lock();
         random.next_f32() >= probability
     };
     if use_land_random_pos {

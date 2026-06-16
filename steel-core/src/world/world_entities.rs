@@ -1,5 +1,6 @@
 //! This module contains the implementation of the world's entity-related methods.
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use steel_protocol::packets::game::{
     CGameEvent, CPlayerInfoUpdate, CRemovePlayerInfo, GameEventType,
@@ -21,15 +22,15 @@ use crate::{
 };
 
 impl World {
-    fn attach_player_entity_callback(self: &Arc<Self>, player: &Arc<Player>) {
+    fn attach_player_entity_callback(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         let callback = Arc::new(PlayerEntityCallback::new(player.id(), Arc::downgrade(self)));
         player.set_level_callback(callback);
     }
 
-    fn register_player_entity(self: &Arc<Self>, player: &Arc<Player>) {
+    fn register_player_entity(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         self.attach_player_entity_callback(player);
 
-        let entity: SharedEntity = player.clone();
+        let entity: SharedEntity = player.shared_entity();
         if let Err(error) = self
             .entity_manager()
             .add_live_entity(entity.clone(), EntityOwnership::External)
@@ -81,13 +82,13 @@ impl World {
         player.set_level_callback(Arc::new(NullEntityCallback));
     }
 
-    pub(crate) fn register_respawned_player_entity(self: &Arc<Self>, player: &Arc<Player>) {
+    pub(crate) fn register_respawned_player_entity(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         self.register_player_entity(player);
         self.chunk_map.update_player_status(player);
     }
 
     /// Removes a player from the world.
-    pub async fn remove_player(self: &Arc<Self>, player: Arc<Player>) {
+    pub async fn remove_player(self: &Arc<Self>, player: Arc<SyncMutex<Player>>) {
         let Some(player) = self.players.remove_player(&player).await else {
             return;
         };
@@ -140,7 +141,7 @@ impl World {
     ///
     /// Unlike `remove_player`, this is synchronous and skips player data saving and tab list
     /// removal — the player stays in the global tab list since they are only switching worlds.
-    pub fn remove_player_for_world_change(self: &Arc<Self>, player: &Arc<Player>) {
+    pub fn remove_player_for_world_change(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
@@ -156,7 +157,7 @@ impl World {
 
     /// Removes a player during a domain switch after the caller has saved
     /// the player's current-domain data.
-    pub fn remove_player_for_domain_switch(self: &Arc<Self>, player: &Arc<Player>) {
+    pub fn remove_player_for_domain_switch(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
@@ -175,7 +176,7 @@ impl World {
     /// players. On `WorldChange`, this is skipped — the player already exists in all
     /// clients' tab lists and the entity tracker handles spawning as chunks load.
     #[must_use]
-    pub fn add_player(self: &Arc<Self>, player: Arc<Player>, reason: ResetReason) -> bool {
+    pub fn add_player(self: &Arc<Self>, player: Arc<SyncMutex<Player>>, reason: ResetReason) -> bool {
         if !self.players.insert(player.clone()) {
             player.connection.close();
             return false;
@@ -208,7 +209,7 @@ impl World {
     /// Sends all existing players' info to the new player, then broadcasts the
     /// new player's info to everyone. Entity spawn pairing is owned by
     /// `EntityTracker`, matching vanilla `ChunkMap`.
-    fn sync_tab_list(self: &Arc<Self>, player: &Arc<Player>) {
+    fn sync_tab_list(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
         // Send existing players to the new player.
         self.players.iter_players(|_, existing_player| {
             if existing_player.gameprofile.id == player.gameprofile.id {

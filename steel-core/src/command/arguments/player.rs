@@ -1,5 +1,6 @@
 //! A player argument.
 use crate::command::arguments::CommandArgument;
+use steel_utils::locks::SyncMutex;
 use crate::command::arguments::SuggestionContext;
 use crate::command::context::CommandContext;
 use crate::entity::Entity;
@@ -33,7 +34,7 @@ impl PlayerArgument {
 }
 
 impl CommandArgument for PlayerArgument {
-    type Output = Vec<Arc<Player>>;
+    type Output = Vec<Arc<SyncMutex<Player>>>;
 
     fn parse<'a>(
         &self,
@@ -53,7 +54,7 @@ impl CommandArgument for PlayerArgument {
                 let position = context.position;
                 let mut near_dist = (f64::MAX, players[0].clone());
                 for player in players {
-                    let dist = player.position().distance_squared(position);
+                    let dist = player.lock().position().distance_squared(position);
                     if dist < near_dist.0 {
                         near_dist = (dist, player);
                     }
@@ -77,11 +78,11 @@ impl CommandArgument for PlayerArgument {
                     Uuid::nil()
                 };
                 let player = players.into_iter().find_map(|p| {
-                    if p.gameprofile.name == name || p.uuid() == uuid {
-                        Some(p)
-                    } else {
-                        None
-                    }
+                    let matches = {
+                        let guard = p.lock();
+                        guard.gameprofile.name == name || guard.uuid() == uuid
+                    };
+                    if matches { Some(p) } else { None }
                 })?;
                 vec![player]
             }
@@ -111,7 +112,7 @@ impl CommandArgument for PlayerArgument {
                 .server
                 .get_players()
                 .iter()
-                .map(|p| SuggestionEntry::new(p.gameprofile.name.clone()))
+                .map(|p| SuggestionEntry::new(p.lock().gameprofile.name.clone()))
                 .collect(),
         );
         suggestions.retain(|s| s.text.starts_with(prefix));

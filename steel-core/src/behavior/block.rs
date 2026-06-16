@@ -829,7 +829,7 @@ pub trait BlockBehavior: Send + Sync {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        entity: &dyn Entity,
+        entity: &mut dyn Entity,
         effect_collector: &mut InsideBlockEffectCollector,
         is_precise: bool,
     ) {
@@ -943,7 +943,13 @@ pub trait BlockBehavior: Send + Sync {
     /// Called when an entity steps on this block while on ground.
     ///
     /// Vanilla parity: `Block.stepOn(Level, BlockPos, BlockState, Entity)`.
-    fn step_on(&self, state: BlockStateId, world: &Arc<World>, pos: BlockPos, entity: &dyn Entity) {
+    fn step_on(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        entity: &mut dyn Entity,
+    ) {
         self.default_step_on(state, world, pos, entity);
     }
 
