@@ -1,12 +1,12 @@
 //! Entity lifecycle callbacks for movement and removal tracking.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use glam::DVec3;
 use steel_utils::ChunkPos;
 
 use super::EntityMoveError;
-use crate::world::World;
+use crate::{entity::Entity, world::World};
 
 /// Reasons an entity can be removed from the world.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +61,7 @@ pub trait EntityLevelCallback: Send + Sync {
     /// no behavior lock held (construction, loading), where re-locking is safe.
     fn on_move_committed(
         &self,
-        entity: Option<&mut dyn crate::entity::Entity>,
+        entity: Option<&mut dyn Entity>,
         old_pos: DVec3,
         new_pos: DVec3,
     ) -> Result<(), EntityMoveError>;
@@ -84,7 +84,7 @@ impl EntityLevelCallback for NullEntityCallback {
 
     fn on_move_committed(
         &self,
-        _entity: Option<&mut dyn crate::entity::Entity>,
+        _entity: Option<&mut dyn Entity>,
         _old_pos: DVec3,
         _new_pos: DVec3,
     ) -> Result<(), EntityMoveError> {
@@ -116,7 +116,7 @@ impl EntityLevelCallback for InactiveEntityCallback {
 
     fn on_move_committed(
         &self,
-        _entity: Option<&mut dyn crate::entity::Entity>,
+        _entity: Option<&mut dyn Entity>,
         _old_pos: DVec3,
         _new_pos: DVec3,
     ) -> Result<(), EntityMoveError> {
@@ -163,7 +163,7 @@ impl EntityLevelCallback for PlayerEntityCallback {
 
     fn on_move_committed(
         &self,
-        entity: Option<&mut dyn crate::entity::Entity>,
+        entity: Option<&mut dyn Entity>,
         old_pos: DVec3,
         new_pos: DVec3,
     ) -> Result<(), EntityMoveError> {
@@ -183,20 +183,46 @@ impl EntityLevelCallback for PlayerEntityCallback {
             })?;
 
         if update.section_changed() {
+            // This player's tracking view lives on the `ServerPlayer` (Arc-level lock),
+            // not behind the entity lock, so it is safe to read while the entity is held.
+            let self_view = world
+                .players
+                .get_by_entity_id(self.entity_id)
+                .and_then(|sp| *sp.last_tracking_view.lock());
+
+            // Refresh THIS player's own tracked-entity set. When the move holds the
+            // behavior lock (entity threaded in as `Some`), reuse it — re-locking self
+            // here deadlocks under the tick. Only lock when no behavior lock is held.
+            if let Some(view) = self_view {
+                match entity.as_deref() {
+                    Some(e) => {
+                        if let Some(player) = e.as_player() {
+                            world.entity_tracker().update_player(player, &view);
+                        }
+                    }
+                    None => {
+                        if let Some(player) = world.players.get_by_entity_id(self.entity_id) {
+                            world
+                                .entity_tracker()
+                                .update_player(&player.entity().lock(), &view);
+                        }
+                    }
+                }
+            }
+
             world.entity_tracker().on_entity_section_change(
                 self.entity_id,
                 entity,
                 update.old_chunk,
                 update.new_chunk,
                 |chunk| world.player_area_map.get_tracking_players(chunk),
-                |player_id| world.players.get_by_entity_id(player_id),
+                |player_id| {
+                    world
+                        .players
+                        .get_by_entity_id(player_id)
+                        .map(|sp| Arc::clone(sp.entity()))
+                },
             );
-
-            if let Some(player) = world.players.get_by_entity_id(self.entity_id)
-                && let Some(view) = *player.last_tracking_view.lock()
-            {
-                world.entity_tracker().update_player(&player, &view);
-            }
         }
 
         Ok(())
@@ -241,7 +267,7 @@ impl EntityLevelCallback for EntityChunkCallback {
 
     fn on_move_committed(
         &self,
-        entity: Option<&mut dyn crate::entity::Entity>,
+        entity: Option<&mut dyn Entity>,
         old_pos: DVec3,
         new_pos: DVec3,
     ) -> Result<(), EntityMoveError> {
@@ -277,7 +303,12 @@ impl EntityLevelCallback for EntityChunkCallback {
                     update.old_chunk,
                     update.new_chunk,
                     |chunk| world.player_area_map.get_tracking_players(chunk),
-                    |player_id| world.players.get_by_entity_id(player_id),
+                    |player_id| {
+                        world
+                            .players
+                            .get_by_entity_id(player_id)
+                            .map(|sp| Arc::clone(sp.entity()))
+                    },
                 );
             }
         }

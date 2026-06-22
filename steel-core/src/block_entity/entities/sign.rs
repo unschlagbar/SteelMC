@@ -327,6 +327,7 @@ impl BlockEntity for SignBlockEntity {
                 .players
                 .get_by_uuid(&editor_uuid)
                 .is_none_or(|player| {
+                    let player = player.entity().lock();
                     let pos = self.pos;
                     let player_pos = player.position();
                     let dx = player_pos.x - f64::from(pos.0.x) - 0.5;

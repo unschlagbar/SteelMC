@@ -1,6 +1,6 @@
 /// Per-player tick counters and once-per-tick packet state.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct PlayerTickState {
+pub(crate) struct PlayerTickState {
     tick_count: i32,
     attack_strength_ticker: i32,
     take_xp_delay: i32,

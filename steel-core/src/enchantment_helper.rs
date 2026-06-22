@@ -50,6 +50,7 @@ pub(crate) struct EnchantmentPostAttackContext<'a> {
     attacker: Option<&'a mut dyn Entity>,
     direct_attacker: Option<&'a mut dyn Entity>,
     damage_source: &'a DamageSource,
+    attacker_same: bool,
 }
 
 impl<'a> EnchantmentPostAttackContext<'a> {
@@ -59,12 +60,14 @@ impl<'a> EnchantmentPostAttackContext<'a> {
         attacker: Option<&'a mut dyn Entity>,
         direct_attacker: Option<&'a mut dyn Entity>,
         damage_source: &'a DamageSource,
+        attacker_same: bool,
     ) -> Self {
         Self {
             victim,
             attacker,
             direct_attacker,
             damage_source,
+            attacker_same,
         }
     }
 
@@ -77,11 +80,17 @@ impl<'a> EnchantmentPostAttackContext<'a> {
         )
     }
 
-    fn affected_entity(&mut self, target: EnchantmentTarget) -> Option<&'a mut dyn Entity> {
+    fn affected_entity(&mut self, target: EnchantmentTarget) -> Option<&mut (dyn Entity + 'a)> {
         match target {
-            EnchantmentTarget::Attacker => self.attacker,
-            EnchantmentTarget::DamagingEntity => self.direct_attacker,
-            EnchantmentTarget::Victim => Some(self.victim),
+            EnchantmentTarget::Attacker => self.attacker.as_deref_mut(),
+            EnchantmentTarget::DamagingEntity => {
+                if self.attacker_same {
+                    self.attacker.as_deref_mut()
+                } else {
+                    self.direct_attacker.as_deref_mut()
+                }
+            }
+            EnchantmentTarget::Victim => Some(&mut *self.victim),
         }
     }
 }
@@ -155,7 +164,7 @@ pub(crate) fn is_immune_to_damage<V: LivingEntity + ?Sized>(
 
 pub(crate) fn do_post_attack_effects_from_item(
     item: &ItemStack,
-    context: &EnchantmentPostAttackContext<'_>,
+    context: &mut EnchantmentPostAttackContext<'_>,
 ) {
     apply_post_attack_effects(
         item,
@@ -166,16 +175,26 @@ pub(crate) fn do_post_attack_effects_from_item(
 }
 
 pub(crate) fn do_post_attack_effects_with_item_source(
-    victim: &dyn Entity,
     source: &ItemStack,
-    context: &EnchantmentPostAttackContext<'_>,
+    context: &mut EnchantmentPostAttackContext,
 ) {
-    if let Some(living_victim) = victim.as_living_entity() {
+    // Snapshot the victim's equipped items first: applying the effects below
+    // re-borrows `context` (which holds the victim), so we must not still be
+    // borrowing the victim's equipment at that point.
+    let mut victim_items: Vec<(EquipmentSlot, ItemStack)> = Vec::new();
+    if let Some(victim) = context.affected_entity(EnchantmentTarget::Victim)
+        && let Some(living_victim) = victim.as_living_entity()
+    {
         for slot in EquipmentSlot::ALL {
             living_victim.with_equipment_slot(slot, &mut |item| {
-                apply_post_attack_effects(item, Some(slot), EnchantmentTarget::Victim, context);
+                if item.get_enchantments().is_some() {
+                    victim_items.push((slot, item.copy_with_count(item.count())));
+                }
             });
         }
+    }
+    for (slot, item) in &victim_items {
+        apply_post_attack_effects(item, Some(*slot), EnchantmentTarget::Victim, context);
     }
 
     apply_post_attack_effects(
@@ -262,7 +281,7 @@ fn apply_post_attack_effects(
     item: &ItemStack,
     slot: Option<EquipmentSlot>,
     enchanted_target: EnchantmentTarget,
-    context: &EnchantmentPostAttackContext<'_>,
+    context: &mut EnchantmentPostAttackContext,
 ) {
     let Some(enchantments) = item.get_enchantments() else {
         return;
@@ -288,15 +307,14 @@ fn apply_post_attack_effects(
             if !requirements_match(effect.requirements, &damage_context) {
                 continue;
             }
-            let Some(affected_entity) = context.affected_entity(effect.affected) else {
-                continue;
-            };
-            apply_entity_effect(&effect.effect, level, affected_entity);
+            if let Some(affected_entity) = context.affected_entity(effect.affected) {
+                apply_entity_effect(&effect.effect, level, affected_entity);
+            }
         }
     }
 }
 
-pub(crate) fn do_post_piercing_attack_effects(user: &dyn LivingEntity) {
+pub(crate) fn do_post_piercing_attack_effects(user: &mut dyn LivingEntity) {
     let mut item_stack = ItemStack::empty();
     user.with_equipment_slot(EquipmentSlot::MainHand, &mut |stack| {
         item_stack = stack.copy_with_count(stack.count());
@@ -414,7 +432,7 @@ fn apply_supported_entity_effect(
 fn apply_post_piercing_entity_effect(
     effect: &EnchantmentEntityEffect,
     level: i32,
-    user: &dyn LivingEntity,
+    user: &mut dyn LivingEntity,
 ) -> bool {
     if !post_piercing_entity_effect_is_supported(effect) {
         return false;
@@ -446,7 +464,7 @@ fn post_piercing_entity_effect_is_supported(effect: &EnchantmentEntityEffect) ->
 fn apply_supported_post_piercing_entity_effect(
     effect: &EnchantmentEntityEffect,
     level: i32,
-    user: &dyn LivingEntity,
+    user: &mut dyn LivingEntity,
 ) {
     match effect {
         EnchantmentEntityEffect::AllOf(effects) => {
@@ -956,7 +974,7 @@ mod tests {
             Identifier::vanilla_static("frost_walker"),
             1,
         );
-        let victim = TestLivingEntity::new(1, &vanilla_entities::PLAYER);
+        let victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
         victim.equip(EquipmentSlot::Feet, boots);
 
         assert!(is_immune_to_damage(
@@ -973,7 +991,7 @@ mod tests {
             Identifier::vanilla_static("frost_walker"),
             1,
         );
-        let wrong_slot_victim = TestLivingEntity::new(2, &vanilla_entities::PLAYER);
+        let wrong_slot_victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
         wrong_slot_victim.equip(EquipmentSlot::Head, helmet);
 
         assert!(!is_immune_to_damage(
@@ -996,14 +1014,15 @@ mod tests {
         let damage_source = DamageSource::environment(&vanilla_damage_types::PLAYER_ATTACK)
             .with_causing_entity(attacker.id())
             .with_direct_entity(attacker.id());
-        let context = EnchantmentPostAttackContext::new(
+        let mut context = EnchantmentPostAttackContext::new(
             &mut victim,
             Some(&mut attacker),
-            Some(&mut attacker),
+            None,
             &damage_source,
+            true,
         );
 
-        do_post_attack_effects_from_item(&stack, &context);
+        do_post_attack_effects_from_item(&stack, &mut context);
 
         assert_eq!(victim.remaining_fire_ticks(), 160);
     }
@@ -1012,8 +1031,8 @@ mod tests {
     fn post_attack_effects_match_enchantment_slot() {
         init_test_registry();
 
-        let attacker = TestLivingEntity::new(1, &vanilla_entities::PLAYER);
-        let victim = TestLivingEntity::new(2, &vanilla_entities::ZOMBIE);
+        let mut attacker = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut victim = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let stack = enchanted_item(
             &vanilla_items::ITEMS.diamond_sword,
             Identifier::vanilla_static("fire_aspect"),
@@ -1022,26 +1041,35 @@ mod tests {
         let damage_source = DamageSource::environment(&vanilla_damage_types::PLAYER_ATTACK)
             .with_causing_entity(attacker.id())
             .with_direct_entity(attacker.id());
-        let context = EnchantmentPostAttackContext::new(
-            &victim,
-            Some(&attacker),
-            Some(&attacker),
+        let mut context = EnchantmentPostAttackContext::new(
+            &mut victim,
+            Some(&mut attacker),
+            None,
             &damage_source,
+            true,
         );
 
         apply_post_attack_effects(
             &stack,
             Some(EquipmentSlot::Head),
             EnchantmentTarget::Attacker,
-            &context,
+            &mut context,
         );
         assert_eq!(victim.remaining_fire_ticks(), 0);
+
+        let mut context = EnchantmentPostAttackContext::new(
+            &mut victim,
+            Some(&mut attacker),
+            None,
+            &damage_source,
+            true,
+        );
 
         apply_post_attack_effects(
             &stack,
             Some(EquipmentSlot::MainHand),
             EnchantmentTarget::Attacker,
-            &context,
+            &mut context,
         );
         assert_eq!(victim.remaining_fire_ticks(), 80);
     }
@@ -1050,7 +1078,7 @@ mod tests {
     fn lunge_post_piercing_requirements_and_effect_are_supported() {
         init_test_registry();
 
-        let user = TestLivingEntity::new(1, &vanilla_entities::ZOMBIE);
+        let user = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let effects = vanilla_enchantments::LUNGE.effects.post_piercing_attack;
         assert_eq!(effects.len(), 1);
         assert!(entity_requirements_match(effects[0].requirements, &user));
@@ -1072,14 +1100,15 @@ mod tests {
         let damage_source = DamageSource::environment(&vanilla_damage_types::ARROW)
             .with_causing_entity(attacker.id())
             .with_direct_entity(direct_entity.id());
-        let context = EnchantmentPostAttackContext::new(
+        let mut context = EnchantmentPostAttackContext::new(
             &mut victim,
             Some(&mut attacker),
             Some(&mut direct_entity),
             &damage_source,
+            false,
         );
 
-        do_post_attack_effects_from_item(&stack, &context);
+        do_post_attack_effects_from_item(&stack, &mut context);
 
         assert_eq!(victim.remaining_fire_ticks(), 0);
     }
@@ -1099,21 +1128,23 @@ mod tests {
         let damage_source = DamageSource::environment(&vanilla_damage_types::PLAYER_ATTACK)
             .with_causing_entity(attacker.id())
             .with_direct_entity(attacker.id());
-        let spider_context = EnchantmentPostAttackContext::new(
+        let mut spider_context = EnchantmentPostAttackContext::new(
             &mut spider,
             Some(&mut attacker),
-            Some(&mut attacker),
+            None,
             &damage_source,
+            true,
         );
-        let zombie_context = EnchantmentPostAttackContext::new(
+        do_post_attack_effects_from_item(&stack, &mut spider_context);
+
+        let mut zombie_context = EnchantmentPostAttackContext::new(
             &mut zombie,
             Some(&mut attacker),
-            Some(&mut attacker),
+            None,
             &damage_source,
+            true,
         );
-
-        do_post_attack_effects_from_item(&stack, &spider_context);
-        do_post_attack_effects_from_item(&stack, &zombie_context);
+        do_post_attack_effects_from_item(&stack, &mut zombie_context);
 
         let Some(slowness) = spider.mob_effect(vanilla_mob_effects::SLOWNESS) else {
             panic!("bane of arthropods should apply slowness to spiders");

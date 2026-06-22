@@ -237,7 +237,7 @@ async fn shutdown_worlds(server: &Arc<Server>) {
     let mut players_to_save = Vec::new();
     for world in server.worlds.values() {
         world.players.iter_players(|_, player| {
-            players_to_save.push(player.clone());
+            players_to_save.push(std::sync::Arc::clone(player.entity()));
             true
         });
     }

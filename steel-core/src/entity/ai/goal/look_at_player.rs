@@ -130,7 +130,7 @@ impl Goal for LookAtPlayerGoal {
                     !mob.has_indirect_passenger(player)
                         && self.look_at_context.test(world.as_ref(), Some(mob), player)
                 })
-                .map(|player| player.shared_entity()),
+                .map(|player| player.lock().shared_entity()),
             LookAtTargetType::LivingEntity(selector) => {
                 let search_box =
                     mob.bounding_box()

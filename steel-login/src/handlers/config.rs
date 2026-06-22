@@ -5,7 +5,7 @@ use std::sync::Arc;
 use steel_core::entity::next_entity_id;
 use steel_core::player::PlayerConnection;
 use steel_core::player::networking::JavaConnection;
-use steel_core::player::{ClientInformation, Player};
+use steel_core::player::{ClientInformation, ServerPlayer};
 use steel_protocol::packets::common::CCustomPayload;
 use steel_protocol::packets::common::{SClientInformation, SCustomPayload};
 use steel_protocol::packets::config::CFinishConfiguration;
@@ -14,7 +14,6 @@ use steel_protocol::packets::config::SSelectKnownPacks;
 use steel_protocol::packets::shared_implementation::KnownPack;
 use steel_protocol::utils::ConnectionProtocol;
 use steel_utils::Identifier;
-use steel_utils::locks::SyncMutex;
 
 use crate::tcp_client::{ConnectionAction, ConnectionUpdate, JavaTcpClient};
 
@@ -105,7 +104,7 @@ impl JavaTcpClient {
         let entity_id = next_entity_id();
 
         let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
-        let player = Arc::new_cyclic(|player_weak| {
+        let server_player = Arc::new_cyclic(|sp_weak| {
             let java_connection = JavaConnection::new(
                 self.outgoing_queue.clone(),
                 inbound_tx,
@@ -113,24 +112,24 @@ impl JavaTcpClient {
                 self.compression.load(),
                 self.network_writer.clone(),
                 self.id,
-                player_weak.clone(),
+                sp_weak.clone(),
             );
             let connection = Arc::new(PlayerConnection::Java(java_connection));
 
-            SyncMutex::new(Player::new(
+            ServerPlayer::new(
+                sp_weak,
                 gameprofile,
                 connection,
                 world,
                 Arc::downgrade(&self.server),
                 self.server.config.clone(),
                 entity_id,
-                player_weak,
                 client_info,
                 inbound_rx,
-            ))
+            )
         });
 
-        let connection = Arc::clone(&player.lock().connection);
+        let connection = Arc::clone(&server_player.connection);
         if self
             .connection_updates
             .send(ConnectionUpdate::Upgrade(connection.clone()))
@@ -144,7 +143,7 @@ impl JavaTcpClient {
             () = self.connection_updated.notified() => {}
             () = self.cancel_token.cancelled() => return ConnectionAction::none(),
         }
-        self.server.queue_player_join(player);
+        self.server.queue_player_join(server_player);
 
         ConnectionAction::upgrade(connection)
     }

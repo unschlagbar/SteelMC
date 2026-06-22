@@ -35,7 +35,7 @@ pub(crate) use follow_parent::FollowParentGoal;
 pub(crate) use look_at_player::LookAtPlayerGoal;
 pub(crate) use panic_goal::PanicGoal;
 pub(crate) use random_look_around::RandomLookAroundGoal;
-pub(crate) use selector::{GoalControl, GoalSelector};
+pub(crate) use selector::{GoalControl, GoalSelector, tick_goal_selector_with_mob};
 pub(crate) use tempt_goal::TemptGoal;
 pub(crate) use water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal;
 

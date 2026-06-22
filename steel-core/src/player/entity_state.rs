@@ -159,12 +159,12 @@ impl Player {
             && self.game_mode() != GameType::Spectator
     }
 
-    fn set_swimming(&self, swimming: bool) {
+    fn set_swimming(&mut self, swimming: bool) {
         self.set_shared_swimming(swimming);
     }
 
     /// Updates the vanilla swimming shared flag.
-    pub(super) fn update_swimming(&self) {
+    pub(super) fn update_swimming(&mut self) {
         let world = self.get_world();
         let block_fluid = get_fluid_state(&world, self.block_position());
         let swimming = select_swimming_state(
@@ -197,7 +197,7 @@ impl Player {
     }
 
     /// Sets the player's fall flying state.
-    pub fn set_fall_flying(&self, fall_flying: bool) {
+    pub fn set_fall_flying(&mut self, fall_flying: bool) {
         LivingEntity::set_fall_flying(self, fall_flying);
     }
 

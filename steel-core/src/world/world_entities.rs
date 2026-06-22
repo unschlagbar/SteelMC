@@ -1,6 +1,5 @@
 //! This module contains the implementation of the world's entity-related methods.
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_protocol::packets::game::{
     CGameEvent, CPlayerInfoUpdate, CRemovePlayerInfo, GameEventType,
@@ -17,17 +16,17 @@ use crate::{
     player::connection::NetworkConnection,
     player::player_data::PersistentPlayerData,
     player::player_data_storage::GlobalPlayerData,
-    player::{Player, ResetReason},
+    player::{Player, ResetReason, ServerPlayer},
     world::World,
 };
 
 impl World {
-    fn attach_player_entity_callback(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
+    fn attach_player_entity_callback(self: &Arc<Self>, player: &Player) {
         let callback = Arc::new(PlayerEntityCallback::new(player.id(), Arc::downgrade(self)));
         player.set_level_callback(callback);
     }
 
-    fn register_player_entity(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
+    fn register_player_entity(self: &Arc<Self>, player: &mut Player) {
         self.attach_player_entity_callback(player);
 
         let entity: SharedEntity = player.shared_entity();
@@ -37,7 +36,9 @@ impl World {
         {
             panic!("failed to register player entity: {error}");
         }
-        self.add_entity_to_tracker(&entity);
+        // The caller already holds this player's entity lock; thread it through so the
+        // tracker reuses it instead of re-entering the (non-reentrant) behavior mutex.
+        self.add_entity_to_tracker_with_entity(&entity, Some(player));
     }
 
     fn unride_player_for_removal(&self, player: &Player, store_root_vehicle: bool) {
@@ -82,35 +83,46 @@ impl World {
         player.set_level_callback(Arc::new(NullEntityCallback));
     }
 
-    pub(crate) fn register_respawned_player_entity(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
-        self.register_player_entity(player);
-        self.chunk_map.update_player_status(player);
+    pub(crate) fn register_respawned_player_entity(
+        self: &Arc<Self>,
+        player: &Arc<ServerPlayer>,
+    ) {
+        let mut player = player.entity().lock();
+        self.register_player_entity(&mut player);
+        self.chunk_map.update_player_status(&player);
     }
 
     /// Removes a player from the world.
-    pub async fn remove_player(self: &Arc<Self>, player: Arc<SyncMutex<Player>>) {
+    pub async fn remove_player(self: &Arc<Self>, player: Arc<ServerPlayer>) {
         let Some(player) = self.players.remove_player(&player).await else {
             return;
         };
-        let uuid = player.gameprofile.id;
-        let entity_id = player.id();
         let domain = self.domain().to_owned();
-        let player_data = PersistentPlayerData::from_player(&player);
 
-        self.unride_player_for_removal(&player, true);
-        self.unregister_player_entity(&player);
+        // Synchronous teardown under a single lock (no `.await` inside).
+        let (uuid, player_data, server) = {
+            let guard = player.entity().lock();
+            let uuid = guard.gameprofile.id;
+            let entity_id = guard.id();
+            let player_data = PersistentPlayerData::from_player(&guard);
+            let server = guard.server();
 
-        // Remove player from entity tracking (stop tracking all entities for this player)
-        self.entity_tracker().on_player_leave(entity_id);
+            self.unride_player_for_removal(&guard, true);
+            self.unregister_player_entity(&guard);
 
-        self.player_area_map.on_player_leave(&player);
-        self.chunk_map.remove_player(&player);
+            // Remove player from entity tracking (stop tracking all entities for this player)
+            self.entity_tracker().on_player_leave(entity_id);
+
+            self.player_area_map.on_player_leave(&guard);
+            self.chunk_map.remove_player(&guard);
+
+            (uuid, player_data, server)
+        };
 
         let start = Instant::now();
 
         // Save after world indexes are cleared so a fast reconnect cannot collide
         // with this player's stale entity ID/UUID cache entries.
-        let server = player.server();
         if let Err(e) = server
             .player_data_storage
             .save_domain_data(&domain, uuid, &player_data)
@@ -133,7 +145,7 @@ impl World {
 
         self.broadcast_to_all(CRemovePlayerInfo::single(uuid));
 
-        player.cleanup();
+        player.entity().lock().cleanup();
         log::info!("Player {uuid} removed in {:?}", start.elapsed());
     }
 
@@ -141,33 +153,35 @@ impl World {
     ///
     /// Unlike `remove_player`, this is synchronous and skips player data saving and tab list
     /// removal — the player stays in the global tab list since they are only switching worlds.
-    pub fn remove_player_for_world_change(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
+    pub fn remove_player_for_world_change(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
-        let entity_id = player.id();
+        let guard = player.entity().lock();
+        let entity_id = guard.id();
 
-        self.unride_player_for_removal(&player, false);
-        self.unregister_player_entity(&player);
+        self.unride_player_for_removal(&guard, false);
+        self.unregister_player_entity(&guard);
         self.entity_tracker().on_player_leave(entity_id);
-        self.player_area_map.on_player_leave(&player);
+        self.player_area_map.on_player_leave(&guard);
         // Note: no CRemovePlayerInfo — player stays in the global tab list
-        self.chunk_map.remove_player(&player);
+        self.chunk_map.remove_player(&guard);
     }
 
     /// Removes a player during a domain switch after the caller has saved
     /// the player's current-domain data.
-    pub fn remove_player_for_domain_switch(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
+    pub fn remove_player_for_domain_switch(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
-        let entity_id = player.id();
+        let guard = player.entity().lock();
+        let entity_id = guard.id();
 
-        self.unride_player_for_removal(&player, true);
-        self.unregister_player_entity(&player);
+        self.unride_player_for_removal(&guard, true);
+        self.unregister_player_entity(&guard);
         self.entity_tracker().on_player_leave(entity_id);
-        self.player_area_map.on_player_leave(&player);
-        self.chunk_map.remove_player(&player);
+        self.player_area_map.on_player_leave(&guard);
+        self.chunk_map.remove_player(&guard);
     }
 
     /// Adds a player to the world.
@@ -176,29 +190,33 @@ impl World {
     /// players. On `WorldChange`, this is skipped — the player already exists in all
     /// clients' tab lists and the entity tracker handles spawning as chunks load.
     #[must_use]
-    pub fn add_player(self: &Arc<Self>, player: Arc<SyncMutex<Player>>, reason: ResetReason) -> bool {
+    pub fn add_player(self: &Arc<Self>, player: Arc<ServerPlayer>, reason: ResetReason) -> bool {
         if !self.players.insert(player.clone()) {
             player.connection.close();
             return false;
         }
 
         // Tab-list sync only needs the initial login path; world changes keep
-        // the player in the global tab list.
+        // the player in the global tab list. Done before locking the new player,
+        // since it iterates (and briefly locks) every player including this one.
         if reason == ResetReason::InitialJoin {
             self.sync_tab_list(&player);
         }
 
-        self.register_player_entity(&player);
-        self.chunk_map.update_player_status(&player);
+        let mut guard = player.entity().lock();
 
-        player.send_packet(CGameEvent {
+        self.register_player_entity(&mut guard);
+        self.chunk_map.update_player_status(&guard);
+
+        guard.send_packet(CGameEvent {
             event: GameEventType::LevelChunksLoadStart,
             data: 0.0,
         });
 
-        player.send_packet(CGameEvent {
+        let game_mode = guard.game_mode();
+        guard.send_packet(CGameEvent {
             event: GameEventType::ChangeGameMode,
-            data: player.game_mode().into(),
+            data: game_mode.into(),
         });
 
         true
@@ -209,49 +227,59 @@ impl World {
     /// Sends all existing players' info to the new player, then broadcasts the
     /// new player's info to everyone. Entity spawn pairing is owned by
     /// `EntityTracker`, matching vanilla `ChunkMap`.
-    fn sync_tab_list(self: &Arc<Self>, player: &Arc<SyncMutex<Player>>) {
-        // Send existing players to the new player.
+    fn sync_tab_list(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
+        let new_uuid = player.entity().lock().gameprofile.id;
+
+        // Collect existing players' tab-list packets (locking each briefly), then
+        // send them to the new player. Avoids holding two player locks at once.
+        let mut packets = Vec::new();
         self.players.iter_players(|_, existing_player| {
-            if existing_player.gameprofile.id == player.gameprofile.id {
+            let latency = existing_player.connection.latency();
+            let guard = existing_player.entity().lock();
+            if guard.gameprofile.id == new_uuid {
                 return true;
             }
 
-            // Add to tab list with full player info
-            let add_existing = CPlayerInfoUpdate::create_player_initializing(
-                existing_player.gameprofile.id,
-                existing_player.gameprofile.name.clone(),
-                existing_player.gameprofile.properties.clone(),
-                existing_player.game_mode().into(),
-                existing_player.connection.latency(),
+            packets.push(CPlayerInfoUpdate::create_player_initializing(
+                guard.gameprofile.id,
+                guard.gameprofile.name.clone(),
+                guard.gameprofile.properties.clone(),
+                guard.game_mode().into(),
+                latency,
                 None, // display_name
                 true, // show_hat
-            );
-            player.send_packet(add_existing);
+            ));
 
-            // Send chat session if available
-            if let Some(session) = existing_player.chat_session()
+            if let Some(session) = guard.chat_session()
                 && let Ok(protocol_data) = session.as_data().to_protocol_data()
             {
-                let session_packet = CPlayerInfoUpdate::update_chat_session(
-                    existing_player.gameprofile.id,
+                packets.push(CPlayerInfoUpdate::update_chat_session(
+                    guard.gameprofile.id,
                     protocol_data,
-                );
-                player.send_packet(session_packet);
+                ));
             }
 
             true
         });
 
-        // Broadcast new player's tab list entry to all players
-        let player_info_packet = CPlayerInfoUpdate::create_player_initializing(
-            player.gameprofile.id,
-            player.gameprofile.name.clone(),
-            player.gameprofile.properties.clone(),
-            player.game_mode().into(),
-            player.connection.latency(),
-            None, // display_name
-            true, // show_hat
-        );
+        // Broadcast the new player's tab list entry, then send the collected
+        // existing-player entries to the new player.
+        let player_info_packet = {
+            let latency = player.connection.latency();
+            let guard = player.entity().lock();
+            for packet in packets {
+                guard.send_packet(packet);
+            }
+            CPlayerInfoUpdate::create_player_initializing(
+                guard.gameprofile.id,
+                guard.gameprofile.name.clone(),
+                guard.gameprofile.properties.clone(),
+                guard.game_mode().into(),
+                latency,
+                None, // display_name
+                true, // show_hat
+            )
+        };
         self.broadcast_to_all(player_info_packet);
     }
 }

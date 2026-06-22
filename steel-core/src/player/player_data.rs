@@ -282,7 +282,7 @@ impl PersistentPlayerData {
     /// Applies the saved data to a player.
     ///
     /// This restores position, rotation, inventory, abilities, etc.
-    pub fn apply_to_player(&self, player: &Player) {
+    pub fn apply_to_player(&self, player: &mut Player) {
         self.apply_to_player_inner(player, true);
     }
 
@@ -290,11 +290,11 @@ impl PersistentPlayerData {
     ///
     /// Used when the saved world no longer exists and the player must spawn at
     /// the target world's default spawn instead of stale coordinates.
-    pub fn apply_to_player_without_location(&self, player: &Player) {
+    pub fn apply_to_player_without_location(&self, player: &mut Player) {
         self.apply_to_player_inner(player, false);
     }
 
-    fn apply_to_player_inner(&self, player: &Player, restore_location: bool) {
+    fn apply_to_player_inner(&self, player: &mut Player, restore_location: bool) {
         use glam::DVec3;
 
         if restore_location {

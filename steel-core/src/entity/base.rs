@@ -1466,7 +1466,7 @@ impl EntityBase {
     }
 
     /// Handles a player touching this entity during pickup processing.
-    pub fn player_touch(&self, player: &Arc<crate::player::Player>) {
+    pub fn player_touch(&self, player: &mut Player) {
         self.with_entity(|e| e.player_touch(player));
     }
 
@@ -1483,7 +1483,7 @@ impl EntityBase {
 
     /// Teleports this entity to a new world dimension.
     pub fn change_world(&self, transition: &TeleportTransition) {
-        self.with_entity_ref(|e| e.change_world(transition));
+        self.with_entity(|e| e.change_world(transition));
     }
 
     /// Returns whether this entity blocks structure building.
@@ -2810,7 +2810,7 @@ impl EntityBase {
     /// Handles vanilla entity right-click interaction.
     pub fn interact(
         &mut self,
-        player: &Player,
+        player: &mut Player,
         hand: InteractionHand,
         location: DVec3,
     ) -> InteractionResult {
@@ -2825,7 +2825,7 @@ impl EntityBase {
         damage_modifier: f32,
         source: &DamageSource,
     ) -> bool {
-        self.with_entity_ref(|e| e.cause_fall_damage(fall_distance, damage_modifier, source))
+        self.with_entity(|e| e.cause_fall_damage(fall_distance, damage_modifier, source))
             .unwrap()
     }
 }
@@ -2925,7 +2925,7 @@ mod tests {
         }
 
         fn cause_fall_damage(
-            &self,
+            &mut self,
             fall_distance: f64,
             damage_modifier: f32,
             _source: &DamageSource,

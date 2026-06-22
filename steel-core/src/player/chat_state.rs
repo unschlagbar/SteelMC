@@ -60,7 +60,8 @@ impl ChatState {
 impl Player {
     /// Gets the next `messages_received` counter and increments it
     pub fn get_and_increment_messages_received(&self) -> i32 {
-        let mut chat = self.chat.lock();
+        let sp = self.server_player();
+        let mut chat = sp.chat.lock();
         let val = chat.messages_received;
         chat.messages_received += 1;
         val
@@ -72,7 +73,8 @@ impl Player {
     ) -> Result<(message_chain::SignedMessageLink, LastSeen), String> {
         const MESSAGE_EXPIRES_AFTER: Duration = Duration::from_mins(5);
 
-        let mut chat = self.chat.lock();
+        let sp = self.server_player();
+        let mut chat = sp.chat.lock();
         let session = chat.chat_session.clone().ok_or("No chat session")?;
         let signature = packet.signature.as_ref().ok_or("No signature present")?;
 
@@ -141,89 +143,95 @@ impl Player {
     }
 
     /// Handles a chat message from the player.
-    pub fn handle_chat(&self, packet: SChat, player: Arc<SyncMutex<Player>>) {
+    ///
+    /// Takes the player handle (not `&self`) so the sender's lock can be released
+    /// before the broadcast fan-out: locking the sender briefly to verify and build
+    /// the packet, then broadcasting without holding the lock. Otherwise the
+    /// broadcast (which locks every recipient, including the sender) would
+    /// self-deadlock.
+    pub fn handle_chat(this: &Arc<SyncMutex<Player>>, packet: SChat) {
         let chat_message = packet.message.clone();
 
-        let verification_result = if let Some(_signature) = &packet.signature {
-            match self.verify_chat_signature(&packet) {
-                Ok((link, last_seen)) => Some(Ok((link, last_seen))),
-                Err(err) => {
-                    log::warn!(
-                        "Player {} sent message with invalid signature: {err}",
-                        self.gameprofile.name
-                    );
-                    Some(Err(err))
+        // Phase 1: lock the sender briefly to verify and build the chat packet.
+        let built = {
+            let player = this.lock();
+
+            let verification_result = if let Some(_signature) = &packet.signature {
+                match player.verify_chat_signature(&packet) {
+                    Ok((link, last_seen)) => Some(Ok((link, last_seen))),
+                    Err(err) => {
+                        log::warn!(
+                            "Player {} sent message with invalid signature: {err}",
+                            player.gameprofile.name
+                        );
+                        Some(Err(err))
+                    }
+                }
+            } else {
+                None
+            };
+
+            if player.config().enforce_secure_chat {
+                match &verification_result {
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        player.disconnect(format!("Chat message validation failed: {err}"));
+                        return;
+                    }
+                    None => {
+                        player.disconnect(
+                            "Secure chat is enforced on this server, but your message was not signed",
+                        );
+                        return;
+                    }
                 }
             }
-        } else {
-            None
-        };
 
-        if self.config.enforce_secure_chat {
-            match &verification_result {
-                Some(Ok(_)) => {}
-                Some(Err(err)) => {
-                    self.disconnect(format!("Chat message validation failed: {err}"));
-                    return;
-                }
-                None => {
-                    self.disconnect(
-                        "Secure chat is enforced on this server, but your message was not signed",
-                    );
-                    return;
-                }
-            }
-        }
+            let signature = if matches!(verification_result, Some(Ok(_))) {
+                packet.signature.map(|sig| Box::new(sig) as Box<[u8]>)
+            } else {
+                None
+            };
 
-        let signature = if matches!(verification_result, Some(Ok(_))) {
-            packet.signature.map(|sig| Box::new(sig) as Box<[u8]>)
-        } else {
-            None
-        };
+            let sender_index = {
+                let sp = player.server_player();
+                let mut chat = sp.chat.lock();
+                let idx = chat.messages_sent;
+                chat.messages_sent += 1;
+                idx
+            };
 
-        let sender_index = {
-            let mut chat = self.chat.lock();
-            let idx = chat.messages_sent;
-            chat.messages_sent += 1;
-            idx
-        };
+            let registry_id = vanilla_chat_types::CHAT.id() as i32;
 
-        let registry_id = vanilla_chat_types::CHAT.id() as i32;
+            let chat_packet = CPlayerChat::new(
+                0,
+                player.gameprofile.id,
+                sender_index,
+                signature.clone(),
+                chat_message.clone(),
+                packet.timestamp,
+                packet.salt,
+                Box::new([]),
+                Some(TextComponent::plain(chat_message.clone())),
+                FilterType::PassThrough,
+                ChatTypeBound {
+                    registry_id,
+                    sender_name: TextComponent::plain(player.gameprofile.name.clone())
+                        .insertion(player.gameprofile.name.clone())
+                        .click_event(ClickEvent::suggest_command(format!(
+                            "/tell {} ",
+                            player.gameprofile.name
+                        )))
+                        .hover_event(HoverEvent::show_entity(
+                            "minecraft:player",
+                            player.uuid(),
+                            Some(player.gameprofile.name.clone()),
+                        )),
+                    target_name: None,
+                },
+            );
 
-        let chat_packet = CPlayerChat::new(
-            0,
-            self.gameprofile.id,
-            sender_index,
-            signature.clone(),
-            chat_message.clone(),
-            packet.timestamp,
-            packet.salt,
-            Box::new([]),
-            Some(TextComponent::plain(chat_message.clone())),
-            FilterType::PassThrough,
-            ChatTypeBound {
-                registry_id,
-                sender_name: TextComponent::plain(self.gameprofile.name.clone())
-                    .insertion(self.gameprofile.name.clone())
-                    .click_event(ClickEvent::suggest_command(format!(
-                        "/tell {} ",
-                        self.gameprofile.name
-                    )))
-                    .hover_event(HoverEvent::show_entity(
-                        "minecraft:player",
-                        self.uuid(),
-                        Some(self.gameprofile.name.clone()),
-                    )),
-                target_name: None,
-            },
-        );
-
-        steel_utils::chat!(self.gameprofile.name.clone(), "{}", chat_message);
-        if let Some(sig_box) = &signature
-            && sig_box.len() == 256
-        {
-            let mut sig_array = [0u8; 256];
-            sig_array.copy_from_slice(&sig_box[..]);
+            steel_utils::chat!(player.gameprofile.name.clone(), "{}", chat_message);
 
             let last_seen = if let Some(Ok((_, ref last_seen))) = verification_result {
                 last_seen.clone()
@@ -231,16 +239,27 @@ impl Player {
                 LastSeen::default()
             };
 
-            for world in self.server().worlds.values() {
+            (chat_packet, signature, last_seen, player.server())
+        };
+
+        // Phase 2: broadcast without holding the sender's lock.
+        let (chat_packet, signature, last_seen, server) = built;
+        if let Some(sig_box) = &signature
+            && sig_box.len() == 256
+        {
+            let mut sig_array = [0u8; 256];
+            sig_array.copy_from_slice(&sig_box[..]);
+
+            for world in server.worlds.values() {
                 world.broadcast_chat(
                     chat_packet.clone(),
-                    Arc::clone(&player),
+                    Arc::clone(this),
                     last_seen.clone(),
                     Some(&sig_array),
                 );
             }
         } else {
-            for world in self.server().worlds.values() {
+            for world in server.worlds.values() {
                 world.broadcast_unsigned_chat(chat_packet.clone());
             }
         }
@@ -266,7 +285,8 @@ impl Player {
                     self.gameprofile.name,
                     err
                 );
-                let mut chat = self.chat.lock();
+                let sp = self.server_player();
+                let mut chat = sp.chat.lock();
                 chat.chat_session = Some(session);
                 chat.message_chain = Some(chain);
                 return;
@@ -274,7 +294,8 @@ impl Player {
         };
 
         {
-            let mut chat = self.chat.lock();
+            let sp = self.server_player();
+            let mut chat = sp.chat.lock();
             chat.chat_session = Some(session);
             chat.message_chain = Some(chain);
         }
@@ -291,12 +312,12 @@ impl Player {
 
     /// Gets a reference to the player's chat session if present
     pub fn chat_session(&self) -> Option<RemoteChatSession> {
-        self.chat.lock().chat_session.clone()
+        self.server_player().chat.lock().chat_session.clone()
     }
 
     /// Checks if the player has a valid chat session
     pub fn has_chat_session(&self) -> bool {
-        self.chat.lock().chat_session.is_some()
+        self.server_player().chat.lock().chat_session.is_some()
     }
 
     /// Handles a chat session update packet from the client.
@@ -314,7 +335,7 @@ impl Player {
                     "Player {} sent invalid public key: {err}",
                     self.gameprofile.name
                 );
-                if self.config.enforce_secure_chat {
+                if self.config().enforce_secure_chat {
                     log::error!(
                         "Player {} kicked for invalid public key",
                         self.gameprofile.name
@@ -344,7 +365,7 @@ impl Player {
                     "Player {} sent invalid chat session: {err}",
                     self.gameprofile.name
                 );
-                if self.config.enforce_secure_chat {
+                if self.config().enforce_secure_chat {
                     self.disconnect(format!("Chat session validation failed: {err}"));
                 }
             }
@@ -354,6 +375,7 @@ impl Player {
     /// Handles a chat acknowledgment packet from the client.
     pub fn handle_chat_ack(&self, packet: SChatAck) {
         if let Err(err) = self
+            .server_player()
             .chat
             .lock()
             .message_validator

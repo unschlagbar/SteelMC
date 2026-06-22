@@ -916,13 +916,14 @@ impl ChunkMap {
 
     /// Updates the player's status in the chunk map.
     pub fn update_player_status(&self, player: &Player) {
+        let sp = player.server_player();
         let current_chunk_pos = ChunkPos::from_entity_pos(player.position());
-        player.view.set_last_chunk_pos(current_chunk_pos);
+        sp.view.set_last_chunk_pos(current_chunk_pos);
         let view_distance = player.view_distance();
 
         let new_view = PlayerChunkView::new(current_chunk_pos, view_distance);
         let world = self.world_gen_context.world();
-        let mut last_view_guard = player.last_tracking_view.lock();
+        let mut last_view_guard = sp.last_tracking_view.lock();
 
         if last_view_guard.as_ref() != Some(&new_view) {
             let mut chunk_tickets = self.chunk_tickets.lock();
@@ -949,8 +950,8 @@ impl ChunkMap {
                 let mut removed_chunks = Vec::new();
 
                 // We lock here to ensure we have unique access for the duration of the diff
-                let mut chunk_sender = player.chunk_sender.lock();
-                let connection = &*player.connection;
+                let mut chunk_sender = sp.chunk_sender.lock();
+                let connection = &*sp.connection;
                 PlayerChunkView::difference(
                     last_view,
                     &new_view,
@@ -981,7 +982,7 @@ impl ChunkMap {
                     y: new_view.center.0.y,
                 });
 
-                let mut chunk_sender = player.chunk_sender.lock();
+                let mut chunk_sender = sp.chunk_sender.lock();
                 new_view.for_each(|pos| {
                     chunk_sender.mark_chunk_pending_to_send(pos);
                 });
@@ -1004,7 +1005,8 @@ impl ChunkMap {
     /// Removes a player from the chunk map.
     pub fn remove_player(&self, player: &Player) {
         // Okay to lock sync lock here cause it has low contention
-        let mut last_view_guard = player.last_tracking_view.lock();
+        let sp = player.server_player();
+        let mut last_view_guard = sp.last_tracking_view.lock();
         if let Some(last_view) = last_view_guard.take() {
             drop(last_view_guard);
             let mut chunk_tickets = self.chunk_tickets.lock();

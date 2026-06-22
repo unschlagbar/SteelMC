@@ -29,19 +29,20 @@ pub mod player_inventory;
 pub mod profile_key;
 mod signature_cache;
 mod teleport_state;
+/// The vanilla `ServerPlayer` split: the outer per-connection session that owns
+/// network/session state and references the locked [`Player`] entity.
 pub mod server_player;
 mod tick_state;
 pub mod view;
 
 pub use abilities::Abilities;
-use chat_state::ChatState;
 use container_counter::ContainerCounter;
 use food_data::FoodData;
 use glam::DVec3;
 use health_sync::HealthSyncState;
 pub use input_state::PlayerInput;
-use lifecycle_state::PlayerLifecycleState;
 pub use message_validator::LastSeenMessagesValidator;
+pub use server_player::ServerPlayer;
 use movement_state::MovementState;
 pub use signature_cache::{LastSeen, MessageCache};
 use steel_protocol::{
@@ -75,7 +76,6 @@ use steel_registry::vanilla_game_rules::{
 use steel_registry::{sound_events, vanilla_attributes, vanilla_entities, vanilla_particle_types};
 use steel_utils::entity_events::EntityStatus;
 
-use arc_swap::ArcSwap;
 use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random as _;
 use steel_utils::types::{Difficulty, GameType};
@@ -98,7 +98,7 @@ use crate::physics::MoveResult;
 use crate::player::experience::Experience;
 use crate::player::player_data::PersistentRootVehicle;
 use crate::player::player_inventory::PlayerInventory;
-use crate::server::Server;
+use crate::server::{PlayerResetRequest, Server};
 use steel_registry::vanilla_damage_types;
 
 use steel_protocol::packets::{
@@ -108,9 +108,6 @@ use steel_protocol::packets::{
 use steel_registry::item_stack::ItemStack;
 
 use steel_utils::{BlockPos, BlockStateId, ChunkPos, Identifier};
-
-use steel_protocol::utils::RawPacket;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::inventory::{MenuInstance, container::Container, inventory_menu::InventoryMenu};
 
@@ -173,28 +170,10 @@ pub enum PlayerConnection {
     Other(Box<dyn NetworkConnection>),
 }
 
-use crate::chunk::player_chunk_view::PlayerChunkView;
 use crate::player::chunk_sender::ChunkSender;
 use crate::player::networking::JavaConnection;
 use crate::portal::TeleportTransition;
 use crate::world::World;
-
-/// The `Arc`-shared slices of a player that concurrent loops (chunk sending,
-/// network) need to reach without holding `Arc<SyncMutex<Player>>`.
-///
-/// This mirrors vanilla's structure where the chunk sender holds the connection
-/// alongside the player handle. The game tick owns the `Player` itself; these
-/// loops hold a cheap clone of `PlayerShared` instead, so the player can later be
-/// owned and ticked through `&mut self`.
-#[derive(Clone)]
-pub struct PlayerShared {
-    /// Lock-free published view (chunk position, send epoch), written by the game tick.
-    pub view: Arc<PlayerView>,
-    /// The player's connection, for sending packets.
-    pub connection: Arc<PlayerConnection>,
-    /// Shared chunk-sending state, mutated by the game tick and chunk-send loop.
-    pub chunk_sender: Arc<SyncMutex<ChunkSender>>,
-}
 
 /// Shared handle to a player.
 ///
@@ -208,55 +187,23 @@ pub type SharedPlayer = Arc<SyncMutex<Player>>;
 pub struct Player {
     /// The player's game profile.
     pub gameprofile: GameProfile,
-    /// The player's connection (abstracted for testing).
-    pub connection: Arc<PlayerConnection>,
 
-    /// The world the player is in.
-    pub world: ArcSwap<World>,
-
-    /// Reference to the server (for entity ID generation, etc.).
-    pub(crate) server: Weak<Server>,
-    /// Runtime configuration shared with the server.
-    pub(crate) config: Arc<RuntimeConfig>,
+    /// Back reference to the outer [`ServerPlayer`] session (connection, chat,
+    /// chunk sender, view, world, server/config, …). Upgraded to reach network
+    /// and session state without re-locking the entity. Held weakly because the
+    /// `ServerPlayer` owns the entity `Arc`.
+    server_player: Weak<ServerPlayer>,
 
     /// Common entity fields (id, uuid, position, rotation, removal, callback).
     base: Arc<EntityBase>,
     /// Downgraded copy of `base` for the `Entity::base_weak` accessor.
     base_weak: Weak<EntityBase>,
 
-    /// Client lifecycle flags.
-    lifecycle: SyncMutex<PlayerLifecycleState>,
-
     /// Movement tracking state
     pub(crate) movement: SyncMutex<MovementState>,
 
     /// Synchronized entity data (health, pose, flags, etc.) for network sync.
     entity_data: SyncMutex<PlayerEntityData>,
-
-    /// Lock-free published view of cross-loop state (chunk position, send epoch).
-    /// Written only by the game tick; read by the chunk and network loops.
-    pub view: Arc<PlayerView>,
-
-    /// Inbound game-state packets queued by the connection listener, drained and
-    /// applied on the game tick by [`Player::drain_inbound`] so that game state is
-    /// only ever mutated by a single thread.
-    inbound_rx: SyncMutex<UnboundedReceiver<RawPacket>>,
-    /// The last chunk tracking view of the player.
-    pub last_tracking_view: SyncMutex<Option<PlayerChunkView>>,
-    /// The chunk sender for the player.
-    ///
-    /// Shared (`Arc`) because it is touched by three contexts: the game tick
-    /// (queueing/dropping chunks), the chunk-sending loop (encoding/committing
-    /// batches), and the network task (batch acks). The chunk-sending loop reaches
-    /// it through a [`PlayerShared`] handle rather than `Arc<SyncMutex<Player>>`.
-    pub chunk_sender: Arc<SyncMutex<ChunkSender>>,
-
-    /// The client's settings/information (language, view distance, chat visibility, etc.).
-    /// Updated when the client sends `SClientInformation` during config or play phase.
-    client_information: SyncMutex<ClientInformation>,
-
-    /// Chat state: message counters, signature cache, validator, session, chain.
-    pub chat: SyncMutex<ChatState>,
 
     /// Current and previous game mode.
     game_modes: SyncMutex<PlayerGameModeState>,
@@ -276,12 +223,6 @@ pub struct Player {
 
     /// Counter for generating container IDs (1-100, wraps around).
     container_counter: SyncMutex<ContainerCounter>,
-
-    /// Pending server-initiated teleport state (ID, position, timeout).
-    teleport_state: SyncMutex<TeleportState>,
-
-    /// Local tick and once-per-tick packet state.
-    tick_state: SyncMutex<PlayerTickState>,
 
     /// Player abilities (flight, invulnerability, build permissions, speeds, etc.)
     pub abilities: SyncMutex<Abilities>,
@@ -359,27 +300,28 @@ impl Player {
         self.game_modes.lock().change_current(game_mode)
     }
 
-    /// Creates a new player.
-    #[expect(clippy::too_many_arguments, reason = "Player::new is complex")]
+    /// Creates a new player entity.
+    ///
+    /// Called from [`ServerPlayer::new`] inside `Arc::new_cyclic`. `entity` is the
+    /// entity's own weak handle (for the entity base back-ref and inventory), and
+    /// `server_player` is the weak back-ref to the owning session. `world` is only
+    /// used to seed the entity base's world weak; the live world lives on the
+    /// [`ServerPlayer`].
     pub fn new(
         gameprofile: GameProfile,
-        connection: Arc<PlayerConnection>,
-        world: Arc<World>,
-        server: Weak<Server>,
-        config: Arc<RuntimeConfig>,
+        world: &Arc<World>,
         entity_id: i32,
-        player: &Weak<SyncMutex<Player>>,
-        client_information: ClientInformation,
-        inbound_rx: UnboundedReceiver<RawPacket>,
+        entity: &Weak<SyncMutex<Player>>,
+        server_player: Weak<ServerPlayer>,
     ) -> Self {
         // Create a single shared inventory container used by both the player and inventory menu
-        let inventory = Arc::new(SyncMutex::new(PlayerInventory::new(player.clone())));
+        let inventory = Arc::new(SyncMutex::new(PlayerInventory::new(entity.clone())));
 
         let pos = DVec3::new(0.0, 0.0, 0.0);
 
         let living_base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let player_uuid = gameprofile.id;
-        let world_ref = Arc::downgrade(&world);
+        let world_ref = Arc::downgrade(world);
 
         let base = {
             let mut base = EntityBase::with_uuid(
@@ -389,41 +331,28 @@ impl Player {
                 Self::dimensions_for_pose(EntityPose::Standing),
                 world_ref,
             );
-            base.attach_player(player.clone());
+            base.attach_player(entity.clone());
             Arc::new(base)
         };
         let base_weak = Arc::downgrade(&base);
 
         Self {
             gameprofile,
-            connection,
-
-            world: ArcSwap::new(world),
-            server,
-            config,
+            server_player,
             base,
             base_weak,
-            lifecycle: SyncMutex::new(PlayerLifecycleState::default()),
             movement: SyncMutex::new(MovementState::new()),
             entity_data: SyncMutex::new({
                 let mut data = PlayerEntityData::new();
                 living_base.initialize_synced_data(&mut data);
                 data
             }),
-            view: Arc::new(PlayerView::new(ChunkPos::new(0, 0))),
-            inbound_rx: SyncMutex::new(inbound_rx),
-            last_tracking_view: SyncMutex::new(None),
-            chunk_sender: Arc::new(SyncMutex::new(ChunkSender::default())),
-            client_information: SyncMutex::new(client_information),
-            chat: SyncMutex::new(ChatState::new()),
             game_modes: SyncMutex::new(PlayerGameModeState::new(GameType::Survival)),
             inventory: inventory.clone(),
             last_item_in_main_hand: SyncMutex::new(ItemStack::empty()),
             inventory_menu: SyncMutex::new(InventoryMenu::new(inventory)),
             open_menu: SyncMutex::new(None),
             container_counter: SyncMutex::new(ContainerCounter::new()),
-            teleport_state: SyncMutex::new(TeleportState::new()),
-            tick_state: SyncMutex::new(PlayerTickState::new()),
             abilities: SyncMutex::new(Abilities::default()),
             block_breaking: SyncMutex::new(BlockBreakingManager::new()),
             living_base,
@@ -434,32 +363,33 @@ impl Player {
         }
     }
 
-    /// Builds the `Arc`-shared handle used by the concurrent chunk-sending and
-    /// network loops to reach this player without holding `Arc<SyncMutex<Player>>`.
+    /// Returns the owning [`ServerPlayer`] session handle.
+    ///
+    /// # Panics
+    /// Panics if the session has been dropped (the entity must not outlive it).
     #[must_use]
-    pub fn shared_handle(&self) -> PlayerShared {
-        PlayerShared {
-            view: Arc::clone(&self.view),
-            connection: Arc::clone(&self.connection),
-            chunk_sender: Arc::clone(&self.chunk_sender),
-        }
+    pub fn server_player(&self) -> Arc<ServerPlayer> {
+        self.server_player
+            .upgrade()
+            .expect("player entity must not outlive its ServerPlayer session")
     }
 
-    /// Drains and applies all queued inbound packets on the game tick.
-    ///
-    /// The connection listener enqueues game-state packets off the IO task; this
-    /// applies them here so player state is mutated by a single thread. Called at
-    /// the start of the player's tick.
-    pub fn drain_inbound(self: &Arc<Self>) {
-        let Some(server) = self.server.upgrade() else {
-            return;
-        };
-        let mut rx = self.inbound_rx.lock();
-        while let Ok(packet) = rx.try_recv() {
-            if let Err(err) = JavaConnection::apply_inbound_packet(self, packet, &server) {
-                log::warn!("Failed to apply inbound packet for player {}: {err}", self.id());
-            }
-        }
+    /// Returns the player's connection handle (cheap `Arc` clone).
+    #[must_use]
+    pub fn connection(&self) -> Arc<PlayerConnection> {
+        Arc::clone(&self.server_player().connection)
+    }
+
+    /// Returns the player's lock-free published view handle.
+    #[must_use]
+    pub fn view(&self) -> Arc<PlayerView> {
+        Arc::clone(&self.server_player().view)
+    }
+
+    /// Returns the player's chunk sender handle.
+    #[must_use]
+    pub fn chunk_sender(&self) -> Arc<SyncMutex<ChunkSender>> {
+        Arc::clone(&self.server_player().chunk_sender)
     }
 
     /// Ticks the player.
@@ -472,7 +402,7 @@ impl Player {
         clippy::cast_possible_truncation,
         reason = "world coordinates are always within i32 range in a valid Minecraft world"
     )]
-    pub fn tick(&self) {
+    pub fn tick(&mut self) {
         self.advance_tick();
         self.tick_attack_strength();
         self.tick_client_load_timeout();
@@ -587,7 +517,7 @@ impl Player {
             }
         }
 
-        self.connection.tick();
+        self.connection().tick();
     }
 
     fn refresh_equipment_attribute_modifiers_from_stack(
@@ -606,7 +536,7 @@ impl Player {
 
         if death_time >= DEATH_DURATION && !self.is_removed() {
             let world = self.get_world();
-            let chunk_pos = self.view.last_chunk_pos();
+            let chunk_pos = self.view().last_chunk_pos();
             world.broadcast_to_nearby(
                 chunk_pos,
                 CEntityEvent {
@@ -675,7 +605,7 @@ impl Player {
         self.movement.lock().finish_client_tick();
     }
 
-    fn push_entities(&self, world: &Arc<World>) {
+    fn push_entities(&mut self, world: &Arc<World>) {
         if !world.tick_runs_normally() {
             return;
         }
@@ -693,7 +623,7 @@ impl Player {
         }
     }
 
-    fn apply_entity_cramming_damage(&self, world: &World, pushable_entities: &[SharedEntity]) {
+    fn apply_entity_cramming_damage(&mut self, world: &World, pushable_entities: &[SharedEntity]) {
         let max_cramming = world
             .get_game_rule(&MAX_ENTITY_CRAMMING)
             .as_int()
@@ -736,7 +666,7 @@ impl Player {
         pushable_count > threshold && non_passenger_count > threshold
     }
 
-    fn apply_world_border_damage(&self, world: &World) {
+    fn apply_world_border_damage(&mut self, world: &World) {
         if !world.tick_runs_normally() || self.get_health() <= 0.0 {
             return;
         }
@@ -756,7 +686,7 @@ impl Player {
     }
 
     /// Main entry point for dealing damage. Returns `true` if damage was applied.
-    pub fn hurt(&self, source: &DamageSource, amount: f32) -> bool {
+    pub fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
         if LivingEntity::is_invulnerable_to(self, source) {
             return false;
         }
@@ -800,7 +730,7 @@ impl Player {
 
     /// Applies damage after reductions.
     /// TODO: armor, enchantment, absorption
-    fn actually_hurt(&self, source: &DamageSource, amount: f32) {
+    fn actually_hurt(&mut self, source: &DamageSource, amount: f32) {
         // TODO: apply armor/enchant/absorption reductions here (vanilla: getDamageAfterArmorAbsorb, getDamageAfterMagicAbsorb)
         // TODO: absorption amount handling
         // TODO: combat tracker (getCombatTracker().recordDamage)
@@ -815,7 +745,7 @@ impl Player {
     }
 
     /// Vanilla: `ServerPlayer.die()` (does NOT call `super.die()`).
-    fn die(&self, source: &DamageSource) {
+    fn die(&mut self, source: &DamageSource) {
         if self.is_removed() {
             return;
         }
@@ -839,7 +769,7 @@ impl Player {
         let world = self.get_world();
 
         // Broadcast entity event 3 (death sound) to all nearby players.
-        let chunk_pos = self.view.last_chunk_pos();
+        let chunk_pos = self.view().last_chunk_pos();
         world.broadcast_to_nearby(
             chunk_pos,
             CEntityEvent {
@@ -912,7 +842,7 @@ impl Player {
     ///
     /// # Panics
     /// If the player dies in a world that doesn't exist.
-    pub fn respawn(&self) {
+    pub fn respawn(&mut self) {
         let health = self.get_health();
         if !Self::should_process_respawn(health) {
             return;
@@ -924,48 +854,20 @@ impl Player {
 
         // TODO: bed/respawn anchor lookup, send NO_RESPAWN_BLOCK_AVAILABLE if missing
 
-        let Some(player_arc) = world.players.get_by_entity_id(self.id()) else {
+        if world.players.get_by_entity_id(self.id()).is_none() {
             return;
-        };
+        }
         if !was_removed {
             world.unregister_player_entity(self);
         }
 
-        // Shared reset (clears transient state, sends CRespawn)
-        player_arc.reset(world.clone(), ResetReason::Respawn);
-
-        // Compute spawn position
-        let spawn_pos = world.level_data.read().data().spawn_pos();
-        let spawn = DVec3::new(
-            f64::from(spawn_pos.x()) + 0.5,
-            f64::from(spawn_pos.y()),
-            f64::from(spawn_pos.z()) + 0.5,
-        );
-
-        // TODO: send CSetDefaultSpawnPosition (dimension, pos, yaw, pitch)
-
-        self.send_difficulty();
-
-        // Handle XP loss on death
-        {
-            let mut experience = self.experience.lock();
-            if world.get_game_rule(&KEEP_INVENTORY) != GameRuleValue::Bool(true)
-                && self.game_mode() != GameType::Spectator
-            {
-                // TODO: drop XP orbs (min(level * 7, 100))
-                experience.set_total_points(0);
-            }
-            // Re-send XP to client after respawn regardless of keepInventory
-            experience.dirty = true;
-        }
-
-        // TODO: send mob effect packets once effects are implemented
-
-        // Shared spawn (teleport, abilities, weather, time, chunk tracking reset)
-        let _ = player_arc.spawn(spawn, (0.0, 0.0), ResetReason::Respawn);
+        // The reset+spawn tail re-locks this entity (currently locked by the tick),
+        // so defer it to a safe point. See `ServerPlayer::finish_respawn`.
+        self.server()
+            .queue_player_reset(PlayerResetRequest::Respawn(self.server_player()));
     }
 
-    fn reset_state_for_death_respawn(&self) {
+    fn reset_state_for_death_respawn(&mut self) {
         self.close_container();
         self.detach_relationships_for_respawn();
 
@@ -982,8 +884,8 @@ impl Player {
 
         *self.food_data.lock() = FoodData::new();
         *self.block_breaking.lock() = BlockBreakingManager::new();
-        *self.teleport_state.lock() = TeleportState::new();
-        *self.tick_state.lock() = PlayerTickState::new();
+        *self.server_player().teleport_state.lock() = TeleportState::new();
+        *self.server_player().tick_state.lock() = PlayerTickState::new();
         *self.last_item_in_main_hand.lock() = ItemStack::empty();
         self.health_sync.lock().reset_for_respawn();
         self.clear_pending_root_vehicle();
@@ -999,7 +901,7 @@ impl Player {
     }
 
     /// Handles client commands, requestStats and `RequestGameRuleValues` are still todo
-    pub fn handle_client_command(&self, action: ClientCommandAction) {
+    pub fn handle_client_command(&mut self, action: ClientCommandAction) {
         match action {
             ClientCommandAction::PerformRespawn => self.respawn(),
             ClientCommandAction::RequestStats | ClientCommandAction::RequestGameRuleValues => {
@@ -1028,14 +930,20 @@ impl Player {
 
     /// Returns the world the player is currently in.
     pub fn get_world(&self) -> Arc<World> {
-        self.world.load_full()
+        self.server_player().world.load_full()
     }
 
     /// Returns the server this player belongs to.
     pub(crate) fn server(&self) -> Arc<Server> {
-        self.server
+        self.server_player()
+            .server
             .upgrade()
             .expect("player must not outlive server")
+    }
+
+    /// Returns the runtime configuration shared with the server.
+    pub(crate) fn config(&self) -> Arc<RuntimeConfig> {
+        Arc::clone(&self.server_player().config)
     }
 
     /// Sets the world the player is in.
@@ -1044,28 +952,28 @@ impl Player {
     /// (e.g., when loading saved player data determines the actual world).
     pub fn set_world(&self, world: Arc<World>) {
         self.base.set_world(Arc::downgrade(&world));
-        self.world.store(world);
+        self.server_player().world.store(world);
     }
 
     /// Marks the player as switching domains if they are not already in a transition.
     pub fn begin_domain_switch(&self) -> bool {
-        self.lifecycle.lock().begin_domain_switch()
+        self.server_player().lifecycle.lock().begin_domain_switch()
     }
 
     /// Clears the domain-switch transition marker.
     pub fn finish_domain_switch(&self) {
-        self.lifecycle.lock().finish_domain_switch();
+        self.server_player().lifecycle.lock().finish_domain_switch();
     }
 
     /// Returns whether this player is currently switching domains.
     pub fn is_domain_switching(&self) -> bool {
-        self.lifecycle.lock().domain_switching()
+        self.server_player().lifecycle.lock().domain_switching()
     }
 
     /// Returns whether the server has inserted this player into a world.
     #[must_use]
     pub fn has_joined_world(&self) -> bool {
-        self.lifecycle.lock().joined_world()
+        self.server_player().lifecycle.lock().joined_world()
     }
 
     /// Marks this player as inserted into a world.
@@ -1073,7 +981,8 @@ impl Player {
     /// Returns `true` when a client-loaded acknowledgement arrived before world
     /// admission and was applied by this call.
     pub(crate) fn mark_joined_world(&self) -> bool {
-        let mut lifecycle = self.lifecycle.lock();
+        let sp = self.server_player();
+        let mut lifecycle = sp.lifecycle.lock();
         lifecycle.set_joined_world(true);
         lifecycle.apply_pending_client_loaded()
     }
@@ -1081,23 +990,23 @@ impl Player {
     /// Returns whether the client has sent its play-loaded signal.
     #[must_use]
     pub fn has_client_loaded(&self) -> bool {
-        self.lifecycle.lock().client_loaded()
+        self.server_player().lifecycle.lock().client_loaded()
     }
 
     /// Marks whether the client has loaded into play.
     pub fn set_client_loaded(&self, client_loaded: bool) {
-        self.lifecycle.lock().set_client_loaded(client_loaded);
+        self.server_player().lifecycle.lock().set_client_loaded(client_loaded);
     }
 
     /// Applies or buffers the client's play-loaded acknowledgement.
     ///
     /// Returns `true` when the acknowledgement can run gameplay side effects now.
     pub fn mark_client_loaded_from_network(&self) -> bool {
-        self.lifecycle.lock().mark_client_loaded_from_network()
+        self.server_player().lifecycle.lock().mark_client_loaded_from_network()
     }
 
     fn tick_client_load_timeout(&self) {
-        self.lifecycle.lock().tick_client_load_timeout();
+        self.server_player().lifecycle.lock().tick_client_load_timeout();
     }
 
     pub(crate) fn set_pending_root_vehicle(
@@ -1146,18 +1055,18 @@ impl Player {
     /// Returns this player's local server tick count.
     #[must_use]
     pub fn tick_count(&self) -> i32 {
-        self.tick_state.lock().tick_count()
+        self.server_player().tick_state.lock().tick_count()
     }
 
     /// Returns vanilla `Player.takeXpDelay`.
     #[must_use]
     pub(crate) fn take_xp_delay(&self) -> i32 {
-        self.tick_state.lock().take_xp_delay()
+        self.server_player().tick_state.lock().take_xp_delay()
     }
 
     /// Sets vanilla `Player.takeXpDelay`.
     pub(crate) fn set_take_xp_delay(&self, delay: i32) {
-        self.tick_state.lock().set_take_xp_delay(delay);
+        self.server_player().tick_state.lock().set_take_xp_delay(delay);
     }
 
     /// Gives raw experience points to this player.
@@ -1167,7 +1076,7 @@ impl Player {
 
     /// Advances this player's local server tick count.
     fn advance_tick(&self) {
-        self.tick_state.lock().advance_tick();
+        self.server_player().tick_state.lock().advance_tick();
     }
 
     fn primary_step_sound_block_pos(&self, affecting_pos: BlockPos) -> BlockPos {
@@ -1181,207 +1090,6 @@ impl Player {
             above_pos
         } else {
             affecting_pos
-        }
-    }
-
-    /// Resets the player's transient state and prepares them for a new world.
-    ///
-    /// This is the shared "clean slate" path used by initial join, respawn, and
-    /// world change. If the player is currently in a different world, they are
-    /// removed from the old world first.
-    ///
-    /// Vanilla equivalent: the work that happens when a fresh `ServerPlayer` is
-    /// constructed during respawn / world change, since vanilla recreates the
-    /// player object. We reuse the same `Player`, so we reset manually.
-    pub fn reset(self: &Arc<Self>, new_world: Arc<World>, reason: ResetReason) {
-        self.reset_inner_after(new_world, reason, false, || {});
-    }
-
-    /// Resets for a domain switch and restores target-domain state after the
-    /// player has been detached from the old world's live entity indexes.
-    pub(crate) fn reset_after_domain_save_and_restore<F>(
-        self: &Arc<Self>,
-        new_world: Arc<World>,
-        restore_state: F,
-    ) where
-        F: FnOnce(),
-    {
-        self.reset_inner_after(new_world, ResetReason::WorldChange, true, restore_state);
-    }
-
-    fn reset_inner_after<F>(
-        self: &Arc<Self>,
-        new_world: Arc<World>,
-        reason: ResetReason,
-        store_root_vehicle: bool,
-        restore_state: F,
-    ) where
-        F: FnOnce(),
-    {
-        let old_world = self.get_world();
-        let switching_worlds = !Arc::ptr_eq(&old_world, &new_world);
-
-        if switching_worlds {
-            self.do_close_container();
-            self.send_packet(CContainerClose { container_id: 0 });
-            if store_root_vehicle {
-                old_world.remove_player_for_domain_switch(self);
-            } else {
-                old_world.remove_player_for_world_change(self);
-            }
-            self.set_world(new_world.clone());
-        }
-
-        self.set_client_loaded(false);
-        self.set_velocity(DVec3::ZERO);
-        self.movement.lock().reset_last_known_client_movement();
-        self.set_on_ground(false);
-        self.reset_entity_state();
-        *self.block_breaking.lock() = BlockBreakingManager::new();
-
-        // Reset chunk tracking — bump generation counter so the chunk sending tick
-        // discards any in-flight batch encoded against the old world.
-        self.view.bump_chunk_send_epoch();
-        *self.chunk_sender.lock() = ChunkSender::default();
-        *self.last_tracking_view.lock() = None;
-        self.view.set_last_chunk_pos(ChunkPos::new(i32::MAX, i32::MAX));
-
-        restore_state();
-
-        if reason != ResetReason::InitialJoin {
-            // 0x01 = keep attributes, 0x02 = keep entity data
-            let data_kept: i8 = match reason {
-                ResetReason::WorldChange => 0x03,
-                _ => 0x00,
-            };
-
-            self.send_packet(CRespawn {
-                dimension_type: new_world.dimension_type.id() as i32,
-                dimension_name: new_world.key.clone(),
-                hashed_seed: new_world.obfuscated_seed(),
-                gamemode: self.game_mode() as u8,
-                previous_gamemode: self.previous_game_mode() as i8,
-                is_debug: false,
-                is_flat: new_world.is_flat,
-                has_death_location: false,
-                death_dimension_name: None,
-                death_location: None,
-                portal_cooldown_ticks: 0,
-                sea_level: new_world.sea_level,
-                data_kept,
-            });
-        }
-    }
-
-    /// Spawns the player into their current world at the given position.
-    ///
-    /// This is the shared "enter world" path used by initial join, respawn, and
-    /// world change. Sends position sync, abilities, inventory, time, weather,
-    /// and adds the player to the world as appropriate for the given reason.
-    ///
-    /// # Panics
-    /// Panics if the `advance_time` gamerule is not a bool.
-    #[must_use]
-    pub fn spawn(
-        self: &Arc<Self>,
-        position: DVec3,
-        rotation: (f32, f32),
-        reason: ResetReason,
-    ) -> bool {
-        let world = self.get_world();
-
-        // Set position and rotation
-        self.base.set_position_local(position);
-        self.set_rotation(rotation);
-        self.set_old_position_to_current();
-        self.movement.lock().reset_for_position_sync(position);
-
-        // Teleport sync (sends CPlayerPosition, sets awaiting_teleport for ack)
-        if let Err(error) =
-            self.teleport(position.x, position.y, position.z, rotation.0, rotation.1)
-        {
-            panic!(
-                "failed to synchronize player {} spawn position: {error}",
-                self.id()
-            );
-        }
-        self.reset_flying_ticks();
-
-        // Abilities and held slot
-        self.send_abilities();
-        self.send_packet(CSetHeldSlot {
-            slot: i32::from(self.inventory.lock().get_selected_slot()),
-        });
-
-        // Time sync
-        {
-            let level_data = world.level_data.read();
-            let game_time = level_data.game_time();
-            let day_time = level_data.day_time();
-            drop(level_data);
-
-            let advance_time = world
-                .get_game_rule(&ADVANCE_TIME)
-                .as_bool()
-                .expect("gamerule advance_time should always be a bool.");
-            let rate = if advance_time { 1.0 } else { 0.0 };
-            self.send_packet(CSetTime::new(game_time, day_time, 0.0, rate));
-        }
-
-        self.send_packet(world.initialize_border_packet());
-
-        // Weather sync
-        if world.can_have_weather() && world.is_raining() {
-            let (rain_level, thunder_level) = {
-                let weather = world.weather.lock();
-                (weather.rain_level, weather.thunder_level)
-            };
-
-            self.send_packet(CGameEvent {
-                event: GameEventType::StartRaining,
-                data: 0.0,
-            });
-            self.send_packet(CGameEvent {
-                event: GameEventType::RainLevelChange,
-                data: rain_level,
-            });
-            self.send_packet(CGameEvent {
-                event: GameEventType::ThunderLevelChange,
-                data: thunder_level,
-            });
-        }
-
-        // Force health/xp resync on next tick
-        self.reset_sent_info();
-
-        // Resend client context that is not fully covered by CLogin/CRespawn.
-        self.server().resend_player_context(self);
-
-        // Add to world / re-enter chunk tracking
-        match reason {
-            ResetReason::InitialJoin | ResetReason::WorldChange => {
-                if reason == ResetReason::WorldChange {
-                    log::info!(
-                        "Player {} changed world to {}",
-                        self.gameprofile.name,
-                        world.key
-                    );
-                }
-                world.add_player(self.clone(), reason)
-            }
-            ResetReason::Respawn => {
-                // Same world — re-enter chunk tracking
-                world.player_area_map.remove_by_entity_id(self.id());
-                world.chunk_map.remove_player(self);
-                world.entity_tracker().on_player_leave(self.id());
-
-                self.send_packet(CGameEvent {
-                    event: GameEventType::LevelChunksLoadStart,
-                    data: 0.0,
-                });
-                world.register_respawned_player_entity(self);
-                true
-            }
         }
     }
 
@@ -1430,6 +1138,314 @@ impl Player {
     }
 }
 
+impl ServerPlayer {
+    /// Drains and applies all queued inbound packets on the game tick.
+    ///
+    /// The connection listener enqueues game-state packets off the IO task; this
+    /// applies them here so player state is mutated by a single thread. Called at
+    /// the start of the player's tick.
+    pub fn drain_inbound(this: &Arc<ServerPlayer>) {
+        let Some(server) = this.server.upgrade() else {
+            return;
+        };
+        let id = this.entity().lock().id();
+        // Drain one packet at a time, never holding the entity lock across
+        // `apply_inbound_packet` (which locks the entity itself).
+        loop {
+            let packet = {
+                let mut rx = this.inbound_rx.lock();
+                match rx.try_recv() {
+                    Ok(packet) => packet,
+                    Err(_) => break,
+                }
+            };
+            if let Err(err) = JavaConnection::apply_inbound_packet(this.entity(), packet, &server) {
+                log::warn!("Failed to apply inbound packet for player {id}: {err}");
+            }
+        }
+    }
+
+    /// Resets the player's transient state and prepares them for a new world.
+    ///
+    /// This is the shared "clean slate" path used by initial join, respawn, and
+    /// world change. If the player is currently in a different world, they are
+    /// removed from the old world first.
+    ///
+    /// Vanilla equivalent: the work that happens when a fresh `ServerPlayer` is
+    /// constructed during respawn / world change, since vanilla recreates the
+    /// player object. We reuse the same `Player`, so we reset manually.
+    pub fn reset(this: &Arc<ServerPlayer>, new_world: Arc<World>, reason: ResetReason) {
+        Self::reset_inner_after(this, new_world, reason, false, || {});
+    }
+
+    /// Resets for a domain switch and restores target-domain state after the
+    /// player has been detached from the old world's live entity indexes.
+    pub(crate) fn reset_after_domain_save_and_restore<F>(
+        this: &Arc<ServerPlayer>,
+        new_world: Arc<World>,
+        restore_state: F,
+    ) where
+        F: FnOnce(),
+    {
+        Self::reset_inner_after(
+            this,
+            new_world,
+            ResetReason::WorldChange,
+            true,
+            restore_state,
+        );
+    }
+
+    fn reset_inner_after<F>(
+        this: &Arc<ServerPlayer>,
+        new_world: Arc<World>,
+        reason: ResetReason,
+        store_root_vehicle: bool,
+        restore_state: F,
+    ) where
+        F: FnOnce(),
+    {
+        let old_world = this.entity().lock().get_world();
+        let switching_worlds = !Arc::ptr_eq(&old_world, &new_world);
+
+        if switching_worlds {
+            {
+                let player = this.entity().lock();
+                player.do_close_container();
+                player.send_packet(CContainerClose { container_id: 0 });
+            }
+            // These re-lock the entity internally, so the guard must be dropped first.
+            if store_root_vehicle {
+                old_world.remove_player_for_domain_switch(this);
+            } else {
+                old_world.remove_player_for_world_change(this);
+            }
+            this.entity().lock().set_world(new_world.clone());
+        }
+
+        {
+            let mut player = this.entity().lock();
+            player.set_client_loaded(false);
+            player.set_velocity(DVec3::ZERO);
+            player.movement.lock().reset_last_known_client_movement();
+            player.set_on_ground(false);
+            player.reset_entity_state();
+            *player.block_breaking.lock() = BlockBreakingManager::new();
+        }
+
+        // Reset chunk tracking — bump generation counter so the chunk sending tick
+        // discards any in-flight batch encoded against the old world. These live on
+        // the session, so no entity lock is needed.
+        this.view.bump_chunk_send_epoch();
+        *this.chunk_sender.lock() = ChunkSender::default();
+        *this.last_tracking_view.lock() = None;
+        this.view
+            .set_last_chunk_pos(ChunkPos::new(i32::MAX, i32::MAX));
+
+        // Closure may re-lock the entity (domain-state restore), so run it unlocked.
+        restore_state();
+
+        if reason != ResetReason::InitialJoin {
+            // 0x01 = keep attributes, 0x02 = keep entity data
+            let data_kept: i8 = match reason {
+                ResetReason::WorldChange => 0x03,
+                _ => 0x00,
+            };
+
+            let player = this.entity().lock();
+            player.send_packet(CRespawn {
+                dimension_type: new_world.dimension_type.id() as i32,
+                dimension_name: new_world.key.clone(),
+                hashed_seed: new_world.obfuscated_seed(),
+                gamemode: player.game_mode() as u8,
+                previous_gamemode: player.previous_game_mode() as i8,
+                is_debug: false,
+                is_flat: new_world.is_flat,
+                has_death_location: false,
+                death_dimension_name: None,
+                death_location: None,
+                portal_cooldown_ticks: 0,
+                sea_level: new_world.sea_level,
+                data_kept,
+            });
+        }
+    }
+
+    /// Spawns the player into their current world at the given position.
+    ///
+    /// This is the shared "enter world" path used by initial join, respawn, and
+    /// world change. Sends position sync, abilities, inventory, time, weather,
+    /// and adds the player to the world as appropriate for the given reason.
+    ///
+    /// # Panics
+    /// Panics if the `advance_time` gamerule is not a bool.
+    #[must_use]
+    pub fn spawn(
+        this: &Arc<ServerPlayer>,
+        position: DVec3,
+        rotation: (f32, f32),
+        reason: ResetReason,
+    ) -> bool {
+        let world = this.entity().lock().get_world();
+
+        // Body: single lock, sending position/abilities/time/weather/context to
+        // the player. None of these re-lock this entity (`resend_player_context`
+        // takes `&Player`), so holding the guard is safe.
+        let (entity_id, player_name) = {
+            let mut player = this.entity().lock();
+
+            // Set position and rotation
+            player.base.set_position_local(position);
+            player.set_rotation(rotation);
+            player.set_old_position_to_current();
+            player.movement.lock().reset_for_position_sync(position);
+
+            // Teleport sync (sends CPlayerPosition, sets awaiting_teleport for ack)
+            if let Err(error) =
+                player.teleport(position.x, position.y, position.z, rotation.0, rotation.1)
+            {
+                panic!(
+                    "failed to synchronize player {} spawn position: {error}",
+                    player.id()
+                );
+            }
+            player.reset_flying_ticks();
+
+            // Abilities and held slot
+            player.send_abilities();
+            player.send_packet(CSetHeldSlot {
+                slot: i32::from(player.inventory.lock().get_selected_slot()),
+            });
+
+            // Time sync
+            {
+                let level_data = world.level_data.read();
+                let game_time = level_data.game_time();
+                let day_time = level_data.day_time();
+                drop(level_data);
+
+                let advance_time = world
+                    .get_game_rule(&ADVANCE_TIME)
+                    .as_bool()
+                    .expect("gamerule advance_time should always be a bool.");
+                let rate = if advance_time { 1.0 } else { 0.0 };
+                player.send_packet(CSetTime::new(game_time, day_time, 0.0, rate));
+            }
+
+            player.send_packet(world.initialize_border_packet());
+
+            // Weather sync
+            if world.can_have_weather() && world.is_raining() {
+                let (rain_level, thunder_level) = {
+                    let weather = world.weather.lock();
+                    (weather.rain_level, weather.thunder_level)
+                };
+
+                player.send_packet(CGameEvent {
+                    event: GameEventType::StartRaining,
+                    data: 0.0,
+                });
+                player.send_packet(CGameEvent {
+                    event: GameEventType::RainLevelChange,
+                    data: rain_level,
+                });
+                player.send_packet(CGameEvent {
+                    event: GameEventType::ThunderLevelChange,
+                    data: thunder_level,
+                });
+            }
+
+            // Force health/xp resync on next tick
+            player.reset_sent_info();
+
+            // Resend client context that is not fully covered by CLogin/CRespawn.
+            player.server().resend_player_context(&player);
+
+            (player.id(), player.gameprofile.name.clone())
+        };
+
+        // Add to world / re-enter chunk tracking. These re-lock this entity, so
+        // run them with the guard dropped.
+        match reason {
+            ResetReason::InitialJoin | ResetReason::WorldChange => {
+                if reason == ResetReason::WorldChange {
+                    log::info!("Player {} changed world to {}", player_name, world.key);
+                }
+                world.add_player(this.clone(), reason)
+            }
+            ResetReason::Respawn => {
+                // Same world — re-enter chunk tracking
+                world.player_area_map.remove_by_entity_id(entity_id);
+                world.chunk_map.remove_player(&this.entity().lock());
+                world.entity_tracker().on_player_leave(entity_id);
+
+                this.entity().lock().send_packet(CGameEvent {
+                    event: GameEventType::LevelChunksLoadStart,
+                    data: 0.0,
+                });
+                world.register_respawned_player_entity(this);
+                true
+            }
+        }
+    }
+
+    /// Runs the deferred respawn tail (reset + spawn) for [`Player::respawn`].
+    ///
+    /// Called from a tick safe point with the entity unlocked, since `reset`/`spawn`
+    /// re-lock it. The `&mut self` prep (state reset, unregister) already ran inline.
+    pub(crate) fn finish_respawn(this: &Arc<ServerPlayer>) {
+        let world = this.entity().lock().get_world();
+
+        // Shared reset (clears transient state, sends CRespawn)
+        Self::reset(this, world.clone(), ResetReason::Respawn);
+
+        // Compute spawn position
+        let spawn_pos = world.level_data.read().data().spawn_pos();
+        let spawn = DVec3::new(
+            f64::from(spawn_pos.x()) + 0.5,
+            f64::from(spawn_pos.y()),
+            f64::from(spawn_pos.z()) + 0.5,
+        );
+
+        {
+            let player = this.entity().lock();
+            player.send_difficulty();
+
+            // Handle XP loss on death
+            let mut experience = player.experience.lock();
+            if world.get_game_rule(&KEEP_INVENTORY) != GameRuleValue::Bool(true)
+                && player.game_mode() != GameType::Spectator
+            {
+                // TODO: drop XP orbs (min(level * 7, 100))
+                experience.set_total_points(0);
+            }
+            // Re-send XP to client after respawn regardless of keepInventory
+            experience.dirty = true;
+        }
+
+        // Shared spawn (teleport, abilities, weather, time, chunk tracking reset)
+        let _ = Self::spawn(this, spawn, (0.0, 0.0), ResetReason::Respawn);
+    }
+
+    /// Runs the deferred cross-world change tail (reset + spawn) for
+    /// [`Player::change_world`], at a tick safe point with the entity unlocked.
+    pub(crate) fn finish_world_change(this: &Arc<ServerPlayer>, transition: &TeleportTransition) {
+        let new_world = transition.target_world.clone();
+        Self::reset(this, new_world, ResetReason::WorldChange);
+        // TODO: set portal cooldown from transition.portal_cooldown
+        if !Self::spawn(
+            this,
+            transition.position,
+            transition.rotation,
+            ResetReason::WorldChange,
+        ) {
+            return;
+        }
+        // Vanilla: PlayerList.sendAllPlayerInfo -> inventoryMenu.sendAllDataToRemote
+        this.entity().lock().send_inventory_to_remote();
+    }
+}
+
 /// Why the player is being reset and spawned into a world.
 ///
 /// Controls which packets are sent and how world add/remove is handled.
@@ -1463,14 +1479,16 @@ impl Entity for Player {
             return;
         };
 
-        self.remove_active_effects_for_vehicle(old_vehicle.as_ref());
-        self.send_packet(CSetPassengers::new(
-            old_vehicle.id(),
-            Self::passenger_ids_for_packet(old_vehicle.as_ref()),
-        ));
+        let passenger_ids = old_vehicle
+            .with_entity_ref(|vehicle| {
+                self.remove_active_effects_for_vehicle(vehicle);
+                Self::passenger_ids_for_packet(vehicle)
+            })
+            .unwrap_or_default();
+        self.send_packet(CSetPassengers::new(old_vehicle.id(), passenger_ids));
     }
 
-    fn start_riding(&self, entity_to_ride: &SharedEntity) -> bool {
+    fn start_riding(&mut self, entity_to_ride: &SharedEntity) -> bool {
         let Some(world) = self.level() else {
             return false;
         };
@@ -1481,7 +1499,7 @@ impl Entity for Player {
             return false;
         }
 
-        entity_to_ride.position_rider(self.as_entity_event_source());
+        entity_to_ride.position_rider(self.as_entity_event_source_mut());
         let position = self.position();
         let (yaw, pitch) = self.rotation();
         if let Err(error) = self.teleport(position.x, position.y, position.z, yaw, pitch) {
@@ -1490,11 +1508,13 @@ impl Entity for Player {
                 self.id()
             );
         }
-        self.send_active_effects_for_vehicle(entity_to_ride.as_ref());
-        self.send_packet(CSetPassengers::new(
-            entity_to_ride.id(),
-            Self::passenger_ids_for_packet(entity_to_ride.as_ref()),
-        ));
+        let passenger_ids = entity_to_ride
+            .with_entity_ref(|vehicle| {
+                self.send_active_effects_for_vehicle(vehicle);
+                Self::passenger_ids_for_packet(vehicle)
+            })
+            .unwrap_or_default();
+        self.send_packet(CSetPassengers::new(entity_to_ride.id(), passenger_ids));
         true
     }
 
@@ -1635,7 +1655,7 @@ impl Entity for Player {
     }
 
     fn cause_fall_damage(
-        &self,
+        &mut self,
         fall_distance: f64,
         damage_modifier: f32,
         source: &DamageSource,
@@ -1761,7 +1781,7 @@ impl Entity for Player {
         }
     }
 
-    fn on_below_world(&self) {
+    fn on_below_world(&mut self) {
         self.hurt(
             &DamageSource::environment(&vanilla_damage_types::OUT_OF_WORLD),
             4.0,
@@ -1783,7 +1803,7 @@ impl Entity for Player {
         Player::hurt(self, source, amount)
     }
 
-    fn change_world(&self, teleport_transition: &TeleportTransition) {
+    fn change_world(&mut self, teleport_transition: &TeleportTransition) {
         let new_world = teleport_transition.target_world.clone();
         if Arc::ptr_eq(&self.get_world(), &new_world) {
             let pos = teleport_transition.position;
@@ -1796,21 +1816,13 @@ impl Entity for Player {
             }
             self.reset_flying_ticks();
         } else {
-            let this = self
-                .base
-                .player()
-                .expect("player base must reference its player");
-            this.reset(new_world, ResetReason::WorldChange);
-            // TODO: set portal cooldown from teleport_transition.portal_cooldown
-            if !this.spawn(
-                teleport_transition.position,
-                teleport_transition.rotation,
-                ResetReason::WorldChange,
-            ) {
-                return;
-            }
-            // Vanilla: PlayerList.sendAllPlayerInfo -> inventoryMenu.sendAllDataToRemote
-            self.send_inventory_to_remote();
+            // The reset+spawn tail re-locks this entity (currently locked by the
+            // world-change processor), so defer it to a safe point.
+            // See `ServerPlayer::finish_world_change`.
+            self.server().queue_player_reset(PlayerResetRequest::WorldChange(
+                self.server_player(),
+                teleport_transition.clone(),
+            ));
         }
     }
 }
@@ -1856,7 +1868,7 @@ impl LivingEntity for Player {
     }
 
     fn hurt_broadcast_chunk(&self) -> ChunkPos {
-        self.view.last_chunk_pos()
+        self.view().last_chunk_pos()
     }
 
     fn die(&mut self, source: &DamageSource) {

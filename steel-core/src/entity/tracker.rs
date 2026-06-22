@@ -209,7 +209,7 @@ impl EntityTracker {
         // Send spawn packets to all nearby players
         for player_id in player_ids_to_notify {
             if let Some(player) = get_player(player_id) {
-                self.send_spawn_packets_with_entity(entity, locked, &player);
+                self.send_spawn_packets_with_entity(entity, locked, &player.lock());
             }
         }
     }
@@ -221,6 +221,7 @@ impl EntityTracker {
             // Send despawn to all tracking players
             for player_id in tracked.seen_by.read().iter() {
                 if let Some(player) = get_player(*player_id) {
+                    let player = player.lock();
                     if let Some(entity) = &entity
                         && let Some(packet) =
                             self.vehicle_passenger_packet_for_player(entity.as_ref(), *player_id)
@@ -567,7 +568,7 @@ impl EntityTracker {
         let mut players_to_add = Vec::new();
         let mut entity_to_spawn = None;
 
-        let locked_entity = locked_entity;
+        let mut locked_entity = locked_entity;
 
         self.entities.update_sync(&entity_id, |_, tracked| {
             if old_chunk != new_chunk {
@@ -619,6 +620,7 @@ impl EntityTracker {
 
         for player_id in players_to_remove {
             if let Some(player) = get_player(player_id) {
+                let player = player.lock();
                 if let Some(packet) =
                     self.vehicle_passenger_packet_for_player(entity.as_ref(), player_id)
                 {
@@ -630,7 +632,8 @@ impl EntityTracker {
 
         for player_id in players_to_add {
             if let Some(player) = get_player(player_id) {
-                match locked_entity {
+                let player = player.lock();
+                match locked_entity.as_deref_mut() {
                     Some(e) => self.send_spawn_packets_with_entity(&entity, e, &player),
                     None => self.send_spawn_packets(&entity, &player),
                 }
@@ -683,6 +686,7 @@ impl EntityTracker {
 
         for player_id in players_to_remove {
             if let Some(player) = get_player(player_id) {
+                let player = player.lock();
                 if let Some(packet) =
                     self.vehicle_passenger_packet_for_player(entity.as_ref(), player_id)
                 {
@@ -694,7 +698,7 @@ impl EntityTracker {
 
         for player_id in players_to_add {
             if let Some(player) = get_player(player_id) {
-                self.send_spawn_packets(&entity, &player);
+                self.send_spawn_packets(&entity, &player.lock());
             }
         }
     }
@@ -745,6 +749,7 @@ impl EntityTracker {
             let Some(player) = get_player(player_id) else {
                 continue;
             };
+            let player = player.lock();
 
             if entity.broadcast_to_player(&player)
                 && is_within_tracking_distance(

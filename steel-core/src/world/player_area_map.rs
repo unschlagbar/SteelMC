@@ -3,9 +3,6 @@
 //! Based on VMP (Very Many Players) implementation pattern:
 //! Maps chunk coordinates to sets of players for O(1) nearby player lookup.
 
-use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
-
 use rustc_hash::FxHashSet;
 use steel_utils::ChunkPos;
 
@@ -64,7 +61,7 @@ impl PlayerAreaMap {
     }
 
     /// Removes a player from all tracked chunks.
-    pub fn on_player_leave(&self, player: &Arc<SyncMutex<Player>>) {
+    pub fn on_player_leave(&self, player: &Player) {
         self.remove_by_entity_id(player.id());
     }
 

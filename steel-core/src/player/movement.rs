@@ -112,8 +112,9 @@ impl Player {
     ///
     /// Returns `true` if awaiting teleport (movement should be rejected),
     /// `false` if normal movement processing should continue.
-    fn update_awaiting_teleport(&self) -> bool {
-        let mut tp = self.teleport_state.lock();
+    fn update_awaiting_teleport(&mut self) -> bool {
+        let sp = self.server_player();
+        let mut tp = sp.teleport_state.lock();
         let Some(pos) = tp.awaiting_position else {
             tp.teleport_time = self.tick_count();
             return false;
@@ -193,7 +194,7 @@ impl Player {
         clippy::too_many_lines,
         reason = "matches vanilla handleMovePlayer; splitting would hurt readability"
     )]
-    pub fn handle_move_player(&self, packet: SMovePlayer) {
+    pub fn handle_move_player(&mut self, packet: SMovePlayer) {
         if Self::is_invalid_position(
             packet.get_x(0.0),
             packet.get_y(0.0),
@@ -457,7 +458,7 @@ impl Player {
         clippy::too_many_lines,
         reason = "matches vanilla handleMoveVehicle; splitting would hurt readability"
     )]
-    pub fn handle_move_vehicle(&self, packet: SMoveVehicle) {
+    pub fn handle_move_vehicle(&mut self, packet: SMoveVehicle) {
         if Self::is_invalid_position(
             packet.position.x,
             packet.position.y,
@@ -610,7 +611,12 @@ impl Player {
             .set_last_known_client_movement(client_delta);
         world.chunk_map.update_player_status(self);
         vehicle.with_entity_ref(|v| {
-            self.record_client_vehicle_floating(&world, v, move_delta.y, vehicle_rests_on_something);
+            self.record_client_vehicle_floating(
+                &world,
+                v,
+                move_delta.y,
+                vehicle_rests_on_something,
+            );
         });
         self.movement
             .lock()
@@ -630,7 +636,7 @@ impl Player {
             y_dist,
             player_stands_on_something,
             is_spectator,
-            server_allows_flight: self.config.allow_flight,
+            server_allows_flight: self.config().allow_flight,
             may_fly: self.abilities.lock().may_fly,
             has_levitation: self.has_mob_effect(vanilla_mob_effects::LEVITATION),
             is_fall_flying,
@@ -652,7 +658,7 @@ impl Player {
     ) {
         let client_is_floating = y_dist >= -0.03125
             && !vehicle_rests_on_something
-            && !self.config.allow_flight
+            && !self.config().allow_flight
             && !vehicle.is_flying_vehicle()
             && !vehicle.is_no_gravity()
             && Self::no_blocks_around_entity(world, vehicle);
@@ -742,7 +748,7 @@ impl Player {
     /// Returns true if we're waiting for a teleport confirmation.
     #[must_use]
     pub fn is_awaiting_teleport(&self) -> bool {
-        self.teleport_state.lock().is_awaiting()
+        self.server_player().teleport_state.lock().is_awaiting()
     }
 
     /// Teleports the player to a new position.
@@ -752,7 +758,7 @@ impl Player {
     ///
     /// Matches vanilla `ServerGamePacketListenerImpl.teleport()`.
     pub fn teleport(
-        &self,
+        &mut self,
         x: f64,
         y: f64,
         z: f64,
@@ -765,7 +771,8 @@ impl Player {
         self.set_velocity(DVec3::ZERO);
 
         let new_id = {
-            let mut tp = self.teleport_state.lock();
+            let sp = self.server_player();
+            let mut tp = sp.teleport_state.lock();
             tp.teleport_time = self.tick_count();
             let id = tp.next_id();
             tp.awaiting_position = Some(pos);
@@ -791,8 +798,9 @@ impl Player {
     /// Handles a teleport acknowledgment from the client.
     ///
     /// Matches vanilla `ServerGamePacketListenerImpl.handleAcceptTeleportPacket()`.
-    pub fn handle_accept_teleportation(&self, packet: SAcceptTeleportation) {
-        let mut tp = self.teleport_state.lock();
+    pub fn handle_accept_teleportation(&mut self, packet: SAcceptTeleportation) {
+        let sp = self.server_player();
+        let mut tp = sp.teleport_state.lock();
 
         if let Some(pos) = tp.try_accept(packet.teleport_id) {
             drop(tp);
@@ -801,7 +809,7 @@ impl Player {
                     "Failed to commit accepted teleport for player entity {}: {error}",
                     self.id()
                 );
-                self.teleport_state.lock().awaiting_position = Some(pos);
+                self.server_player().teleport_state.lock().awaiting_position = Some(pos);
                 return;
             }
             self.set_old_position_to_current();
@@ -831,7 +839,7 @@ impl Player {
     }
 
     /// Handles a player input packet (movement keys, sneaking, sprinting).
-    pub fn handle_player_input(&self, packet: SPlayerInput) {
+    pub fn handle_player_input(&mut self, packet: SPlayerInput) {
         // Vanilla stores the input unconditionally before the guard check.
         let input = PlayerInput::from_flags(packet.flags);
         self.movement.lock().set_last_client_input(input);
@@ -847,7 +855,7 @@ impl Player {
     }
 
     /// Handles a player command packet (sprinting, elytra, leaving bed, etc).
-    pub fn handle_player_command(&self, packet: SPlayerCommand) {
+    pub fn handle_player_command(&mut self, packet: SPlayerCommand) {
         if !self.has_client_loaded() {
             return;
         }

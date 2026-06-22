@@ -252,7 +252,11 @@ pub trait AgeableMob: Mob {
     }
 
     /// Handles vanilla `AgeableMob.mobInteract`.
-    fn mob_interact_ageable(&self, player: &Player, hand: InteractionHand) -> InteractionResult {
+    fn mob_interact_ageable(
+        &mut self,
+        player: &Player,
+        hand: InteractionHand,
+    ) -> InteractionResult {
         let item_stack = {
             let inventory = player.inventory.lock();
             let item_stack = inventory.get_item_in_hand(hand);

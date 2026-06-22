@@ -1009,7 +1009,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Starts riding `entity_to_ride` if vanilla boarding rules allow it.
     ///
     /// Mirrors vanilla `Entity.startRiding(Entity)`.
-    fn start_riding(&self, entity_to_ride: &SharedEntity) -> bool {
+    fn start_riding(&mut self, entity_to_ride: &SharedEntity) -> bool {
         let Some(world) = self.level() else {
             return false;
         };
@@ -1357,7 +1357,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Applies vanilla below-world handling.
-    fn check_below_world(&self) {
+    fn check_below_world(&mut self) {
         let Some(world) = self.level() else {
             return;
         };
@@ -1368,7 +1368,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Runs entity-specific behavior after falling below the world.
-    fn on_below_world(&self) {
+    fn on_below_world(&mut self) {
         self.set_removed(RemovalReason::Discarded);
     }
 
@@ -1514,7 +1514,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     fn notify_leashee_removed(&self, _leashable: &dyn Entity) {}
 
     /// Called when a player touches this entity during nearby pickup processing.
-    fn player_touch(&mut self, _player: &Arc<SyncMutex<Player>>) {}
+    fn player_touch(&mut self, _player: &mut Player) {}
 
     /// Finds leashable mobs in vanilla's nearby leash scan whose holder is this entity.
     fn leashables_leashed_to(&self) -> Vec<SharedEntity> {
@@ -1668,7 +1668,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Handles vanilla entity right-click interaction.
     fn interact(
         &mut self,
-        player: &Player,
+        player: &mut Player,
         hand: InteractionHand,
         location: DVec3,
     ) -> InteractionResult {
@@ -2432,7 +2432,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Applies vanilla fall damage. Base entities only propagate to passengers.
     fn cause_fall_damage(
-        &self,
+        &mut self,
         fall_distance: f64,
         damage_modifier: f32,
         source: &DamageSource,
@@ -3457,7 +3457,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Applies vanilla fall-distance bookkeeping after accepted movement.
-    fn apply_fall_damage_after_move(&self, result: &MoveResult, world: &Arc<World>) -> bool {
+    fn apply_fall_damage_after_move(&mut self, result: &MoveResult, world: &Arc<World>) -> bool {
         self.do_check_fall_damage(result.actual_movement, result.on_ground, world)
     }
 
@@ -3485,7 +3485,12 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Mirrors vanilla `Entity.doCheckFallDamage`.
     ///
     /// Callers update on-ground/supporting-block state before this method.
-    fn do_check_fall_damage(&self, movement: DVec3, on_ground: bool, world: &Arc<World>) -> bool {
+    fn do_check_fall_damage(
+        &mut self,
+        movement: DVec3,
+        on_ground: bool,
+        world: &Arc<World>,
+    ) -> bool {
         let Some(effect_pos) = self.on_pos_legacy() else {
             return false;
         };
@@ -3502,7 +3507,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Mirrors vanilla `Entity.checkFallDamage`.
     fn check_fall_damage(
-        &self,
+        &mut self,
         vertical_movement: f64,
         on_ground: bool,
         on_state: BlockStateId,
@@ -3674,7 +3679,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     ///
     /// The default implementation logs a warning — non-player entity teleportation
     /// is not yet implemented. Override in entity types that support it.
-    fn change_world(&self, _teleport_transition: &TeleportTransition) {
+    fn change_world(&mut self, _teleport_transition: &TeleportTransition) {
         log::warn!(
             "change_world called on entity {} which does not implement world changes",
             self.id(),
@@ -5204,6 +5209,7 @@ pub trait LivingEntity: Entity {
             && let Some(controller_entity) = self.controlling_passenger()
             && let Some(controller) = controller_entity.player()
         {
+            let controller = controller.lock();
             return self.travel_ridden(&controller, input);
         }
 
@@ -6173,6 +6179,10 @@ mod tests {
             Some(self)
         }
 
+        fn as_living_entity_mut(&mut self) -> Option<&mut dyn LivingEntity> {
+            Some(self)
+        }
+
         fn is_vehicle(&self) -> bool {
             self.vehicle
         }
@@ -6187,6 +6197,10 @@ mod tests {
 
         fn synced_data(&self) -> Option<&dyn EntitySyncedData> {
             Some(&self.entity_data)
+        }
+
+        fn synced_data_mut(&mut self) -> Option<&mut dyn EntitySyncedData> {
+            Some(&mut self.entity_data)
         }
     }
 
@@ -7307,7 +7321,7 @@ mod tests {
     fn default_below_world_hook_discards_entity() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
-        entity.with_entity_ref(|e| e.on_below_world());
+        entity.with_entity(|e| e.on_below_world());
 
         assert!(entity.is_removed());
     }

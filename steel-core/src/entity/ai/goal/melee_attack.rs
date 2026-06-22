@@ -235,7 +235,7 @@ impl Goal for MeleeAttackGoal {
 fn is_no_creative_or_spectator(entity: &SharedEntity) -> bool {
     !entity
         .player()
-        .is_some_and(|player| entity.is_spectator() || player.has_infinite_materials())
+        .is_some_and(|player| entity.is_spectator() || player.lock().has_infinite_materials())
 }
 
 #[cfg(test)]

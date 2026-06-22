@@ -186,7 +186,8 @@ impl PlayerDataStorage {
     pub async fn save_all(&self, players: &[Arc<SyncMutex<Player>>]) -> io::Result<usize> {
         let mut saved = 0;
         for player in players {
-            match self.save(player).await {
+            let player = player.lock();
+            match self.save(&player).await {
                 Ok(()) => saved += 1,
                 Err(e) => {
                     log::error!("Failed to save player {}: {e}", player.gameprofile.id);

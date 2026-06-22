@@ -261,7 +261,7 @@ pub enum FoodTickResult {
 
 impl Player {
     /// Ticks food/hunger regeneration and starvation.
-    pub(super) fn tick_regeneration(&self) {
+    pub(super) fn tick_regeneration(&mut self) {
         let world = self.get_world();
         let difficulty = world.level_data.read().data().difficulty;
         let natural_regen =

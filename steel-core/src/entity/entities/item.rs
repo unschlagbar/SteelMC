@@ -229,20 +229,6 @@ impl ItemEntity {
         )
     }
 
-    /// Creates an item entity from saved data with restored base state.
-    ///
-    /// Used when loading entities from disk. Type-specific data (item, age, etc.)
-    /// is restored via `load_additional()` after this constructor.
-    #[must_use]
-    pub fn from_saved(entity_type: EntityTypeRef, load: EntityBaseLoad) -> Self {
-        Self {
-            base: EntityBase::from_load(load, entity_type.dimensions),
-            entity_type,
-            entity_data: SyncMutex::new(ItemEntityData::new()),
-            item_state: SyncMutex::new(ItemEntityState::new()),
-        }
-    }
-
     // === Item Access ===
 
     /// Gets a clone of the item stack.
@@ -348,7 +334,7 @@ impl ItemEntity {
     /// `false` if pickup failed or was only partial.
     ///
     /// Mirrors vanilla's `ItemEntity.playerTouch(Player)`.
-    pub fn try_pickup(&mut self, player: &Arc<SyncMutex<Player>>) -> bool {
+    pub fn try_pickup(&mut self, player: &mut Player) -> bool {
         // Check pickup delay
         if self.has_pickup_delay() {
             return false;
@@ -726,7 +712,7 @@ impl Entity for ItemEntity {
         Some(self)
     }
 
-    fn player_touch(&mut self, player: &Arc<SyncMutex<Player>>) {
+    fn player_touch(&mut self, player: &mut Player) {
         self.try_pickup(player);
     }
 

@@ -1,12 +1,12 @@
 //! Player inventory management.
 
 use std::{
-use steel_utils::locks::SyncMutex;
     array,
     f32::consts::TAU,
     mem,
     sync::{LazyLock, Weak},
 };
+use steel_utils::locks::SyncMutex;
 
 use glam::DVec3;
 use steel_protocol::packets::game::{
@@ -658,6 +658,7 @@ impl PlayerInventory {
         let Some(player) = self.player.upgrade() else {
             return;
         };
+        let player = player.lock();
         player.refresh_equipment_attribute_modifiers_from_stack(
             slot,
             self.get_equipment_slot_item(slot),
@@ -722,7 +723,7 @@ impl Player {
     /// Mirrors vanilla's `Player.aiStep()` item pickup logic:
     /// - Calculates pickup area as bounding box inflated by (1.0, 0.5, 1.0)
     /// - Calls `playerTouch()` on each entity in range
-    pub(super) fn touch_nearby_items(&self) {
+    pub(super) fn touch_nearby_items(&mut self) {
         if self.game_mode() == GameType::Spectator {
             return;
         }
@@ -730,17 +731,16 @@ impl Player {
         let pickup_area = self.bounding_box().inflate_xyz(1.0, 0.5, 1.0);
         let world = self.get_world();
         let entities = world.get_entities_in_aabb(&pickup_area);
-
-        let Some(player_arc) = world.players.get_by_entity_id(self.id()) else {
-            return;
-        };
+        let self_id = self.id();
 
         for entity in entities {
-            if entity.id() == self.id() || entity.is_removed() {
+            if entity.id() == self_id || entity.is_removed() {
                 continue;
             }
 
-            entity.player_touch(&player_arc);
+            // `self` is borrowed mutably and passed straight through to the touched
+            // entity (locked via `with_entity`) — no Arc, no relock of this player.
+            entity.player_touch(self);
         }
     }
 
@@ -789,7 +789,7 @@ impl Player {
     fn process_container_click(&self, menu: &mut dyn Menu, packet: SContainerClick) {
         if self.game_mode() == GameType::Spectator {
             menu.behavior_mut()
-                .send_all_data_to_remote(&self.connection);
+                .send_all_data_to_remote(&self.connection());
             return;
         }
 
@@ -832,9 +832,9 @@ impl Player {
         menu.behavior_mut().resume_remote_updates();
 
         if full_resync_needed {
-            menu.behavior_mut().broadcast_full_state(&self.connection);
+            menu.behavior_mut().broadcast_full_state(&self.connection());
         } else {
-            menu.behavior_mut().broadcast_changes(&self.connection);
+            menu.behavior_mut().broadcast_changes(&self.connection());
         }
     }
 
@@ -902,7 +902,7 @@ impl Player {
             }
             menu.behavior_mut()
                 .set_remote_slot_known(slot_index, &item_stack);
-            menu.behavior_mut().broadcast_changes(&self.connection);
+            menu.behavior_mut().broadcast_changes(&self.connection());
         } else if drop && valid_data {
             // TODO: Implement drop spam throttling
             // For now, just drop the item
@@ -938,7 +938,7 @@ impl Player {
         self.inventory_menu
             .lock()
             .behavior_mut()
-            .send_all_data_to_remote(&self.connection);
+            .send_all_data_to_remote(&self.connection());
     }
 
     /// Generates the next container ID (1-100, wrapping around).
@@ -967,7 +967,7 @@ impl Player {
         });
 
         menu.behavior_mut()
-            .send_all_data_to_remote(&self.connection);
+            .send_all_data_to_remote(&self.connection());
 
         *self.open_menu.lock() = Some(menu);
     }
@@ -1014,13 +1014,13 @@ impl Player {
     pub fn broadcast_inventory_changes(&self) {
         let mut open_menu = self.open_menu.lock();
         if let Some(ref mut menu) = *open_menu {
-            menu.behavior_mut().broadcast_changes(&self.connection);
+            menu.behavior_mut().broadcast_changes(&self.connection());
         } else {
             drop(open_menu);
             self.inventory_menu
                 .lock()
                 .behavior_mut()
-                .broadcast_changes(&self.connection);
+                .broadcast_changes(&self.connection());
         }
     }
 

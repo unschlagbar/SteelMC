@@ -1,6 +1,8 @@
 use std::fmt;
 use std::ops::BitOr;
 
+use steel_utils::locks::SyncMutex;
+
 use crate::entity::PathfinderMob;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +328,39 @@ impl Default for GoalSelector {
     }
 }
 
+/// Ticks a goal selector against the mob it belongs to.
+///
+/// The selector tick needs `&mut mob`, but the selector mutex lives *inside*
+/// `mob` (e.g. `mob.mob_base().goal_selector()`), so the natural
+/// `mob.mob_base().goal_selector().lock().tick(mob)` is rejected: the lock
+/// guard borrows `mob` immutably for as long as it lives, which conflicts with
+/// passing `&mut mob` to the goals. Callers therefore pass the selector as a
+/// raw pointer (obtained *before* taking the `&mut mob` borrow), which detaches
+/// the guard's lifetime from `mob`.
+///
+/// # Safety
+/// `selector` must point to a live `SyncMutex<GoalSelector>` that stays valid
+/// for the duration of the call — in practice one stored inside `mob`, which is
+/// borrowed for the whole call so it cannot be moved or dropped. The mutex is
+/// locked for the entire tick, so goals invoked with `&mut mob` must not re-lock
+/// this same selector (that would deadlock, exactly as a nested lock would
+/// anywhere else).
+pub(crate) unsafe fn tick_goal_selector_with_mob(
+    selector: *const SyncMutex<GoalSelector>,
+    mob: &mut dyn PathfinderMob,
+    running_goals_only: bool,
+) {
+    // SAFETY: the caller guarantees `selector` is valid for this call. Going
+    // through the raw pointer (rather than a `&mob`-derived reference) is what
+    // lets the guard coexist with the `&mut mob` argument.
+    let mut guard = unsafe { (*selector).lock() };
+    if running_goals_only {
+        guard.tick_running_goals(mob, false);
+    } else {
+        guard.tick(mob);
+    }
+}
+
 impl fmt::Debug for GoalSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GoalSelector")
@@ -604,7 +639,10 @@ mod tests {
 
         assert!(!mob.is_panicking());
 
-        mob.mob_base().goal_selector().lock().tick(&mut mob);
+        let selector = mob.mob_base().goal_selector() as *const _;
+        // SAFETY: `selector` points to the goal selector owned by `mob`, which
+        // lives for the whole call.
+        unsafe { super::tick_goal_selector_with_mob(selector, &mut mob, false) };
 
         assert!(
             mob.mob_base()

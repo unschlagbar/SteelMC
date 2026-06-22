@@ -14,7 +14,9 @@
 use std::sync::{Arc, Weak};
 
 use arc_swap::ArcSwap;
-use steel_protocol::utils::RawPacket;
+use steel_protocol::packet_traits::{ClientPacket, EncodedPacket};
+use steel_protocol::utils::{ConnectionProtocol, RawPacket};
+use steel_utils::ChunkPos;
 use steel_utils::locks::SyncMutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -22,12 +24,15 @@ use crate::chunk::player_chunk_view::PlayerChunkView;
 use crate::config::RuntimeConfig;
 use crate::player::chat_state::ChatState;
 use crate::player::chunk_sender::ChunkSender;
+use crate::player::connection::NetworkConnection as _;
 use crate::player::lifecycle_state::PlayerLifecycleState;
+use crate::player::networking::BundleBuilder;
 use crate::player::teleport_state::TeleportState;
 use crate::player::tick_state::PlayerTickState;
 use crate::player::view::PlayerView;
-use crate::player::{ClientInformation, Player, PlayerConnection};
+use crate::player::{ClientInformation, GameProfile, Player, PlayerConnection};
 use crate::server::Server;
+use crate::world::World;
 
 /// The server-side player session: network + session state plus the entity ref.
 pub struct ServerPlayer {
@@ -44,7 +49,7 @@ pub struct ServerPlayer {
 
     /// Inbound game-state packets queued by the connection listener, drained and
     /// applied on the game tick so game state is only mutated by one thread.
-    inbound_rx: SyncMutex<UnboundedReceiver<RawPacket>>,
+    pub(crate) inbound_rx: SyncMutex<UnboundedReceiver<RawPacket>>,
 
     /// Lock-free published view of cross-loop state (chunk position, send epoch).
     pub view: Arc<PlayerView>,
@@ -59,25 +64,99 @@ pub struct ServerPlayer {
     pub last_tracking_view: SyncMutex<Option<PlayerChunkView>>,
 
     /// The client's settings/information (language, view distance, chat, etc.).
-    client_information: SyncMutex<ClientInformation>,
+    pub(crate) client_information: SyncMutex<ClientInformation>,
 
     /// Client lifecycle flags.
-    lifecycle: SyncMutex<PlayerLifecycleState>,
+    pub(crate) lifecycle: SyncMutex<PlayerLifecycleState>,
 
     /// Pending server-initiated teleport state (ID, position, timeout).
-    teleport_state: SyncMutex<TeleportState>,
+    pub(crate) teleport_state: SyncMutex<TeleportState>,
 
     /// Local tick and once-per-tick packet state.
-    tick_state: SyncMutex<PlayerTickState>,
+    pub(crate) tick_state: SyncMutex<PlayerTickState>,
 
-    /// World the player's view is being kept for (ArcSwap for lock-free reads).
-    pub world: ArcSwap<crate::world::World>,
+    /// World the player's view is being kept for (`ArcSwap` for lock-free reads).
+    pub world: ArcSwap<World>,
 }
 
 impl ServerPlayer {
+    /// Creates the server-side session and its locked [`Player`] entity.
+    ///
+    /// Must be called inside `Arc::new_cyclic` so the entity and connection can
+    /// hold a [`Weak<ServerPlayer>`] back reference. The `connection` is built by
+    /// the caller (it needs login-specific transport state) already wired to
+    /// `sp_weak`.
+    #[expect(clippy::too_many_arguments, reason = "session construction is wide")]
+    #[must_use]
+    pub fn new(
+        sp_weak: &Weak<ServerPlayer>,
+        gameprofile: GameProfile,
+        connection: Arc<PlayerConnection>,
+        world: Arc<World>,
+        server: Weak<Server>,
+        config: Arc<RuntimeConfig>,
+        entity_id: i32,
+        client_information: ClientInformation,
+        inbound_rx: UnboundedReceiver<RawPacket>,
+    ) -> Self {
+        let entity = Arc::new_cyclic(|entity_weak| {
+            SyncMutex::new(Player::new(
+                gameprofile,
+                &world,
+                entity_id,
+                entity_weak,
+                sp_weak.clone(),
+            ))
+        });
+
+        Self {
+            connection,
+            server,
+            config,
+            entity,
+            inbound_rx: SyncMutex::new(inbound_rx),
+            view: Arc::new(PlayerView::new(ChunkPos::new(0, 0))),
+            chat: SyncMutex::new(ChatState::new()),
+            chunk_sender: Arc::new(SyncMutex::new(ChunkSender::default())),
+            last_tracking_view: SyncMutex::new(None),
+            client_information: SyncMutex::new(client_information),
+            lifecycle: SyncMutex::new(PlayerLifecycleState::default()),
+            teleport_state: SyncMutex::new(TeleportState::new()),
+            tick_state: SyncMutex::new(PlayerTickState::new()),
+            world: ArcSwap::new(world),
+        }
+    }
+
     /// Returns the locked game entity for this player.
     #[must_use]
     pub fn entity(&self) -> &Arc<SyncMutex<Player>> {
         &self.entity
+    }
+
+    /// Sends a packet to the player's connection (lock-free; no entity lock).
+    ///
+    /// # Panics
+    /// Panics if the packet fails to encode.
+    pub fn send_packet<P: ClientPacket>(&self, packet: P) {
+        let encoded = EncodedPacket::from_bare(
+            packet,
+            self.connection.compression(),
+            ConnectionProtocol::Play,
+        )
+        .expect("Failed to encode packet");
+        self.connection.send_encoded(encoded);
+    }
+
+    /// Sends multiple packets as an atomic bundle.
+    pub fn send_bundle<F>(&self, f: F)
+    where
+        F: FnOnce(&mut BundleBuilder),
+    {
+        let mut builder = BundleBuilder::new(self.connection.compression());
+        f(&mut builder);
+        let packets = builder.into_packets();
+        if !packets.is_empty() {
+            self.connection.send_encoded_bundle(packets);
+        }
     }
 }

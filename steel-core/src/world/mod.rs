@@ -91,7 +91,7 @@ use crate::{
     },
     fluid::{FluidStateExt as _, fluid_state_to_block},
     level_data::{LevelDataManager, WorldBorderData, WorldGenerationSettings},
-    player::{LastSeen, Player, connection::NetworkConnection},
+    player::{LastSeen, Player, ServerPlayer, connection::NetworkConnection},
     poi::PointOfInterestStorage,
 };
 
@@ -276,6 +276,14 @@ impl NavigatingMobTracker {
     fn track(&self, entity: &SharedEntity) {
         if entity.with_pathfinder_mob(|_| ()).is_some() {
             self.ids.lock().insert(entity.id());
+        }
+    }
+
+    /// Tracks (or skips) an entity whose pathfinder-mob status the caller already
+    /// determined from a locked entity, avoiding a re-lock of the behavior mutex.
+    fn track_known(&self, entity_id: i32, is_pathfinder_mob: bool) {
+        if is_pathfinder_mob {
+            self.ids.lock().insert(entity_id);
         }
     }
 
@@ -1160,32 +1168,34 @@ impl World {
                 self.untrack_navigating_mob(entity_id);
                 continue;
             };
-            {
-                let mut navigation = pathfinder.mob_base().navigation().lock();
-                navigation.invalidate_path_type(pos);
-            }
-            if !collision_shape_changed {
-                continue;
-            }
-            if !pathfinder.is_path_finding() {
-                continue;
-            }
+            entity.with_pathfinder_mob(|pathfinder| {
+                {
+                    let mut navigation = pathfinder.mob_base().navigation().lock();
+                    navigation.invalidate_path_type(pos);
+                }
+                if !collision_shape_changed {
+                    return;
+                }
+                if !pathfinder.is_path_finding() {
+                    return;
+                }
 
-            let should_recompute = {
-                let navigation = pathfinder.mob_base().navigation().lock();
-                navigation.should_recompute_path(pos, pathfinder.position())
-            };
-            if !should_recompute {
-                continue;
-            }
+                let should_recompute = {
+                    let navigation = pathfinder.mob_base().navigation().lock();
+                    navigation.should_recompute_path(pos, pathfinder.position())
+                };
+                if !should_recompute {
+                    return;
+                }
 
-            let request = {
-                let mut navigation = pathfinder.mob_base().navigation().lock();
-                navigation.request_recompute_path(game_time, pathfinder.can_update_path())
-            };
-            if let Some(request) = request {
-                pathfinder.recompute_path(request);
-            }
+                let request = {
+                    let mut navigation = pathfinder.mob_base().navigation().lock();
+                    navigation.request_recompute_path(game_time, pathfinder.can_update_path())
+                };
+                if let Some(request) = request {
+                    pathfinder.recompute_path(request);
+                }
+            });
         }
     }
 
@@ -1407,15 +1417,19 @@ impl World {
             let _span = tracing::trace_span!("player_tick").entered();
             let start = Instant::now();
             self.players.iter_players(|_uuid, player| {
-                player.drain_inbound();
-                player.tick();
-                if runs_normally && !player.is_passenger() {
-                    let dirty_chunks = self.entity_manager.tick_vehicle_passengers_for_root(
-                        player.as_ref(),
-                        &tickable_entity_chunk_set,
-                    );
-                    for chunk in dirty_chunks {
-                        self.mark_chunk_dirty(chunk);
+                ServerPlayer::drain_inbound(player);
+                player.entity().lock().tick();
+                if runs_normally {
+                    let player_guard = player.entity().lock();
+                    if !player_guard.is_passenger() {
+                        let dirty_chunks = self.entity_manager.tick_vehicle_passengers_for_root(
+                            &*player_guard,
+                            &tickable_entity_chunk_set,
+                        );
+                        drop(player_guard);
+                        for chunk in dirty_chunks {
+                            self.mark_chunk_dirty(chunk);
+                        }
                     }
                 }
                 true
@@ -1427,7 +1441,7 @@ impl World {
             let _span = tracing::trace_span!("entity_tracker_send_changes").entered();
             self.entity_tracker.send_changes(
                 |chunk| self.player_area_map.get_tracking_players(chunk),
-                |player_id| self.players.get_by_entity_id(player_id),
+                |player_id| self.players.get_by_entity_id(player_id).map(|sp| Arc::clone(sp.entity())),
                 EntityChangeSenders {
                     movement: |entity_id, packet| {
                         self.broadcast_movement_sync_to_entity_trackers(entity_id, packet, None);
@@ -2006,6 +2020,10 @@ impl World {
         );
 
         self.players.iter_players(|_, recipient| {
+            // The sender's lock is already released (see `Player::handle_chat`), so
+            // locking each recipient here — including the sender — is deadlock-free.
+            let sp = recipient;
+            let recipient = sp.entity().lock();
             let messages_received = recipient.get_and_increment_messages_received();
             packet.global_index = messages_received;
 
@@ -2019,7 +2037,7 @@ impl World {
             // IMPORTANT: Index previous messages BEFORE updating the cache
             // This matches vanilla's order: pack() then push()
             let previous_messages = {
-                let chat = recipient.chat.lock();
+                let chat = sp.chat.lock();
                 chat.signature_cache
                     .index_previous_messages(&sender_last_seen)
             };
@@ -2037,7 +2055,7 @@ impl World {
             // AFTER sending, update the recipient's cache using vanilla's push algorithm
             // This adds all lastSeen signatures + current signature to the cache
             {
-                let mut chat = recipient.chat.lock();
+                let mut chat = sp.chat.lock();
                 if let Some(signature) = message_signature {
                     chat.signature_cache
                         .push(&sender_last_seen, Some(signature));
@@ -2089,7 +2107,7 @@ impl World {
     pub fn broadcast_to_all_with<P: ClientPacket, F: Fn(&Player) -> P>(&self, packet: F) {
         self.players.iter_players(|_, player| {
             let Ok(encoded) = EncodedPacket::from_bare(
-                packet(player),
+                packet(&player.entity().lock()),
                 self.compression,
                 ConnectionProtocol::Play,
             ) else {
@@ -2111,7 +2129,7 @@ impl World {
     /// Broadcasts an already-encoded packet to all players except one.
     pub fn broadcast_to_all_encoded_except(&self, packet: EncodedPacket, exclude: i32) {
         self.players.iter_players(|_, player| {
-            if player.id() != exclude {
+            if player.entity().lock().id() != exclude {
                 player.connection.send_encoded(packet.clone());
             }
             true
@@ -2121,6 +2139,7 @@ impl World {
     /// Broadcasts an unsigned player chat message to all players.
     pub fn broadcast_unsigned_chat(&self, mut packet: CPlayerChat) {
         self.players.iter_players(|_, recipient| {
+            let recipient = recipient.entity().lock();
             let messages_received = recipient.get_and_increment_messages_received();
             packet.global_index = messages_received;
 
@@ -3027,7 +3046,7 @@ impl World {
                 continue;
             }
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.position();
+                let player_pos = player.entity().lock().position();
                 let dx = player_pos.x - event_pos.0;
                 let dy = player_pos.y - event_pos.1;
                 let dz = player_pos.z - event_pos.2;
@@ -3209,7 +3228,7 @@ impl World {
 
         for entity_id in self.player_area_map.get_tracking_players(chunk) {
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.position();
+                let player_pos = player.entity().lock().position();
                 let dx = player_pos.x - event_pos.0;
                 let dy = player_pos.y - event_pos.1;
                 let dz = player_pos.z - event_pos.2;
@@ -3293,7 +3312,7 @@ impl World {
                 continue;
             }
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.position();
+                let player_pos = player.entity().lock().position();
                 let dx = player_pos.x - pos.x;
                 let dy = player_pos.y - pos.y;
                 let dz = player_pos.z - pos.z;
@@ -3357,18 +3376,31 @@ impl World {
         entity: &SharedEntity,
         locked_entity: Option<&mut dyn crate::entity::Entity>,
     ) {
+        // Resolve pathfinder-mob status with a shared borrow before handing the locked
+        // entity to the tracker by value, so neither path re-locks the behavior mutex
+        // when the caller already holds it (e.g. player registration).
+        let pathfinder_known = locked_entity
+            .as_ref()
+            .map(|e| e.as_pathfinder_mob().is_some());
+
         self.entity_tracker.add(
             entity,
             locked_entity,
             |chunk| self.player_area_map.get_tracking_players(chunk),
-            |id| self.players.get_by_entity_id(id),
+            |id| self.players.get_by_entity_id(id).map(|sp| Arc::clone(sp.entity())),
         );
-        self.track_navigating_mob(entity);
+
+        match pathfinder_known {
+            Some(is_pathfinder_mob) => {
+                self.navigating_mobs.track_known(entity.id(), is_pathfinder_mob);
+            }
+            None => self.track_navigating_mob(entity),
+        }
     }
 
     pub(crate) fn remove_entity_from_tracker(&self, entity_id: i32) {
         self.entity_tracker.remove(entity_id, |player_id| {
-            self.players.get_by_entity_id(player_id)
+            self.players.get_by_entity_id(player_id).map(|sp| Arc::clone(sp.entity()))
         });
         self.untrack_navigating_mob(entity_id);
     }
@@ -3771,14 +3803,15 @@ impl World {
         let max_distance_sqr = max_distance * max_distance;
         let mut nearest: Option<(Arc<SyncMutex<Player>>, f64)> = None;
         self.players.iter_players(|_, player| {
-            if predicate(player) {
-                let distance_sqr = player.position().distance_squared(position);
+            let guard = player.entity().lock();
+            if predicate(&guard) {
+                let distance_sqr = guard.position().distance_squared(position);
                 if nearest_player_distance_in_range(distance_sqr, max_distance, max_distance_sqr)
                     && nearest
                         .as_ref()
                         .is_none_or(|(_, current)| distance_sqr < *current)
                 {
-                    nearest = Some((player.clone(), distance_sqr));
+                    nearest = Some((Arc::clone(player.entity()), distance_sqr));
                 }
             }
             true
@@ -3791,6 +3824,7 @@ impl World {
     pub fn nearest_player_distance_sqr(&self, position: DVec3) -> Option<f64> {
         let mut nearest = None;
         self.players.iter_players(|_, player| {
+            let player = player.entity().lock();
             if player.is_spectator() {
                 return true;
             }

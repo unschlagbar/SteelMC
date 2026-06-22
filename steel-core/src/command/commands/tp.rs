@@ -19,7 +19,10 @@ use crate::{
 };
 
 type MultipleRotationArgs = ((((), Vec<Arc<SyncMutex<Player>>>), DVec3), (f32, f32));
-type MultipleEntityArgs = (((), Vec<Arc<SyncMutex<Player>>>), Vec<Arc<SyncMutex<Player>>>);
+type MultipleEntityArgs = (
+    ((), Vec<Arc<SyncMutex<Player>>>),
+    Vec<Arc<SyncMutex<Player>>>,
+);
 
 /// Handler for the "teleport" command.
 #[must_use]
@@ -99,7 +102,14 @@ fn teleport_to_pos(
 
     let targets = current_players(targets, ctx)?;
     for player in &targets {
-        teleport_player(&player.lock(), pos.x, pos.y, pos.z, rotation.0, rotation.1)?;
+        teleport_player(
+            &mut player.lock(),
+            pos.x,
+            pos.y,
+            pos.z,
+            rotation.0,
+            rotation.1,
+        )?;
     }
 
     if let [target] = targets.as_slice() {
@@ -147,7 +157,7 @@ fn teleport_to_player(
 
     let targets = current_players(targets, ctx)?;
     for player in &targets {
-        teleport_player(&player.lock(), pos.x, pos.y, pos.z, yaw, pitch)?;
+        teleport_player(&mut player.lock(), pos.x, pos.y, pos.z, yaw, pitch)?;
     }
 
     if let [target] = targets.as_slice() {
@@ -204,7 +214,7 @@ fn no_player_found() -> CommandError {
 }
 
 fn teleport_player(
-    player: &Player,
+    player: &mut Player,
     x: f64,
     y: f64,
     z: f64,

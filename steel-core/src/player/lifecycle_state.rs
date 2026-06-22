@@ -1,6 +1,6 @@
 /// Client lifecycle flags that gate gameplay packet handling.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct PlayerLifecycleState {
+pub(crate) struct PlayerLifecycleState {
     joined_world: bool,
     pending_client_loaded: bool,
     client_loaded_timeout: i32,

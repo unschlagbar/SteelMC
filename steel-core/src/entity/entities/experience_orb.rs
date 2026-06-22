@@ -320,9 +320,12 @@ impl ExperienceOrbEntity {
             .state
             .lock()
             .following_player_id
-            .and_then(|id| world.players.get_by_entity_id(id));
+            .and_then(|id| world.players.get_by_entity_id(id))
+            .map(|sp| Arc::clone(sp.entity()));
 
         let should_refresh = current.as_ref().is_none_or(|player| {
+            let player = player.lock();
+
             player.is_spectator()
                 || player.is_dead_or_dying()
                 || player.position().distance_squared(self.position()) > MAX_FOLLOW_DIST_SQR
@@ -332,7 +335,8 @@ impl ExperienceOrbEntity {
             let nearest = world.nearest_player(self.position(), MAX_FOLLOW_DIST, |player| {
                 !player.is_spectator() && !player.is_dead_or_dying()
             });
-            self.state.lock().following_player_id = nearest.as_ref().map(|player| player.id());
+            self.state.lock().following_player_id =
+                nearest.as_ref().map(|player| player.lock().id());
             nearest
         } else {
             current
@@ -341,6 +345,7 @@ impl ExperienceOrbEntity {
         let Some(player) = following else {
             return;
         };
+        let player = player.lock();
 
         let player_pos = player.position();
         let delta = DVec3::new(
@@ -387,7 +392,7 @@ impl ExperienceOrbEntity {
     }
 
     /// Attempts to have a player pick up this experience orb.
-    pub fn try_pickup(&self, player: &Arc<SyncMutex<Player>>) -> bool {
+    pub fn try_pickup(&self, player: &mut Player) -> bool {
         if player.take_xp_delay() != 0 {
             return false;
         }
@@ -523,7 +528,7 @@ impl Entity for ExperienceOrbEntity {
         Some(self)
     }
 
-    fn player_touch(&mut self, player: &Arc<SyncMutex<Player>>) {
+    fn player_touch(&mut self, player: &mut Player) {
         self.try_pickup(player);
     }
 

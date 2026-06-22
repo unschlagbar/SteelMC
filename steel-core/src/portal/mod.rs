@@ -16,6 +16,7 @@ pub mod portal_shape;
 /// Vanilla names loaded worlds "dimensions" in packets and saves. Steel uses
 /// "world" for runtime loaded world instances, reserving "dimension type" for
 /// the vanilla registry entry that defines height, skylight, ceiling, etc.
+#[derive(Clone)]
 pub struct TeleportTransition {
     /// The target world to teleport into.
     pub target_world: Arc<World>,

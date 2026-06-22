@@ -38,7 +38,7 @@ use crate::command::commands::gamemode::get_gamemode_translation;
 use crate::enchantment_helper::{self, EnchantmentDamageContext, EnchantmentPostAttackContext};
 use crate::entity::attribute::{AttributeModifier, AttributeModifierOperation};
 use crate::entity::damage::DamageSource;
-use crate::entity::{Entity, EntityBase, LivingEntity, SharedEntity};
+use crate::entity::{Entity, LivingEntity, SharedEntity};
 use crate::inventory::equipment::EquipmentSlot;
 use crate::inventory::menu::Menu;
 use crate::player::Player;
@@ -352,7 +352,7 @@ impl Player {
 
     /// Ticks vanilla attack-strength recovery and resets it on main-hand item changes.
     pub(super) fn tick_attack_strength(&self) {
-        self.tick_state.lock().advance_attack_strength_ticker();
+        self.server_player().tick_state.lock().advance_attack_strength_ticker();
 
         let main_hand_item = {
             let inventory = self.inventory.lock();
@@ -373,7 +373,7 @@ impl Player {
     }
 
     fn reset_attack_strength_ticker(&self) {
-        self.tick_state.lock().reset_attack_strength_ticker();
+        self.server_player().tick_state.lock().reset_attack_strength_ticker();
     }
 
     fn current_item_attack_strength_delay(&self) -> f32 {
@@ -400,7 +400,7 @@ impl Player {
         partial_tick: f32,
         attack_strength_delay: f32,
     ) -> f32 {
-        let ticker = self.tick_state.lock().attack_strength_ticker() as f32;
+        let ticker = self.server_player().tick_state.lock().attack_strength_ticker() as f32;
         ((ticker + partial_tick) / attack_strength_delay).clamp(0.0, 1.0)
     }
 
@@ -422,7 +422,7 @@ impl Player {
     }
 
     fn cause_extra_knockback(
-        &self,
+        &mut self,
         entity: &dyn Entity,
         knockback_amount: f64,
         old_movement: DVec3,
@@ -451,6 +451,7 @@ impl Player {
             && let Some(player) = self.get_world().players.get_by_entity_id(entity.id())
         {
             let velocity = entity.velocity();
+            let player = player.entity().lock();
             player.send_packet(CSetEntityMotion::new(
                 entity.id(),
                 velocity.x,
@@ -577,7 +578,7 @@ impl Player {
             && !self.is_passenger_of_same_vehicle(target)
     }
 
-    fn piercing_attack(&self, item_stack: &ItemStack, piercing_weapon: &PiercingWeapon) {
+    fn piercing_attack(&mut self, item_stack: &ItemStack, piercing_weapon: &PiercingWeapon) {
         let world = self.get_world();
         LivingEntity::refresh_equipment_attribute_modifiers(self, EquipmentSlot::MainHand);
         let base_damage = self
@@ -605,14 +606,15 @@ impl Player {
     }
 
     fn stab_attack(
-        &self,
+        &mut self,
         target: &SharedEntity,
         base_damage: f32,
         deals_damage: bool,
         deals_knockback: bool,
         dismounts: bool,
     ) -> bool {
-        let entity = target.as_ref();
+        let mut entity = target.lock_entity();
+        let entity = entity.get_mut();
         if self.cannot_attack(entity) {
             return false;
         }
@@ -676,8 +678,9 @@ impl Player {
     ///
     /// Returns `true` if the target accepted damage.
     #[must_use]
-    pub fn attack(&self, target: &SharedEntity) -> bool {
-        let entity = target.as_ref();
+    pub fn attack(&mut self, target: &SharedEntity) -> bool {
+        let mut entity = target.lock_entity();
+        let entity = entity.get_mut();
         if self.cannot_attack(entity) {
             return false;
         }
@@ -743,13 +746,11 @@ impl Player {
     }
 
     fn item_attack_interaction(
-        &self,
-        entity: &dyn Entity,
+        &mut self,
+        entity: &mut dyn Entity,
         damage_source: &DamageSource,
         apply_to_target: bool,
     ) {
-        let post_attack_context =
-            EnchantmentPostAttackContext::new(entity, Some(self), Some(self), damage_source);
         let (source_item, item_hurt_enemy) = {
             let mut inventory = self.inventory.lock();
             inventory.mutate_item_in_hand(InteractionHand::MainHand, |stack| {
@@ -764,12 +765,13 @@ impl Player {
                 (source_item, stack.get_weapon().is_some())
             })
         };
+        let mut post_attack_context =
+            EnchantmentPostAttackContext::new(entity, Some(self), None, damage_source, true);
 
         if apply_to_target {
             enchantment_helper::do_post_attack_effects_with_item_source(
-                entity,
                 &source_item,
-                &post_attack_context,
+                &mut post_attack_context,
             );
         }
 
@@ -796,11 +798,13 @@ impl Player {
 
     /// Interacts with an entity using the held item.
     pub fn interact_on(
-        &self,
+        &mut self,
         entity: SharedEntity,
         hand: InteractionHand,
         location: DVec3,
     ) -> InteractionResult {
+        let mut entity = entity.lock_entity();
+
         if self.is_spectator() {
             // TODO: Open entity menu providers in spectator once that foundation exists.
             return InteractionResult::Pass;
@@ -808,7 +812,7 @@ impl Player {
 
         let inventory_access = InventoryAccess::new(self.inventory.clone(), hand);
         let original_count = inventory_access.with_item(|item| item.count);
-        let result = entity.interact(self, hand, location);
+        let result = entity.get_mut().interact(self, hand, location);
 
         if self.has_infinite_materials() {
             inventory_access.with_item(|item| {
@@ -825,7 +829,7 @@ impl Player {
         if inventory_access.with_item(|item| item.is_empty()) {
             return InteractionResult::Pass;
         }
-        let Some(living_entity) = entity.as_living_entity() else {
+        let Some(living_entity) = entity.get().as_living_entity() else {
             return InteractionResult::Pass;
         };
         let result = living_entity.interact_living_entity_with_equippable(self, hand);
@@ -856,7 +860,7 @@ impl Player {
     }
 
     /// Handles a client request to attack an entity.
-    pub fn handle_attack(&self, packet: SAttack) {
+    pub fn handle_attack(&mut self, packet: SAttack) {
         if !self.has_client_loaded() || self.is_spectator() {
             return;
         }
@@ -916,7 +920,7 @@ impl Player {
         }
 
         let optimistic_strength = {
-            let ticker = self.tick_state.lock().attack_strength_ticker() + tolerance;
+            let ticker = self.server_player().tick_state.lock().attack_strength_ticker() + tolerance;
             ticker as f32 / self.current_item_attack_strength_delay()
         };
         optimistic_strength < required_strength
@@ -933,7 +937,7 @@ impl Player {
     }
 
     /// Handles a client request to interact with an entity.
-    pub fn handle_interact(&self, packet: SInteract) {
+    pub fn handle_interact(&mut self, packet: SInteract) {
         if !self.has_client_loaded() {
             return;
         }
@@ -961,7 +965,7 @@ impl Player {
             return;
         }
 
-        let result = self.interact_on(target.as_ref(), packet.hand, packet.location);
+        let result = self.interact_on(target, packet.hand, packet.location);
         if result.should_swing_server() {
             self.swing(packet.hand, true);
         }
@@ -1088,12 +1092,12 @@ impl Player {
     /// The ack is batched and sent once per tick (in `tick_ack_block_changes`),
     /// matching vanilla behavior.
     pub fn ack_block_changes_up_to(&self, sequence: i32) {
-        self.tick_state.lock().ack_block_changes_up_to(sequence);
+        self.server_player().tick_state.lock().ack_block_changes_up_to(sequence);
     }
 
     /// Sends pending block change ack if any. Called once per tick.
     pub(super) fn tick_ack_block_changes(&self) {
-        let sequence = self.tick_state.lock().take_ack_block_changes_up_to();
+        let sequence = self.server_player().tick_state.lock().take_ack_block_changes_up_to();
         if sequence > -1 {
             self.send_packet(CBlockChangedAck { sequence });
         }
@@ -1236,7 +1240,7 @@ impl Player {
     }
 
     /// Handles a player action packet (block breaking, item dropping, etc.).
-    pub fn handle_player_action(&self, packet: SPlayerAction) {
+    pub fn handle_player_action(&mut self, packet: SPlayerAction) {
         let world = self.get_world();
         match packet.action {
             PlayerAction::StartDestroyBlock => {
@@ -1390,7 +1394,7 @@ impl Player {
         self.inventory_menu
             .lock()
             .behavior_mut()
-            .broadcast_changes(&self.connection);
+            .broadcast_changes(&self.connection());
     }
 
     /// Handles a sign update packet from the client.

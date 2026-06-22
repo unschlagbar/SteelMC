@@ -1315,25 +1315,23 @@ mod tests {
     }
 
     struct DespawnOnCheckTestEntity {
-        base: EntityBase,
+        base: Weak<EntityBase>,
     }
 
     impl DespawnOnCheckTestEntity {
-        fn shared(id: i32, uuid: Uuid, position: DVec3) -> SharedEntity {
-            Arc::new(Self {
-                base: EntityBase::with_uuid(
-                    id,
-                    uuid,
-                    position,
-                    vanilla_entities::ITEM.dimensions,
-                    Weak::new(),
-                ),
-            })
+        fn shared(id: i32, position: DVec3) -> SharedEntity {
+            EntityBase::pack_with(
+                id,
+                position,
+                vanilla_entities::ITEM.dimensions,
+                Weak::new(),
+                |base| Self { base },
+            )
         }
     }
 
     impl Entity for DespawnOnCheckTestEntity {
-        fn base(&self) -> &EntityBase {
+        fn base_weak(&self) -> &Weak<EntityBase> {
             &self.base
         }
 
@@ -2350,8 +2348,7 @@ mod tests {
         load_chunk(&manager, tickable_chunk);
         load_chunk(&manager, non_tickable_chunk);
 
-        let entity =
-            DespawnOnCheckTestEntity::shared(1, Uuid::from_u128(1), DVec3::new(17.0, 64.0, 1.0));
+        let entity = DespawnOnCheckTestEntity::shared(1, DVec3::new(17.0, 64.0, 1.0));
         assert!(
             manager
                 .add_live_entity(entity.clone(), EntityOwnership::ManagerOwned)

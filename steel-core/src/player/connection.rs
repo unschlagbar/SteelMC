@@ -103,13 +103,11 @@ impl Player {
     ///
     /// Panics if the packet fails to encode.
     pub fn send_packet<P: ClientPacket>(&self, packet: P) {
-        let encoded = EncodedPacket::from_bare(
-            packet,
-            self.connection.compression(),
-            ConnectionProtocol::Play,
-        )
-        .expect("Failed to encode packet");
-        self.connection.send_encoded(encoded);
+        let connection = self.connection();
+        let encoded =
+            EncodedPacket::from_bare(packet, connection.compression(), ConnectionProtocol::Play)
+                .expect("Failed to encode packet");
+        connection.send_encoded(encoded);
     }
 
     /// Sends multiple packets as an atomic bundle.
@@ -121,17 +119,18 @@ impl Player {
     where
         F: FnOnce(&mut networking::BundleBuilder),
     {
-        let mut builder = networking::BundleBuilder::new(self.connection.compression());
+        let connection = self.connection();
+        let mut builder = networking::BundleBuilder::new(connection.compression());
         f(&mut builder);
         let packets = builder.into_packets();
         if !packets.is_empty() {
-            self.connection.send_encoded_bundle(packets);
+            connection.send_encoded_bundle(packets);
         }
     }
 
     /// Disconnects the player with a reason message.
     pub fn disconnect(&self, reason: impl Into<TextComponent>) {
-        self.connection.disconnect_with_reason(reason.into());
+        self.connection().disconnect_with_reason(reason.into());
     }
 
     /// Handles client information updates during play phase.
@@ -162,12 +161,12 @@ impl Player {
     /// Returns the player's client information settings.
     #[must_use]
     pub fn client_information(&self) -> ClientInformation {
-        self.client_information.lock().clone()
+        self.server_player().client_information.lock().clone()
     }
 
     /// Updates the player's client information settings.
     pub fn set_client_information(&self, info: ClientInformation) {
-        *self.client_information.lock() = info;
+        *self.server_player().client_information.lock() = info;
     }
 
     /// Returns the effective view distance for this player.
@@ -176,7 +175,8 @@ impl Player {
     /// the server's configured maximum view distance.
     #[must_use]
     pub fn view_distance(&self) -> u8 {
-        let client_view_distance = self.client_information.lock().view_distance;
-        client_view_distance.min(self.world.load().view_distance)
+        let sp = self.server_player();
+        let client_view_distance = sp.client_information.lock().view_distance;
+        client_view_distance.min(sp.world.load().view_distance)
     }
 }

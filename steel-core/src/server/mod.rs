@@ -25,7 +25,7 @@ use crate::player::chunk_sender::ChunkSender;
 use crate::player::connection::NetworkConnection;
 use crate::player::player_data::{PersistentPlayerData, PersistentRootVehicle};
 use crate::player::player_data_storage::{GlobalPlayerData, PlayerDataStorage};
-use crate::player::{Player, PlayerShared, ResetReason};
+use crate::player::{Player, ResetReason, ServerPlayer};
 use crate::portal::{TeleportTransition, WorldChangeRequest};
 use crate::server::jobs::{JobPoll, ServerJob, ServerJobContext, ServerJobQueue};
 use crate::server::registry_cache::RegistryCache;
@@ -67,7 +67,7 @@ const CHUNK_SENDING_TPS: u64 = 20;
 /// Tick rate for the chunk scheduling loop.
 const CHUNK_SCHEDULING_TPS: u64 = 20;
 
-fn apply_first_visit_defaults(player: &Arc<SyncMutex<Player>>, world: &Arc<World>) {
+fn apply_first_visit_defaults(player: &Player, world: &Arc<World>) {
     let spawn = world.level_data.read().data().spawn.clone();
     player.base().set_position_local(DVec3::new(
         f64::from(spawn.x),
@@ -131,15 +131,26 @@ enum DomainPlayerData {
 }
 
 struct DomainSwitchRequest {
-    player: Arc<SyncMutex<Player>>,
+    player: Arc<ServerPlayer>,
     target_domain: String,
     target_world: Option<Arc<World>>,
     restore_saved_location: bool,
 }
 
 struct PendingPlayerJoin {
-    player: Arc<SyncMutex<Player>>,
+    player: Arc<ServerPlayer>,
     state: Result<DomainPlayerState, String>,
+}
+
+/// A deferred player reset+spawn whose `reset`/`spawn` re-lock the player entity,
+/// so it must run at a tick safe point with the entity unlocked (vanilla recreates
+/// the `ServerPlayer` for these; we reuse the entity and reset it). Queued by
+/// `Player::respawn` / `Player::change_world` (both run under the entity lock).
+pub(crate) enum PlayerResetRequest {
+    /// Respawn after death in the same world.
+    Respawn(Arc<ServerPlayer>),
+    /// Cross-world teleport (portal / command).
+    WorldChange(Arc<ServerPlayer>, TeleportTransition),
 }
 
 struct PlayerJoinQueue {
@@ -202,11 +213,14 @@ impl RootVehicleRestoreJob {
 
 impl ServerJob for RootVehicleRestoreJob {
     fn poll(&mut self, _context: &mut ServerJobContext) -> JobPoll {
-        if self.player.connection.closed()
-            || !self.player.has_joined_world()
-            || !Arc::ptr_eq(&self.player.get_world(), &self.world)
         {
-            return JobPoll::Finished;
+            let player = self.player.lock();
+            if player.connection().closed()
+                || !player.has_joined_world()
+                || !Arc::ptr_eq(&player.get_world(), &self.world)
+            {
+                return JobPoll::Finished;
+            }
         }
 
         match self.request.poll() {
@@ -216,11 +230,12 @@ impl ServerJob for RootVehicleRestoreJob {
                 let Some(_ready) = self.request.ready_chunks() else {
                     return JobPoll::Pending;
                 };
-                if let Some(root_vehicle) = self.player.take_matching_pending_root_vehicle(
+                let taken = self.player.lock().take_matching_pending_root_vehicle(
                     &self.world,
                     self.attach,
                     self.root_uuid,
-                ) {
+                );
+                if let Some(root_vehicle) = taken {
                     restore_root_vehicle_for_player(&self.player, &self.world, root_vehicle);
                 }
                 JobPoll::Finished
@@ -262,7 +277,7 @@ fn restore_root_vehicle_for_player(
         ChunkStorage::persistent_to_entity_tree_at_level(&root_vehicle.entity, root_chunk, &level);
     if entities.is_empty() {
         tracing::warn!(
-            player = %player.gameprofile.name,
+            player = %player.lock().gameprofile.name,
             "Persisted RootVehicle did not recreate any runtime entities",
         );
         return;
@@ -275,7 +290,7 @@ fn restore_root_vehicle_for_player(
         .cloned()
     else {
         tracing::warn!(
-            player = %player.gameprofile.name,
+            player = %player.lock().gameprofile.name,
             attach = ?attach_uuid,
             "Discarding persisted RootVehicle because the attach entity is missing",
         );
@@ -285,7 +300,7 @@ fn restore_root_vehicle_for_player(
 
     if let Err(error) = world.register_loaded_entity_tree(&entities) {
         tracing::warn!(
-            player = %player.gameprofile.name,
+            player = %player.lock().gameprofile.name,
             attach = ?attach_uuid,
             root = ?Uuid::from_bytes(root_vehicle.entity.uuid),
             "Discarding persisted RootVehicle because its entity tree could not be registered: {error}",
@@ -294,9 +309,9 @@ fn restore_root_vehicle_for_player(
         return;
     }
 
-    let player_entity: SharedEntity = player.clone();
+    let player_entity: SharedEntity = player.lock().shared_entity();
     EntityBase::restore_passenger_relationship(&attach_entity, &player_entity);
-    attach_entity.position_rider(player.as_ref());
+    attach_entity.position_rider(&mut *player.lock());
 
     world.mark_chunk_dirty(root_chunk);
     for entity in &entities {
@@ -336,6 +351,9 @@ pub struct Server {
     pub pending_world_changes: SyncMutex<Vec<(SharedEntity, WorldChangeRequest)>>,
     /// Queued domain switches to process after world ticks.
     pending_domain_switches: SyncMutex<Vec<DomainSwitchRequest>>,
+    /// Deferred player respawn / world-change reset+spawn tails. Drained at a tick
+    /// safe point with no entity lock held, since `reset`/`spawn` re-lock the entity.
+    pending_player_resets: SyncMutex<Vec<PlayerResetRequest>>,
 }
 
 impl Server {
@@ -468,6 +486,7 @@ impl Server {
             pending_player_joins: PlayerJoinQueue::new(),
             pending_world_changes: SyncMutex::new(vec![]),
             pending_domain_switches: SyncMutex::new(vec![]),
+            pending_player_resets: SyncMutex::new(vec![]),
         })
     }
 
@@ -475,21 +494,24 @@ impl Server {
     ///
     /// Persistent data is loaded asynchronously, then world insertion is finalized at the
     /// game tick safe point so the socket reader can enter play immediately.
-    pub fn queue_player_join(self: &Arc<Self>, player: Arc<SyncMutex<Player>>) {
+    pub fn queue_player_join(self: &Arc<Self>, player: Arc<ServerPlayer>) {
         if player.connection.closed() {
             return;
         }
 
         let server = Arc::clone(self);
         tokio::spawn(async move {
-            let state = server.prepare_player_join(&player).await;
+            let state = server.prepare_player_join(player.entity()).await;
             server
                 .pending_player_joins
                 .send(PendingPlayerJoin { player, state });
         });
     }
 
-    async fn prepare_player_join(&self, player: &Player) -> Result<DomainPlayerState, String> {
+    async fn prepare_player_join(
+        &self,
+        player: &Arc<SyncMutex<Player>>,
+    ) -> Result<DomainPlayerState, String> {
         let target_domain = self.load_join_domain(player).await?;
         self.load_domain_player_state(player, &target_domain, None, true)
             .await
@@ -510,30 +532,36 @@ impl Server {
         let state = match state {
             Ok(state) => state,
             Err(error) => {
+                let guard = player.entity().lock();
                 log::error!(
                     "Failed to load player data for {}: {error}",
-                    player.gameprofile.name
+                    guard.gameprofile.name
                 );
-                player.disconnect("Failed to load player data");
+                guard.disconnect("Failed to load player data");
                 return;
             }
         };
 
-        Self::apply_domain_player_state(&player, &state);
-        self.send_login_packet(&player, &state.world);
+        Self::apply_domain_player_state(player.entity(), &state);
+        self.send_login_packet(&player.entity().lock(), &state.world);
 
-        player.reset(Arc::clone(&state.world), ResetReason::InitialJoin);
-        Self::apply_domain_player_state(&player, &state);
-        let pos = player.position();
-        let rotation = player.rotation();
-        let admitted = player.spawn(pos, rotation, ResetReason::InitialJoin);
+        ServerPlayer::reset(&player, Arc::clone(&state.world), ResetReason::InitialJoin);
+        Self::apply_domain_player_state(player.entity(), &state);
+        let (pos, rotation) = {
+            let p = player.entity().lock();
+            (p.position(), p.rotation())
+        };
+        let admitted = ServerPlayer::spawn(&player, pos, rotation, ResetReason::InitialJoin);
         if !admitted {
             return;
         }
-        if player.mark_joined_world() {
-            player.send_inventory_to_remote();
+        {
+            let p = player.entity().lock();
+            if p.mark_joined_world() {
+                p.send_inventory_to_remote();
+            }
         }
-        self.schedule_root_vehicle_restore(&player, &state);
+        self.schedule_root_vehicle_restore(player.entity(), &state);
         if player.connection.closed() {
             tokio::spawn(async move {
                 state.world.remove_player(player).await;
@@ -541,19 +569,19 @@ impl Server {
         }
     }
 
-    async fn load_join_domain(&self, player: &Player) -> Result<String, String> {
-        match self
-            .player_data_storage
-            .load_global(player.gameprofile.id)
-            .await
-        {
+    async fn load_join_domain(&self, player: &Arc<SyncMutex<Player>>) -> Result<String, String> {
+        let (uuid, name) = {
+            let player = player.lock();
+            (player.gameprofile.id, player.gameprofile.name.clone())
+        };
+        match self.player_data_storage.load_global(uuid).await {
             Ok(Some(global)) if self.worlds.has_domain(&global.last_active_domain) => {
                 Ok(global.last_active_domain)
             }
             Ok(Some(global)) => {
                 log::warn!(
                     "Player {} last active domain {} no longer exists, using default domain",
-                    player.gameprofile.name,
+                    name,
                     global.last_active_domain
                 );
                 Ok(self.worlds.default_domain().to_owned())
@@ -565,11 +593,15 @@ impl Server {
 
     async fn load_domain_player_state(
         &self,
-        player: &Player,
+        player: &Arc<SyncMutex<Player>>,
         target_domain: &str,
         fallback_world: Option<Arc<World>>,
         restore_saved_location: bool,
     ) -> Result<DomainPlayerState, String> {
+        let (uuid, name) = {
+            let player = player.lock();
+            (player.gameprofile.id, player.gameprofile.name.clone())
+        };
         let mut world = self
             .worlds
             .default_world(target_domain)
@@ -581,7 +613,7 @@ impl Server {
 
         match self
             .player_data_storage
-            .load_domain(target_domain, player.gameprofile.id)
+            .load_domain(target_domain, uuid)
             .await
         {
             Ok(Some(saved_data)) => {
@@ -590,9 +622,9 @@ impl Server {
                         &saved_data.world,
                         target_domain,
                         &mut world,
-                        &player.gameprofile.name,
+                        &name,
                     );
-                log::info!("Loaded saved data for player {}", player.gameprofile.name);
+                log::info!("Loaded saved data for player {name}");
                 Ok(DomainPlayerState {
                     world,
                     data: DomainPlayerData::Saved {
@@ -603,9 +635,7 @@ impl Server {
             }
             Ok(None) => {
                 log::debug!(
-                    "No saved data for player {} in domain {}, using defaults",
-                    player.gameprofile.name,
-                    target_domain
+                    "No saved data for player {name} in domain {target_domain}, using defaults"
                 );
                 Ok(DomainPlayerState {
                     world,
@@ -613,8 +643,7 @@ impl Server {
                 })
             }
             Err(e) => Err(format!(
-                "failed to load domain player data for {} in domain {}: {e}",
-                player.gameprofile.name, target_domain
+                "failed to load domain player data for {name} in domain {target_domain}: {e}"
             )),
         }
     }
@@ -649,19 +678,20 @@ impl Server {
     }
 
     fn apply_domain_player_state(player: &Arc<SyncMutex<Player>>, state: &DomainPlayerState) {
+        let mut player = player.lock();
         match &state.data {
             DomainPlayerData::Saved {
                 data,
                 restore_location,
             } => {
                 if *restore_location {
-                    data.apply_to_player(player);
+                    data.apply_to_player(&mut player);
                 } else {
-                    apply_first_visit_defaults(player, &state.world);
-                    data.apply_to_player_without_location(player);
+                    apply_first_visit_defaults(&player, &state.world);
+                    data.apply_to_player_without_location(&mut player);
                 }
             }
-            DomainPlayerData::FirstVisit => apply_first_visit_defaults(player, &state.world),
+            DomainPlayerData::FirstVisit => apply_first_visit_defaults(&player, &state.world),
         }
     }
 
@@ -671,14 +701,16 @@ impl Server {
         state: &DomainPlayerState,
     ) {
         let Some(root_vehicle) = Self::root_vehicle_to_restore(state) else {
-            player.clear_pending_root_vehicle();
+            player.lock().clear_pending_root_vehicle();
             return;
         };
-        player.set_pending_root_vehicle(&state.world, root_vehicle.clone());
+        player
+            .lock()
+            .set_pending_root_vehicle(&state.world, root_vehicle.clone());
         let Some(job) =
             RootVehicleRestoreJob::new(Arc::clone(player), Arc::clone(&state.world), &root_vehicle)
         else {
-            player.clear_pending_root_vehicle();
+            player.lock().clear_pending_root_vehicle();
             return;
         };
         self.jobs.spawn(job);
@@ -735,8 +767,8 @@ impl Server {
     pub fn get_players(&self) -> Vec<Arc<SyncMutex<Player>>> {
         let mut players = vec![];
         for world in self.worlds.values() {
-            world.players.iter_players(|_, p: &Arc<SyncMutex<Player>>| {
-                players.push(p.clone());
+            world.players.iter_players(|_, p: &Arc<ServerPlayer>| {
+                players.push(Arc::clone(p.entity()));
                 true
             });
         }
@@ -770,6 +802,7 @@ impl Server {
         let mut sample: Vec<(String, String)> = players[offset..offset + sample_size]
             .iter()
             .map(|p| {
+                let p = p.lock();
                 (
                     p.gameprofile.name.clone(),
                     p.gameprofile.id.hyphenated().to_string(),
@@ -891,6 +924,11 @@ impl Server {
                 let _ = spawn_blocking(move || server.process_world_changes()).await;
             }
 
+            // Drain deferred respawn / world-change tails (enqueued under the entity
+            // lock during player ticks and `process_world_changes`) now that no entity
+            // lock is held, so `reset`/`spawn` can re-lock the entity without deadlock.
+            self.process_player_resets();
+
             self.process_domain_switches().await;
 
             let (tps, mspt) = {
@@ -992,10 +1030,10 @@ impl Server {
     /// Three-phase chunk send for a single player: prepare (lock briefly),
     /// encode (no lock), commit (lock briefly + generation check).
     ///
-    /// Operates on the `Arc`-shared [`PlayerShared`] handle so the chunk-sending
-    /// loop never borrows `Arc<SyncMutex<Player>>`.
+    /// Operates on the outer [`ServerPlayer`] session handle so the chunk-sending
+    /// loop never locks the entity.
     fn send_chunks_for_player(
-        shared: &PlayerShared,
+        shared: &Arc<ServerPlayer>,
         world: &Arc<World>,
         encode_cache: &mut rustc_hash::FxHashMap<ChunkPos, EncodedPacket>,
     ) {
@@ -1070,6 +1108,29 @@ impl Server {
         }
     }
 
+    /// Queues a deferred player respawn / world-change tail. Called from inside the
+    /// entity lock (`Player::respawn` / `Player::change_world`); the queued work
+    /// runs later via [`Self::process_player_resets`] with the entity unlocked.
+    pub(crate) fn queue_player_reset(&self, request: PlayerResetRequest) {
+        self.pending_player_resets.lock().push(request);
+    }
+
+    /// Runs all deferred player reset+spawn tails at a tick safe point. The entity
+    /// is not locked here, so `ServerPlayer::reset`/`spawn` can re-lock it safely.
+    fn process_player_resets(&self) {
+        let resets = mem::take(&mut *self.pending_player_resets.lock());
+        for request in resets {
+            match request {
+                PlayerResetRequest::Respawn(player) => {
+                    ServerPlayer::finish_respawn(&player);
+                }
+                PlayerResetRequest::WorldChange(player, transition) => {
+                    ServerPlayer::finish_world_change(&player, &transition);
+                }
+            }
+        }
+    }
+
     /// Queues a player domain switch for processing at the server tick safe point.
     pub fn queue_domain_switch(
         &self,
@@ -1080,16 +1141,20 @@ impl Server {
             return Err(format!("unknown domain {target_domain}"));
         }
 
-        let current_domain = player.get_world().domain().to_owned();
+        let current_domain = player.lock().get_world().domain().to_owned();
         if current_domain == target_domain {
             return Err(format!("already in domain {target_domain}"));
         }
-        if player.connection.closed() {
-            return Err("player is disconnecting".to_owned());
-        }
-        if !player.begin_domain_switch() {
-            return Err("domain switch already in progress".to_owned());
-        }
+        let player = {
+            let guard = player.lock();
+            if guard.connection().closed() {
+                return Err("player is disconnecting".to_owned());
+            }
+            if !guard.begin_domain_switch() {
+                return Err("domain switch already in progress".to_owned());
+            }
+            guard.server_player()
+        };
 
         self.pending_domain_switches
             .lock()
@@ -1109,12 +1174,16 @@ impl Server {
         target_world: Arc<World>,
     ) -> Result<(), String> {
         let target_domain = target_world.domain().to_owned();
-        if player.connection.closed() {
-            return Err("player is disconnecting".to_owned());
-        }
-        if !player.begin_domain_switch() {
-            return Err("domain switch already in progress".to_owned());
-        }
+        let player = {
+            let guard = player.lock();
+            if guard.connection().closed() {
+                return Err("player is disconnecting".to_owned());
+            }
+            if !guard.begin_domain_switch() {
+                return Err("domain switch already in progress".to_owned());
+            }
+            guard.server_player()
+        };
 
         self.pending_domain_switches
             .lock()
@@ -1132,14 +1201,14 @@ impl Server {
 
         for request in switches {
             let player = request.player.clone();
-            let player_name = player.gameprofile.name.clone();
+            let player_name = player.entity().lock().gameprofile.name.clone();
             let result = self.process_domain_switch(request).await;
-            player.finish_domain_switch();
+            player.entity().lock().finish_domain_switch();
 
             if let Err(error) = result {
                 log::error!("Failed to switch {player_name} domain: {error}");
                 if !player.connection.closed() {
-                    player.disconnect("Failed to switch domain");
+                    player.entity().lock().disconnect("Failed to switch domain");
                 }
             }
         }
@@ -1159,15 +1228,18 @@ impl Server {
             return Err(format!("unknown domain {target_domain}"));
         }
 
-        let current_domain = player.get_world().domain().to_owned();
+        let current_domain = player.entity().lock().get_world().domain().to_owned();
         if current_domain == target_domain {
             return Ok(());
         }
 
-        let current_data = PersistentPlayerData::from_player(&player);
+        let (uuid, current_data) = {
+            let p = player.entity().lock();
+            (p.gameprofile.id, PersistentPlayerData::from_player(&p))
+        };
         if let Err(e) = self
             .player_data_storage
-            .save_domain_data(&current_domain, player.gameprofile.id, &current_data)
+            .save_domain_data(&current_domain, uuid, &current_data)
             .await
         {
             return Err(format!("failed to save current domain data: {e}"));
@@ -1179,7 +1251,7 @@ impl Server {
 
         let target_state = match self
             .load_domain_player_state(
-                &player,
+                player.entity(),
                 &target_domain,
                 target_world.clone(),
                 restore_saved_location,
@@ -1197,20 +1269,26 @@ impl Server {
         }
 
         let restore_player = Arc::clone(&player);
-        player.reset_after_domain_save_and_restore(target_state.world.clone(), || {
-            Self::apply_domain_player_state(&restore_player, &target_state);
-        });
-        let pos = player.position();
-        let rotation = player.rotation();
-        if !player.spawn(pos, rotation, ResetReason::WorldChange) {
+        ServerPlayer::reset_after_domain_save_and_restore(
+            &player,
+            target_state.world.clone(),
+            || {
+                Self::apply_domain_player_state(restore_player.entity(), &target_state);
+            },
+        );
+        let (pos, rotation) = {
+            let p = player.entity().lock();
+            (p.position(), p.rotation())
+        };
+        if !ServerPlayer::spawn(&player, pos, rotation, ResetReason::WorldChange) {
             return Err("failed to add player to target world".to_owned());
         }
-        self.schedule_root_vehicle_restore(&player, &target_state);
+        self.schedule_root_vehicle_restore(player.entity(), &target_state);
 
         if let Err(e) = self
             .player_data_storage
             .save_global(
-                player.gameprofile.id,
+                uuid,
                 &GlobalPlayerData {
                     last_active_domain: target_domain,
                 },
@@ -1219,7 +1297,7 @@ impl Server {
         {
             log::error!(
                 "Failed to save global player data for {} after domain switch: {e}",
-                player.gameprofile.name
+                player.entity().lock().gameprofile.name
             );
         }
 
