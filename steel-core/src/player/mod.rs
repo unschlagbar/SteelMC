@@ -315,7 +315,7 @@ impl Player {
         server_player: Weak<ServerPlayer>,
     ) -> Self {
         // Create a single shared inventory container used by both the player and inventory menu
-        let inventory = Arc::new(SyncMutex::new(PlayerInventory::new(entity.clone())));
+        let inventory = Arc::new(SyncMutex::new(PlayerInventory::new()));
 
         let pos = DVec3::new(0.0, 0.0, 0.0);
 
@@ -403,6 +403,7 @@ impl Player {
         reason = "world coordinates are always within i32 range in a valid Minecraft world"
     )]
     pub fn tick(&mut self) {
+        self.flush_equipment_attribute_refreshes();
         self.advance_tick();
         self.tick_attack_strength();
         self.tick_client_load_timeout();
@@ -527,6 +528,17 @@ impl Player {
     ) {
         self.living_base
             .refresh_equipment_attribute_modifiers(slot, item_stack);
+    }
+
+    /// Applies any equipment attribute-modifier refreshes queued by inventory
+    /// mutations. Runs with the player lock held so it reaches `living_base`
+    /// directly, instead of the inventory re-locking the player (which would
+    /// deadlock under the tick).
+    fn flush_equipment_attribute_refreshes(&mut self) {
+        let pending = self.inventory.lock().drain_pending_attribute_refreshes();
+        for (slot, item) in pending {
+            self.refresh_equipment_attribute_modifiers_from_stack(slot, &item);
+        }
     }
 
     /// Ticks the death animation timer.

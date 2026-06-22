@@ -133,6 +133,14 @@ impl ServerPlayer {
         &self.entity
     }
 
+    /// Returns the effective view distance (client request clamped to the server
+    /// maximum). Read lock-free from session state, without the entity lock.
+    #[must_use]
+    pub fn view_distance(&self) -> u8 {
+        let client_view_distance = self.client_information.lock().view_distance;
+        client_view_distance.min(self.world.load().view_distance)
+    }
+
     /// Sends a packet to the player's connection (lock-free; no entity lock).
     ///
     /// # Panics

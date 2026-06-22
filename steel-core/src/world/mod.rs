@@ -1441,7 +1441,8 @@ impl World {
             let _span = tracing::trace_span!("entity_tracker_send_changes").entered();
             self.entity_tracker.send_changes(
                 |chunk| self.player_area_map.get_tracking_players(chunk),
-                |player_id| self.players.get_by_entity_id(player_id).map(|sp| Arc::clone(sp.entity())),
+                |player_id| self.players.get_by_entity_id(player_id),
+                |player_id| self.entity_manager.get_by_id(player_id).map(|e| e.position()),
                 EntityChangeSenders {
                     movement: |entity_id, packet| {
                         self.broadcast_movement_sync_to_entity_trackers(entity_id, packet, None);
@@ -3046,7 +3047,13 @@ impl World {
                 continue;
             }
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.entity().lock().position();
+                // Read the listener's position lock-free from the entity base; locking
+                // the player here deadlocks when it is the (already-locked) source.
+                let Some(player_pos) =
+                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                else {
+                    continue;
+                };
                 let dx = player_pos.x - event_pos.0;
                 let dy = player_pos.y - event_pos.1;
                 let dz = player_pos.z - event_pos.2;
@@ -3228,7 +3235,13 @@ impl World {
 
         for entity_id in self.player_area_map.get_tracking_players(chunk) {
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.entity().lock().position();
+                // Read the listener's position lock-free from the entity base; locking
+                // the player here deadlocks when it is the (already-locked) source.
+                let Some(player_pos) =
+                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                else {
+                    continue;
+                };
                 let dx = player_pos.x - event_pos.0;
                 let dy = player_pos.y - event_pos.1;
                 let dz = player_pos.z - event_pos.2;
@@ -3312,7 +3325,14 @@ impl World {
                 continue;
             }
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
-                let player_pos = player.entity().lock().position();
+                // Read the listener's position lock-free from the entity base. Locking
+                // the player here deadlocks when the listener is the sound source, whose
+                // behavior lock is already held (e.g. footsteps during its own tick).
+                let Some(player_pos) =
+                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                else {
+                    continue;
+                };
                 let dx = player_pos.x - pos.x;
                 let dy = player_pos.y - pos.y;
                 let dz = player_pos.z - pos.z;
@@ -3387,7 +3407,8 @@ impl World {
             entity,
             locked_entity,
             |chunk| self.player_area_map.get_tracking_players(chunk),
-            |id| self.players.get_by_entity_id(id).map(|sp| Arc::clone(sp.entity())),
+            |id| self.players.get_by_entity_id(id),
+            |id| self.entity_manager.get_by_id(id).map(|e| e.position()),
         );
 
         match pathfinder_known {
@@ -3399,9 +3420,8 @@ impl World {
     }
 
     pub(crate) fn remove_entity_from_tracker(&self, entity_id: i32) {
-        self.entity_tracker.remove(entity_id, |player_id| {
-            self.players.get_by_entity_id(player_id).map(|sp| Arc::clone(sp.entity()))
-        });
+        self.entity_tracker
+            .remove(entity_id, |player_id| self.players.get_by_entity_id(player_id));
         self.untrack_navigating_mob(entity_id);
     }
 

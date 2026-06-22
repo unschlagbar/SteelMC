@@ -1,6 +1,6 @@
 //! Entity lifecycle callbacks for movement and removal tracking.
 
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use glam::DVec3;
 use steel_utils::ChunkPos;
@@ -216,12 +216,8 @@ impl EntityLevelCallback for PlayerEntityCallback {
                 update.old_chunk,
                 update.new_chunk,
                 |chunk| world.player_area_map.get_tracking_players(chunk),
-                |player_id| {
-                    world
-                        .players
-                        .get_by_entity_id(player_id)
-                        .map(|sp| Arc::clone(sp.entity()))
-                },
+                |player_id| world.players.get_by_entity_id(player_id),
+                |player_id| world.entity_manager().get_by_id(player_id).map(|e| e.position()),
             );
         }
 
@@ -303,12 +299,8 @@ impl EntityLevelCallback for EntityChunkCallback {
                     update.old_chunk,
                     update.new_chunk,
                     |chunk| world.player_area_map.get_tracking_players(chunk),
-                    |player_id| {
-                        world
-                            .players
-                            .get_by_entity_id(player_id)
-                            .map(|sp| Arc::clone(sp.entity()))
-                    },
+                    |player_id| world.players.get_by_entity_id(player_id),
+                    |player_id| world.entity_manager().get_by_id(player_id).map(|e| e.position()),
                 );
             }
         }

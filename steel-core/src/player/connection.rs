@@ -175,8 +175,6 @@ impl Player {
     /// the server's configured maximum view distance.
     #[must_use]
     pub fn view_distance(&self) -> u8 {
-        let sp = self.server_player();
-        let client_view_distance = sp.client_information.lock().view_distance;
-        client_view_distance.min(sp.world.load().view_distance)
+        self.server_player().view_distance()
     }
 }

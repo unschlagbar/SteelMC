@@ -1,12 +1,6 @@
 //! Player inventory management.
 
-use std::{
-    array,
-    f32::consts::TAU,
-    mem,
-    sync::{LazyLock, Weak},
-};
-use steel_utils::locks::SyncMutex;
+use std::{array, f32::consts::TAU, mem, sync::LazyLock};
 
 use glam::DVec3;
 use steel_protocol::packets::game::{
@@ -78,8 +72,10 @@ pub struct PlayerInventory {
     equipment: EntityEquipment,
     /// Whether the selected hotbar item must be synced as main-hand equipment.
     dirty_main_hand: bool,
-    /// Weak reference to the player.
-    player: Weak<SyncMutex<Player>>,
+    /// Equipment slots whose attribute modifiers must be refreshed on the owning
+    /// player. Recorded here (instead of re-locking the player from inside the
+    /// inventory, which deadlocks under the tick) and flushed by `Player::tick`.
+    pending_attribute_refresh: Vec<EquipmentSlot>,
     /// Currently selected hotbar slot (0-8).
     selected: u8,
     /// Counter incremented on every change.
@@ -96,12 +92,12 @@ impl PlayerInventory {
 
     /// Creates a new player inventory with empty slots.
     #[must_use]
-    pub fn new(player: Weak<SyncMutex<Player>>) -> Self {
+    pub fn new() -> Self {
         Self {
             items: array::from_fn(|_| ItemStack::empty()),
             equipment: EntityEquipment::new(),
             dirty_main_hand: false,
-            player,
+            pending_attribute_refresh: Vec::new(),
             selected: 0,
             times_changed: 0,
         }
@@ -654,15 +650,27 @@ impl PlayerInventory {
         slots
     }
 
-    fn refresh_player_equipment_attribute_modifiers(&self, slot: EquipmentSlot) {
-        let Some(player) = self.player.upgrade() else {
-            return;
-        };
-        let player = player.lock();
-        player.refresh_equipment_attribute_modifiers_from_stack(
-            slot,
-            self.get_equipment_slot_item(slot),
-        );
+    /// Queues an equipment slot for an attribute-modifier refresh on the owning
+    /// player. The refresh itself touches the player's living-entity attributes,
+    /// which live behind the player lock; doing it here would re-lock the player
+    /// (deadlock under the tick). `Player::tick` drains and applies these instead.
+    fn refresh_player_equipment_attribute_modifiers(&mut self, slot: EquipmentSlot) {
+        if !self.pending_attribute_refresh.contains(&slot) {
+            self.pending_attribute_refresh.push(slot);
+        }
+    }
+
+    /// Drains the queued equipment attribute refreshes, returning each slot paired
+    /// with its current item. Applied by the owning player against its living base.
+    pub fn drain_pending_attribute_refreshes(&mut self) -> Vec<(EquipmentSlot, ItemStack)> {
+        if self.pending_attribute_refresh.is_empty() {
+            return Vec::new();
+        }
+        let slots: Vec<EquipmentSlot> = self.pending_attribute_refresh.drain(..).collect();
+        slots
+            .into_iter()
+            .map(|slot| (slot, self.get_equipment_slot_item(slot).clone()))
+            .collect()
     }
 
     fn set_equipment_slot_item(&mut self, slot: EquipmentSlot, item: ItemStack) -> ItemStack {
@@ -1382,7 +1390,7 @@ mod tests {
     fn add_marks_changed_when_stack_fills_existing_slot() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.items[0] = ItemStack::with_count(&ITEMS.oak_log, 63);
         let before = inventory.get_times_changed();
 
@@ -1398,7 +1406,7 @@ mod tests {
     fn add_to_selected_existing_slot_marks_main_hand_dirty() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.items[0] = ItemStack::with_count(&ITEMS.oak_log, 63);
         inventory.drain_dirty_equipment_items();
 
@@ -1418,7 +1426,7 @@ mod tests {
     fn add_to_empty_selected_slot_marks_main_hand_dirty() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.drain_dirty_equipment_items();
 
         let mut stack = ItemStack::with_count(&ITEMS.oak_log, 3);
@@ -1437,7 +1445,7 @@ mod tests {
     fn clear_content_counts_equipment_items() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.items[0] = ItemStack::with_count(&ITEMS.oak_log, 3);
         inventory
             .equipment
@@ -1451,7 +1459,7 @@ mod tests {
     fn non_empty_equipment_items_uses_selected_item_as_main_hand() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let main_hand = ItemStack::with_count(&ITEMS.oak_log, 2);
         let head = ItemStack::new(&ITEMS.diamond_helmet);
         inventory.items[0] = main_hand.clone();
@@ -1471,7 +1479,7 @@ mod tests {
     fn selected_slot_change_drains_main_hand_equipment_update_once() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let selected = ItemStack::new(&ITEMS.oak_log);
         inventory.items[1] = selected.clone();
 
@@ -1484,7 +1492,7 @@ mod tests {
 
     #[test]
     fn packet_selected_slot_rejects_invalid_values_without_wrapping() {
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
 
         assert!(inventory.try_set_selected_slot_from_packet(8).is_ok());
         assert_eq!(inventory.get_selected_slot(), 8);
@@ -1512,7 +1520,7 @@ mod tests {
     fn shrink_item_in_hand_marks_changed_and_dirty_equipment() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::with_count(&ITEMS.oak_log, 3));
         inventory.set_offhand_item(ItemStack::with_count(&ITEMS.shield, 2));
         inventory.drain_dirty_equipment_items();
@@ -1548,7 +1556,7 @@ mod tests {
     fn split_item_in_hand_marks_changed_and_dirty_equipment() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::with_count(&ITEMS.oak_log, 3));
         inventory.drain_dirty_equipment_items();
 
@@ -1571,7 +1579,7 @@ mod tests {
     fn hurt_item_in_hand_marks_changed_and_dirty_equipment() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::new(&ITEMS.shears));
         inventory.drain_dirty_equipment_items();
 
@@ -1593,7 +1601,7 @@ mod tests {
     fn hurt_and_convert_item_in_hand_damages_without_breaking() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_offhand_item(ItemStack::new(&ITEMS.carrot_on_a_stick));
         inventory.drain_dirty_equipment_items();
 
@@ -1620,7 +1628,7 @@ mod tests {
     fn hurt_and_convert_item_in_hand_replaces_broken_item() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::new(&ITEMS.carrot_on_a_stick));
         let max_damage = inventory.get_selected_item().get_max_damage();
         inventory
@@ -1652,7 +1660,7 @@ mod tests {
     fn swap_hands_swaps_selected_and_offhand() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let main_hand = ItemStack::with_count(&ITEMS.oak_log, 3);
         let offhand = ItemStack::new(&ITEMS.shield);
         inventory.set_selected_item(main_hand.clone());
@@ -1672,7 +1680,7 @@ mod tests {
     fn equippable_single_item_moves_to_empty_armor_slot() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::new(&ITEMS.diamond_helmet));
 
         let result = inventory.try_swap_with_equipment_slot(
@@ -1693,7 +1701,7 @@ mod tests {
     fn equippable_swap_respects_prevent_armor_change_effect() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let mut bound_helmet = ItemStack::new(&ITEMS.diamond_helmet);
         bound_helmet.set_enchantments(&[(Identifier::vanilla_static("binding_curse"), 1)], false);
         inventory.set_selected_item(ItemStack::new(&ITEMS.carved_pumpkin));
@@ -1722,7 +1730,7 @@ mod tests {
     fn repair_with_xp_repairs_damaged_mending_item() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let mut pickaxe = ItemStack::new(&ITEMS.diamond_pickaxe);
         pickaxe.set_damage_value(10);
         pickaxe.set_enchantments(&[(Identifier::vanilla_static("mending"), 1)], false);
@@ -1749,7 +1757,7 @@ mod tests {
     fn repair_with_xp_returns_leftover_when_item_is_fully_repaired() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         let mut pickaxe = ItemStack::new(&ITEMS.diamond_pickaxe);
         pickaxe.set_damage_value(3);
         pickaxe.set_enchantments(&[(Identifier::vanilla_static("mending"), 1)], false);
@@ -1766,7 +1774,7 @@ mod tests {
     fn equippable_stack_moves_one_item_and_returns_old_equipment_to_inventory() {
         init_test_registry();
 
-        let mut inventory = PlayerInventory::new(Weak::new());
+        let mut inventory = PlayerInventory::new();
         inventory.set_selected_item(ItemStack::with_count(&ITEMS.carved_pumpkin, 2));
         inventory
             .equipment_mut()
