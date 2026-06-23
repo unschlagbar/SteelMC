@@ -6,7 +6,7 @@ use glam::DVec3;
 use simdnbt::borrow::NbtCompound as BorrowedNbtCompoundView;
 use simdnbt::owned::NbtCompound;
 use steel_registry::entity_type::EntityTypeRef;
-use steel_utils::{Identifier, locks::SyncMutex};
+use steel_utils::Identifier;
 
 use crate::entity::{
     Entity, EntityBase, EntityBaseLoad, EntityIdentifier, SharedEntity, next_entity_id,
@@ -19,7 +19,7 @@ use crate::entity::{
 pub struct RawEntity {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
-    data: SyncMutex<NbtCompound>,
+    data: NbtCompound,
 }
 
 impl RawEntity {
@@ -40,7 +40,7 @@ impl RawEntity {
             |base| Self {
                 base,
                 entity_type,
-                data: SyncMutex::new(NbtCompound::new()),
+                data: NbtCompound::new(),
             },
         )
     }
@@ -51,7 +51,7 @@ impl RawEntity {
         EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| Self {
             base,
             entity_type,
-            data: SyncMutex::new(NbtCompound::new()),
+            data: NbtCompound::new(),
         })
     }
 
@@ -78,8 +78,8 @@ impl RawEntity {
     }
 
     /// Marks a raw mob as persistent when vanilla structure generation would do so.
-    pub fn set_persistence_required(&self) {
-        self.data.lock().insert("PersistenceRequired", 1_i8);
+    pub fn set_persistence_required(&mut self) {
+        self.data.insert("PersistenceRequired", 1_i8);
     }
 }
 
@@ -101,11 +101,11 @@ impl Entity for RawEntity {
     }
 
     fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
-        *self.data.lock() = nbt.to_owned();
+        self.data = nbt.to_owned();
     }
 
     fn save_additional(&self, nbt: &mut NbtCompound) {
-        *nbt = self.data.lock().clone();
+        *nbt = self.data.clone();
     }
 }
 

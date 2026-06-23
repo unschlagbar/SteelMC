@@ -544,8 +544,8 @@ impl Player {
         let vehicle_y = vehicle.position().y;
         let descending = vehicle.is_descending();
         let (old_collision, new_collision) = {
-            let vehicle_entity = vehicle.arc_lock_entity();
-            let collision_world = WorldCollisionProvider::for_entity(&world, &*vehicle_entity);
+            let vehicle_entity = vehicle.lock_entity();
+            let collision_world = WorldCollisionProvider::for_entity(&world, vehicle_entity.get());
             (
                 collision_world.has_entity_context_collision(old_aabb, vehicle_y, descending),
                 is_colliding_with_new_shapes(&collision_world, old_aabb, new_aabb, descending),

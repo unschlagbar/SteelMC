@@ -1258,7 +1258,7 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Arc::new(SyncMutex::new(Self { base: weak.clone() })));
+                base.attach_entity(Box::new(SyncMutex::new(Self { base: weak.clone() })));
                 base
             })
         }
@@ -1286,7 +1286,7 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Arc::new(SyncMutex::new(Self {
+                base.attach_entity(Box::new(SyncMutex::new(Self {
                     base: weak.clone(),
                     tick_position,
                     tick_rotation,

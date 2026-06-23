@@ -211,7 +211,7 @@ impl LeashData {
         let mut entity = holder.lock_entity();
         entity
             .downcast::<LeashFenceKnotEntity>()
-            .map(|knot| LeashAttachment::FenceKnot(knot.block_pos()))
+            .map(|knot| LeashAttachment::FenceKnot(knot.block_pos))
             .unwrap_or_else(|| LeashAttachment::Entity(holder.uuid()))
     }
 
@@ -2362,7 +2362,7 @@ mod tests {
         /// Attaches this mob to its own base and returns the shared handle.
         fn shared(mut self) -> SharedEntity {
             let base = self.base_strong.take().expect("entity already shared");
-            base.attach_entity(Arc::new(SyncMutex::new(self)));
+            base.attach_entity(Box::new(SyncMutex::new(self)));
             base
         }
 

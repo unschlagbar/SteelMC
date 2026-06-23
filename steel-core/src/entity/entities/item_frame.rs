@@ -10,7 +10,6 @@ use steel_registry::data_components::vanilla_components::MAP_ID;
 use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::item_stack::ItemStack;
 use steel_registry::vanilla_entity_data::ItemFrameEntityData;
-use steel_utils::locks::SyncMutex;
 use steel_utils::{BlockPos, Direction, WorldAabb, axis::Axis};
 
 use crate::entity::{
@@ -28,7 +27,7 @@ pub struct ItemFrameEntity {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     entity_data: ItemFrameEntityData,
-    block_pos: SyncMutex<BlockPos>,
+    block_pos: BlockPos,
 }
 
 impl ItemFrameEntity {
@@ -44,7 +43,7 @@ impl ItemFrameEntity {
             base,
             entity_type,
             entity_data,
-            block_pos: SyncMutex::new(block_pos),
+            block_pos,
         }
     }
 
@@ -112,7 +111,7 @@ impl ItemFrameEntity {
         let Some(base) = self.base.upgrade() else {
             return;
         };
-        let block_pos = *self.block_pos.lock();
+        let block_pos = self.block_pos;
         let direction = *self.entity_data.hanging_entity.direction.get();
         let position = Self::frame_center(block_pos, direction);
         if let Err(error) = base.try_set_position(position) {
@@ -202,7 +201,7 @@ impl Entity for ItemFrameEntity {
     }
 
     fn spawn_position(&self) -> DVec3 {
-        let block_pos = *self.block_pos.lock();
+        let block_pos = self.block_pos;
         DVec3::new(
             f64::from(block_pos.x()),
             f64::from(block_pos.y()),
@@ -223,7 +222,7 @@ impl Entity for ItemFrameEntity {
     }
 
     fn save_additional(&self, nbt: &mut NbtCompound) {
-        let block_pos = *self.block_pos.lock();
+        let block_pos = self.block_pos;
         nbt.insert(
             "block_pos",
             NbtTag::IntArray(vec![block_pos.x(), block_pos.y(), block_pos.z()]),
@@ -248,7 +247,7 @@ impl Entity for ItemFrameEntity {
         if let Some(block_pos) = nbt.int_array("block_pos")
             && block_pos.len() == 3
         {
-            *self.block_pos.lock() = BlockPos::new(block_pos[0], block_pos[1], block_pos[2]);
+            self.block_pos = BlockPos::new(block_pos[0], block_pos[1], block_pos[2]);
         }
 
         if let Some(item_tag) = nbt.compound("Item")

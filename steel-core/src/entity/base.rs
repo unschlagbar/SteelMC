@@ -16,11 +16,8 @@ use steel_protocol::packets::game::AttributeSnapshot;
 use steel_registry::entity_data::{DataValue, EntityPose};
 use steel_registry::entity_type::EntityDimensions;
 use steel_registry::vanilla_entities;
+use steel_utils::random::{Random as _, legacy_random::LegacyRandom};
 use steel_utils::{BlockPos, BlockStateId, WorldAabb};
-use steel_utils::{
-    locks::ArcMutexGuard,
-    random::{Random as _, legacy_random::LegacyRandom},
-};
 use steel_utils::{locks::SyncMutex, types::InteractionHand};
 use text_components::TextComponent;
 use uuid::Uuid;
@@ -31,7 +28,6 @@ use crate::{
     entity::{
         Entity, EntityLevelCallback, EntityMoveError, InsideBlockEffectType, LockedEntity,
         NullEntityCallback, RemovalReason, SharedEntity, WeakEntity, damage::DamageSource,
-        kind::downcast_entity,
     },
     player::Player,
 };
@@ -995,7 +991,7 @@ pub struct EntityBase {
     /// Callback for entity lifecycle events.
     level_callback: SyncMutex<Arc<dyn EntityLevelCallback>>,
     /// The concrete entity implementation. Empty until `attach_entity` is called.
-    entity: OnceLock<Arc<SyncMutex<dyn Entity>>>,
+    entity: OnceLock<Box<SyncMutex<dyn Entity>>>,
     /// Set only for player bases. Like every other entity, a player is reached
     /// mutably by locking; `with_entity`/`with_entity` lock through this weak
     /// reference. Kept separate from the `entity` slot only because the player is
@@ -1033,7 +1029,7 @@ impl EntityBase {
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
             let b = Self::new(id, position, dimensions, world);
-            b.attach_entity(Arc::new(SyncMutex::new(make(weak.clone()))));
+            b.attach_entity(Box::new(SyncMutex::new(make(weak.clone()))));
             b
         })
     }
@@ -1049,7 +1045,7 @@ impl EntityBase {
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
             let b = Self::from_load(load, dimensions);
-            b.attach_entity(Arc::new(SyncMutex::new(make(weak.clone()))));
+            b.attach_entity(Box::new(SyncMutex::new(make(weak.clone()))));
             b
         })
     }
@@ -1112,7 +1108,7 @@ impl EntityBase {
         reason = "EntityBaseState is an owned construction snapshot built with with_* helpers"
     )]
     pub fn with_uuid_and_state(
-        entity: Option<Arc<SyncMutex<dyn Entity>>>,
+        entity: Option<Box<SyncMutex<dyn Entity>>>,
 
         id: i32,
         uuid: Uuid,
@@ -1158,7 +1154,7 @@ impl EntityBase {
     ///
     /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
     /// already attached (double-init is a programming error).
-    pub fn attach_entity(&self, entity: Arc<SyncMutex<dyn Entity>>) {
+    pub fn attach_entity(&self, entity: Box<SyncMutex<dyn Entity>>) {
         assert!(
             self.entity.set(entity).is_ok(),
             "attach_entity called twice on the same EntityBase"
@@ -1278,7 +1274,7 @@ impl EntityBase {
     /// Pass the `EntityTypeRef` that belongs to `T`, e.g. `&vanilla_entities::PIG`.
     /// Returns `None` if no entity is attached or the entity type does not match `kind`.
     pub fn with_entity_as<T: EntityIdentifier, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-        self.with_entity(|e| downcast_entity::<T>(e).map(f))
+        self.lock_entity().downcast::<T>().map(f)
     }
 
     /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
@@ -1287,14 +1283,6 @@ impl EntityBase {
     /// Use this when you need to hold the lock across multiple calls on the same entity.
     pub fn lock_entity(&self) -> LockedEntity<'_> {
         LockedEntity(self.entity.get().unwrap().lock())
-    }
-
-    /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
-    ///
-    /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
-    /// Use this when you need to hold the lock across multiple calls on the same entity.
-    pub fn arc_lock_entity(&self) -> ArcMutexGuard<'static, dyn Entity + 'static> {
-        self.entity.get().unwrap().lock_arc()
     }
 
     // These go through `with_entity`: mobs take the behavior lock, players
@@ -2856,7 +2844,7 @@ mod tests {
     impl FallDamageTestEntity {
         fn new(id: i32) -> Arc<EntityBase> {
             Arc::new_cyclic(|base| {
-                let inner = Arc::new(SyncMutex::new(Self {
+                let inner = Box::new(SyncMutex::new(Self {
                     base: base.clone(),
                     fall_damage_calls: SyncMutex::new(Vec::new()),
                 }));

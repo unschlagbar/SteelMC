@@ -9,7 +9,6 @@ use simdnbt::owned::{NbtCompound, NbtTag};
 use steel_macros::entity_behavior;
 use steel_registry::entity_type::EntityTypeRef;
 use steel_utils::Identifier;
-use steel_utils::locks::SyncMutex;
 
 use crate::entity::{Entity, EntityBase, EntityBaseLoad, SharedEntity};
 use crate::world::World;
@@ -23,24 +22,9 @@ use crate::world::World;
 pub struct ChestMinecartEntity {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
-    state: SyncMutex<ChestMinecartState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChestMinecartState {
     first_tick: bool,
     loot_table: Option<Identifier>,
     loot_table_seed: i64,
-}
-
-impl ChestMinecartState {
-    const fn new(first_tick: bool) -> Self {
-        Self {
-            first_tick,
-            loot_table: None,
-            loot_table_seed: 0,
-        }
-    }
 }
 
 impl ChestMinecartEntity {
@@ -55,7 +39,9 @@ impl ChestMinecartEntity {
         EntityBase::pack_with(id, position, entity_type.dimensions, world, |base| Self {
             base,
             entity_type,
-            state: SyncMutex::new(ChestMinecartState::new(true)),
+            first_tick: true,
+            loot_table: None,
+            loot_table_seed: 0,
         })
     }
 
@@ -65,15 +51,16 @@ impl ChestMinecartEntity {
         EntityBase::pack_loaded_with(load, entity_type.dimensions, |base| Self {
             base,
             entity_type,
-            state: SyncMutex::new(ChestMinecartState::new(true)),
+            first_tick: true,
+            loot_table: None,
+            loot_table_seed: 0,
         })
     }
 
     /// Sets the deferred loot table used when the container is first opened.
-    pub fn set_loot_table(&self, loot_table: Identifier, seed: i64) {
-        let mut state = self.state.lock();
-        state.loot_table = Some(loot_table);
-        state.loot_table_seed = seed;
+    pub fn set_loot_table(&mut self, loot_table: Identifier, seed: i64) {
+        self.loot_table = Some(loot_table);
+        self.loot_table_seed = seed;
     }
 
     const fn nbt_bool(value: bool) -> i8 {
@@ -104,13 +91,12 @@ impl Entity for ChestMinecartEntity {
 
     fn save_additional(&self, nbt: &mut NbtCompound) {
         nbt.insert("FlippedRotation", Self::nbt_bool(false));
-        let state = self.state.lock();
-        nbt.insert("HasTicked", Self::nbt_bool(state.first_tick));
+        nbt.insert("HasTicked", Self::nbt_bool(self.first_tick));
 
-        if let Some(loot_table) = state.loot_table.as_ref() {
+        if let Some(loot_table) = self.loot_table.as_ref() {
             nbt.insert("LootTable", loot_table.to_string());
-            if state.loot_table_seed != 0 {
-                nbt.insert("LootTableSeed", NbtTag::Long(state.loot_table_seed));
+            if self.loot_table_seed != 0 {
+                nbt.insert("LootTableSeed", NbtTag::Long(self.loot_table_seed));
             }
         }
     }
@@ -119,12 +105,11 @@ impl Entity for ChestMinecartEntity {
         let loot_table = nbt
             .string("LootTable")
             .and_then(|value| Identifier::from_str(&value.to_string()).ok());
-        let mut state = self.state.lock();
         if let Some(first_tick) = nbt.byte("HasTicked") {
-            state.first_tick = first_tick != 0;
+            self.first_tick = first_tick != 0;
         }
-        state.loot_table = loot_table;
-        state.loot_table_seed = nbt.long("LootTableSeed").unwrap_or(0);
+        self.loot_table = loot_table;
+        self.loot_table_seed = nbt.long("LootTableSeed").unwrap_or(0);
     }
 }
 

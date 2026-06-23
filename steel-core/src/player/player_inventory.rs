@@ -1114,7 +1114,7 @@ impl Player {
             let entity: &mut ItemEntity = entity.downcast().unwrap();
             entity.set_pickup_delay(40);
             if thrown_from_hand {
-                entity.set_thrower(self.gameprofile.id);
+                entity.thrower = Some(self.gameprofile.id);
             }
         }
     }

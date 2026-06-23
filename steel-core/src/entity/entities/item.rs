@@ -60,34 +60,6 @@ const ITEM_WATER_DRAG: f64 = 0.99;
 const ITEM_LAVA_DRAG: f64 = 0.95;
 const MERGE_MAX_STACK_SIZE: i32 = 64;
 
-/// Mutable item-specific state that changes during item ticks, pickup, damage,
-/// merging, and save/load.
-struct ItemEntityState {
-    /// Age in ticks. Despawns at `LIFETIME` (6000). Special value -32768 = infinite.
-    age: i32,
-    /// Ticks until pickupable. 0 = can pickup, 32767 = never.
-    pickup_delay: i32,
-    /// Health (damage resistance). Item is destroyed when this reaches 0.
-    health: i32,
-    /// UUID of the entity that threw/dropped this item.
-    thrower: Option<Uuid>,
-    /// UUID of the only entity that can pick up this item.
-    /// If `None`, any player can pick it up. Vanilla calls this `target`.
-    owner: Option<Uuid>,
-}
-
-impl ItemEntityState {
-    const fn new() -> Self {
-        Self {
-            age: 0,
-            pickup_delay: 0,
-            health: DEFAULT_HEALTH,
-            thrower: None,
-            owner: None,
-        }
-    }
-}
-
 /// A dropped item entity.
 ///
 /// Mirrors vanilla's `ItemEntity` behavior:
@@ -99,15 +71,22 @@ impl ItemEntityState {
 pub struct ItemEntity {
     /// Weak back-reference to the containing `EntityBase`.
     base: Weak<EntityBase>,
-
     /// Vanilla entity type registered for this implementation.
     entity_type: EntityTypeRef,
-
     /// Entity data containing the `ItemStack`.
     entity_data: ItemEntityData,
 
-    /// Item-specific mutable state.
-    item_state: SyncMutex<ItemEntityState>,
+    /// Age in ticks. Despawns at `LIFETIME` (6000). Special value -32768 = infinite.
+    age: i32,
+    /// Ticks until pickupable. 0 = can pickup, 32767 = never.
+    pickup_delay: i32,
+    /// Health (damage resistance). Item is destroyed when this reaches 0.
+    health: i32,
+    /// UUID of the entity that threw/dropped this item.
+    pub thrower: Option<Uuid>,
+    /// UUID of the only entity that can pick up this item.
+    /// If `None`, any player can pick it up. Vanilla calls this `target`.
+    owner: Option<Uuid>,
 }
 
 impl ItemEntity {
@@ -146,7 +125,11 @@ impl ItemEntity {
             base,
             entity_type,
             entity_data: ItemEntityData::new(),
-            item_state: SyncMutex::new(ItemEntityState::new()),
+            age: 0,
+            pickup_delay: 0,
+            health: DEFAULT_HEALTH,
+            thrower: None,
+            owner: None,
         }
     }
 
@@ -207,7 +190,11 @@ impl ItemEntity {
                 base: weak.clone(),
                 entity_type,
                 entity_data: entity_data,
-                item_state: SyncMutex::new(ItemEntityState::new()),
+                age: 0,
+                pickup_delay: 0,
+                health: DEFAULT_HEALTH,
+                thrower: None,
+                owner: None,
             };
             let base = EntityBase::new_with_state(
                 id,
@@ -216,7 +203,7 @@ impl ItemEntity {
                     .with_rotation((yaw, 0.0)),
                 world,
             );
-            base.attach_entity(std::sync::Arc::new(SyncMutex::new(inner)));
+            base.attach_entity(Box::new(SyncMutex::new(inner)));
             base
         })
     }
@@ -240,90 +227,14 @@ impl ItemEntity {
         self.entity_data.set_item(item);
     }
 
-    /// Gets the current age in ticks.
-    #[must_use]
-    pub fn get_age(&self) -> i32 {
-        self.item_state.lock().age
-    }
-
-    /// Sets the age in ticks.
-    pub fn set_age(&self, age: i32) {
-        self.item_state.lock().age = age;
-    }
-
-    /// Sets the entity to never despawn.
-    pub fn set_unlimited_lifetime(&self) {
-        self.item_state.lock().age = INFINITE_LIFETIME;
-    }
-
-    /// Gets the pickup delay in ticks.
-    #[must_use]
-    pub fn get_pickup_delay(&self) -> i32 {
-        self.item_state.lock().pickup_delay
-    }
-
     /// Sets the default pickup delay (10 ticks = 0.5 seconds).
-    pub fn set_default_pickup_delay(&self) {
-        self.item_state.lock().pickup_delay = DEFAULT_PICKUP_DELAY;
-    }
-
-    /// Sets the pickup delay to zero (immediately pickupable).
-    pub fn set_no_pickup_delay(&self) {
-        self.item_state.lock().pickup_delay = 0;
-    }
-
-    /// Sets the item to never be pickupable.
-    pub fn set_never_pickup(&self) {
-        self.item_state.lock().pickup_delay = INFINITE_PICKUP_DELAY;
+    pub fn set_default_pickup_delay(&mut self) {
+        self.pickup_delay = DEFAULT_PICKUP_DELAY;
     }
 
     /// Sets a custom pickup delay in ticks.
-    pub fn set_pickup_delay(&self, delay: i32) {
-        self.item_state.lock().pickup_delay = delay;
-    }
-
-    /// Returns true if the item has a pickup delay (cannot be picked up yet).
-    #[must_use]
-    pub fn has_pickup_delay(&self) -> bool {
-        self.item_state.lock().pickup_delay > 0
-    }
-
-    /// Gets the health (damage resistance).
-    #[must_use]
-    pub fn get_health(&self) -> i32 {
-        self.item_state.lock().health
-    }
-
-    /// Sets the health.
-    pub fn set_health(&self, health: i32) {
-        self.item_state.lock().health = health;
-    }
-
-    /// Sets the entity that threw/dropped this item.
-    pub fn set_thrower(&self, uuid: Uuid) {
-        self.item_state.lock().thrower = Some(uuid);
-    }
-
-    /// Gets the UUID of the entity that threw/dropped this item.
-    #[must_use]
-    pub fn get_thrower(&self) -> Option<Uuid> {
-        self.item_state.lock().thrower
-    }
-
-    /// Sets the owner (the only entity that can pick up this item).
-    ///
-    /// Pass `None` to allow any player to pick it up.
-    /// Vanilla calls this `target`.
-    pub fn set_owner(&self, uuid: Option<Uuid>) {
-        self.item_state.lock().owner = uuid;
-    }
-
-    /// Gets the owner UUID (the only entity that can pick up this item).
-    ///
-    /// Returns `None` if any player can pick it up.
-    #[must_use]
-    pub fn get_owner(&self) -> Option<Uuid> {
-        self.item_state.lock().owner
+    pub fn set_pickup_delay(&mut self, delay: i32) {
+        self.pickup_delay = delay;
     }
 
     /// Attempts to have a player pick up this item.
@@ -334,12 +245,12 @@ impl ItemEntity {
     /// Mirrors vanilla's `ItemEntity.playerTouch(Player)`.
     pub fn try_pickup(&mut self, player: &mut Player) -> bool {
         // Check pickup delay
-        if self.has_pickup_delay() {
+        if self.pickup_delay > 0 {
             return false;
         }
 
         // Check owner restriction
-        if let Some(owner_uuid) = self.get_owner()
+        if let Some(owner_uuid) = self.owner
             && owner_uuid != player.gameprofile.id
         {
             return false;
@@ -393,11 +304,10 @@ impl ItemEntity {
     #[must_use]
     pub fn is_mergeable(&self) -> bool {
         let item = self.get_item();
-        let state = self.item_state.lock();
         !self.is_removed()
-            && state.pickup_delay != INFINITE_PICKUP_DELAY
-            && state.age != INFINITE_LIFETIME
-            && state.age < LIFETIME
+            && self.pickup_delay != INFINITE_PICKUP_DELAY
+            && self.age != INFINITE_LIFETIME
+            && self.age < LIFETIME
             && item.count() < item.max_stack_size()
     }
 
@@ -425,7 +335,7 @@ impl ItemEntity {
         let other_stack = other.get_item();
 
         // Both items must have the same owner (target)
-        if self.get_owner() != other.get_owner() {
+        if self.owner != other.owner {
             return;
         }
 
@@ -468,14 +378,10 @@ impl ItemEntity {
 
         // Pickup delay is the max of both (so merged items don't become instantly pickable)
         // Age is the min of both (so merged items don't despawn prematurely).
-        let (from_pickup_delay, from_age) = {
-            let state = from_item.item_state.lock();
-            (state.pickup_delay, state.age)
-        };
+        let (from_pickup_delay, from_age) = { (from_item.pickup_delay, from_item.age) };
         {
-            let mut state = to_item.item_state.lock();
-            state.pickup_delay = state.pickup_delay.max(from_pickup_delay);
-            state.age = state.age.min(from_age);
+            to_item.pickup_delay = to_item.pickup_delay.max(from_pickup_delay);
+            to_item.age = to_item.age.min(from_age);
         }
 
         // Update or remove the source item
@@ -564,9 +470,8 @@ impl Entity for ItemEntity {
         self.default_tick();
 
         {
-            let mut state = self.item_state.lock();
-            if state.pickup_delay > 0 && state.pickup_delay != INFINITE_PICKUP_DELAY {
-                state.pickup_delay -= 1;
+            if self.pickup_delay > 0 && self.pickup_delay != INFINITE_PICKUP_DELAY {
+                self.pickup_delay -= 1;
             }
         }
 
@@ -668,12 +573,11 @@ impl Entity for ItemEntity {
         }
 
         let should_despawn = {
-            let mut state = self.item_state.lock();
-            if state.age == INFINITE_LIFETIME {
+            if self.age == INFINITE_LIFETIME {
                 false
             } else {
-                state.age += 1;
-                state.age >= LIFETIME
+                self.age += 1;
+                self.age >= LIFETIME
             }
         };
 
@@ -703,7 +607,7 @@ impl Entity for ItemEntity {
     }
 
     fn should_play_lava_hurt_sound(&self) -> bool {
-        self.get_health() <= 0 || self.tick_count() % 10 == 0
+        self.health <= 0 || self.tick_count() % 10 == 0
     }
 
     fn player_touch(&mut self, player: &mut Player) {
@@ -713,9 +617,8 @@ impl Entity for ItemEntity {
     fn hurt(&mut self, _source: &DamageSource, amount: f32) -> bool {
         // TODO: Check isInvulnerableToBase and canBeHurtBy (damage resistance component)
         let new_health = {
-            let mut state = self.item_state.lock();
-            state.health = (state.health as f32 - amount) as i32;
-            state.health
+            self.health = (self.health as f32 - amount) as i32;
+            self.health
         };
         if new_health <= 0 {
             // TODO: Call item.onDestroyed() when implemented
@@ -726,18 +629,16 @@ impl Entity for ItemEntity {
 
     fn save_additional(&self, nbt: &mut NbtCompound) {
         // Match vanilla's ItemEntity.addAdditionalSaveData
-        let state = self.item_state.lock();
-        nbt.insert("Health", state.health as i16);
-        nbt.insert("Age", state.age as i16);
-        nbt.insert("PickupDelay", state.pickup_delay as i16);
+        nbt.insert("Health", self.health as i16);
+        nbt.insert("Age", self.age as i16);
+        nbt.insert("PickupDelay", self.pickup_delay as i16);
 
-        if let Some(thrower) = state.thrower {
+        if let Some(thrower) = self.thrower {
             nbt.insert("Thrower", NbtTag::IntArray(thrower.to_int_array().to_vec()));
         }
-        if let Some(owner) = state.owner {
+        if let Some(owner) = self.owner {
             nbt.insert("Owner", NbtTag::IntArray(owner.to_int_array().to_vec()));
         }
-        drop(state);
 
         let item = self.get_item();
         if !item.is_empty() {
@@ -747,28 +648,26 @@ impl Entity for ItemEntity {
 
     fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         // Match vanilla's ItemEntity.readAdditionalSaveData
-        let mut state = self.item_state.lock();
         if let Some(health) = nbt.short("Health") {
-            state.health = i32::from(health);
+            self.health = i32::from(health);
         }
         if let Some(age) = nbt.short("Age") {
-            state.age = i32::from(age);
+            self.age = i32::from(age);
         }
         if let Some(pickup_delay) = nbt.short("PickupDelay") {
-            state.pickup_delay = i32::from(pickup_delay);
+            self.pickup_delay = i32::from(pickup_delay);
         }
 
         if let Some(thrower_arr) = nbt.int_array("Thrower")
             && let Some(uuid) = Uuid::from_int_array(&thrower_arr)
         {
-            state.thrower = Some(uuid);
+            self.thrower = Some(uuid);
         }
         if let Some(owner_arr) = nbt.int_array("Owner")
             && let Some(uuid) = Uuid::from_int_array(&owner_arr)
         {
-            state.owner = Some(uuid);
+            self.owner = Some(uuid);
         }
-        drop(state);
 
         if let Some(item_tag) = nbt.compound("Item")
             && let Some(item) = ItemStack::from_borrowed_compound(&item_tag)
@@ -832,7 +731,7 @@ mod tests {
             }
             assert!(item.should_play_lava_hurt_sound());
 
-            item.set_health(0);
+            item.health = 0;
             item.advance_tick_count();
             assert!(item.should_play_lava_hurt_sound());
         }
@@ -873,6 +772,6 @@ mod tests {
         let mut item = item.lock_entity();
         let item: &mut ItemEntity = item.downcast().unwrap();
 
-        assert_eq!(item.get_health(), 4);
+        assert_eq!(item.health, 4);
     }
 }

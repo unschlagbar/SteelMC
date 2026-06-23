@@ -12,7 +12,6 @@ use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::fluid::FluidStateExt as _;
 use steel_registry::vanilla_entity_data::ExperienceOrbEntityData;
 use steel_registry::{vanilla_damage_type_tags, vanilla_entities};
-use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random as _;
 use steel_utils::{BlockPos, ChunkPos, WorldAabb};
 
@@ -41,31 +40,16 @@ const UNDERWATER_VERTICAL_ACCEL: f64 = 5.0e-4;
 const UNDERWATER_MAX_Y: f64 = 0.06;
 const FOLLOW_ACCELERATION: f64 = 0.1;
 
-struct ExperienceOrbState {
-    age: i32,
-    health: i32,
-    count: i32,
-    following_player_id: Option<i32>,
-}
-
-impl ExperienceOrbState {
-    const fn new() -> Self {
-        Self {
-            age: 0,
-            health: DEFAULT_HEALTH,
-            count: 1,
-            following_player_id: None,
-        }
-    }
-}
-
 /// Vanilla experience orb entity.
 #[entity_behavior(class = "experience_orb")]
 pub struct ExperienceOrbEntity {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     entity_data: ExperienceOrbEntityData,
-    state: SyncMutex<ExperienceOrbState>,
+    age: i32,
+    health: i32,
+    count: i32,
+    following_player_id: Option<i32>,
 }
 
 impl ExperienceOrbEntity {
@@ -74,7 +58,10 @@ impl ExperienceOrbEntity {
             base,
             entity_type,
             entity_data: ExperienceOrbEntityData::new(),
-            state: SyncMutex::new(ExperienceOrbState::new()),
+            age: 0,
+            health: DEFAULT_HEALTH,
+            count: 1,
+            following_player_id: None,
         }
     }
 
@@ -181,29 +168,6 @@ impl ExperienceOrbEntity {
         self.entity_data.set_value(value);
     }
 
-    /// Returns this orb's merge count.
-    #[must_use]
-    pub fn count(&self) -> i32 {
-        self.state.lock().count
-    }
-
-    /// Returns this orb's age.
-    #[must_use]
-    pub fn age(&self) -> i32 {
-        self.state.lock().age
-    }
-
-    /// Sets this orb's age.
-    pub fn set_age(&self, age: i32) {
-        self.state.lock().age = age;
-    }
-
-    /// Returns this orb's health.
-    #[must_use]
-    pub fn health(&self) -> i32 {
-        self.state.lock().health
-    }
-
     fn initialize_spawn_movement(&self) {
         let (yaw, velocity) = {
             let base = self.base();
@@ -236,10 +200,8 @@ impl ExperienceOrbEntity {
                     if !orb.can_merge_id(merge_id, value) {
                         return false;
                     }
-
-                    let mut state = orb.state.lock();
-                    state.count += 1;
-                    state.age = 0;
+                    orb.count += 1;
+                    orb.age = 0;
                     true
                 })
                 .unwrap_or(false);
@@ -250,7 +212,7 @@ impl ExperienceOrbEntity {
         false
     }
 
-    fn scan_for_merges(&self, world: &Arc<World>) {
+    fn scan_for_merges(&mut self, world: &Arc<World>) {
         let search_box = self.bounding_box().inflate(ORB_MERGE_DISTANCE);
         for entity in world.get_entities_in_aabb(&search_box) {
             if entity.id() == self.id() {
@@ -271,16 +233,10 @@ impl ExperienceOrbEntity {
         !self.is_removed() && (self.id() - id) % ORB_GROUPS_PER_AREA == 0 && self.value() == value
     }
 
-    fn merge(&self, other: &ExperienceOrbEntity) {
-        let (other_count, other_age) = {
-            let state = other.state.lock();
-            (state.count, state.age)
-        };
-        {
-            let mut state = self.state.lock();
-            state.count += other_count;
-            state.age = state.age.min(other_age);
-        }
+    fn merge(&mut self, other: &ExperienceOrbEntity) {
+        self.count += other.count;
+        self.age = self.age.min(other.age);
+
         other.set_removed(RemovalReason::Discarded);
     }
 
@@ -315,10 +271,8 @@ impl ExperienceOrbEntity {
         collision_world.has_entity_context_collision(aabb, self.position().y, self.is_descending())
     }
 
-    fn follow_nearby_player(&self, world: &Arc<World>) {
+    fn follow_nearby_player(&mut self, world: &Arc<World>) {
         let current = self
-            .state
-            .lock()
             .following_player_id
             .and_then(|id| world.players.get_by_entity_id(id))
             .map(|sp| Arc::clone(sp.entity()));
@@ -335,8 +289,7 @@ impl ExperienceOrbEntity {
             let nearest = world.nearest_player(self.position(), MAX_FOLLOW_DIST, |player| {
                 !player.is_spectator() && !player.is_dead_or_dying()
             });
-            self.state.lock().following_player_id =
-                nearest.as_ref().map(|player| player.lock().id());
+            self.following_player_id = nearest.as_ref().map(|player| player.lock().id());
             nearest
         } else {
             current
@@ -392,7 +345,7 @@ impl ExperienceOrbEntity {
     }
 
     /// Attempts to have a player pick up this experience orb.
-    pub fn try_pickup(&self, player: &mut Player) -> bool {
+    pub fn try_pickup(&mut self, player: &mut Player) -> bool {
         if player.take_xp_delay() != 0 {
             return false;
         }
@@ -418,9 +371,8 @@ impl ExperienceOrbEntity {
         }
 
         let remove = {
-            let mut state = self.state.lock();
-            state.count -= 1;
-            state.count == 0
+            self.count -= 1;
+            self.count == 0
         };
         if remove {
             self.set_removed(RemovalReason::Discarded);
@@ -463,7 +415,7 @@ impl Entity for ExperienceOrbEntity {
         }
 
         self.follow_nearby_player(&world);
-        if self.state.lock().following_player_id.is_none() && colliding {
+        if self.following_player_id.is_none() && colliding {
             let next_colliding =
                 self.is_aabb_colliding(&world, self.bounding_box().translate(self.velocity()));
             if next_colliding {
@@ -491,9 +443,8 @@ impl Entity for ExperienceOrbEntity {
         self.apply_friction_and_bounce(&world, fall_speed);
 
         let expired = {
-            let mut state = self.state.lock();
-            state.age += 1;
-            state.age >= LIFETIME
+            self.age += 1;
+            self.age >= LIFETIME
         };
         if expired {
             self.set_removed(RemovalReason::Discarded);
@@ -535,9 +486,8 @@ impl Entity for ExperienceOrbEntity {
 
         self.mark_hurt();
         let health = {
-            let mut state = self.state.lock();
-            state.health = (state.health as f32 - amount) as i32;
-            state.health
+            self.health = (self.health as f32 - amount) as i32;
+            self.health
         };
         if health <= 0 {
             self.set_removed(RemovalReason::Discarded);
@@ -546,23 +496,20 @@ impl Entity for ExperienceOrbEntity {
     }
 
     fn save_additional(&self, nbt: &mut NbtCompound) {
-        let state = self.state.lock();
-        nbt.insert("Health", state.health as i16);
-        nbt.insert("Age", state.age as i16);
+        nbt.insert("Health", self.health as i16);
+        nbt.insert("Age", self.age as i16);
         nbt.insert("Value", self.value() as i16);
-        nbt.insert("Count", state.count);
+        nbt.insert("Count", self.count);
     }
 
     fn load_additional(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
-        let mut state = self.state.lock();
-        state.health = i32::from(nbt.short("Health").unwrap_or(DEFAULT_HEALTH as i16));
-        state.age = i32::from(nbt.short("Age").unwrap_or(0));
+        self.health = i32::from(nbt.short("Health").unwrap_or(DEFAULT_HEALTH as i16));
+        self.age = i32::from(nbt.short("Age").unwrap_or(0));
         if let Some(count) = nbt.int("Count")
             && count > 0
         {
-            state.count = count;
+            self.count = count;
         }
-        drop(state);
 
         self.set_value(i32::from(nbt.short("Value").unwrap_or(0)));
     }
@@ -629,7 +576,7 @@ mod tests {
             0.75,
         ));
 
-        assert_eq!(orb.health(), 4);
+        assert_eq!(orb.health, 4);
     }
 
     #[test]
@@ -638,12 +585,9 @@ mod tests {
 
         let mut orb = test_orb();
         orb.set_value(17);
-        orb.set_age(42);
-        {
-            let mut state = orb.state.lock();
-            state.health = 3;
-            state.count = 4;
-        }
+        orb.age = 42;
+        orb.health = 3;
+        orb.count = 4;
 
         let mut nbt = NbtCompound::new();
         orb.save_additional(&mut nbt);
@@ -657,8 +601,8 @@ mod tests {
         loaded.load_additional((&borrowed).into());
 
         assert_eq!(loaded.value(), 17);
-        assert_eq!(loaded.age(), 42);
-        assert_eq!(loaded.health(), 3);
-        assert_eq!(loaded.count(), 4);
+        assert_eq!(loaded.age, 42);
+        assert_eq!(loaded.health, 3);
+        assert_eq!(loaded.count, 4);
     }
 }

@@ -1921,11 +1921,12 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             // Hold the behavior lock for the whole closure, exactly like `tick` does.
-            let mut entity = pig.arc_lock_entity();
+            let mut entity = pig.lock_entity();
 
             // Concrete-entity move-path helpers: none of these may call `with_entity_ref`.
-            let _ = leash_holder_id_of(&*entity);
-            let _ = EntitySpawnPairing::from_locked_entity(pig.as_ref(), &mut *entity, Vec::new());
+            let _ = leash_holder_id_of(entity.get());
+            let _ =
+                EntitySpawnPairing::from_locked_entity(pig.as_ref(), entity.get_mut(), Vec::new());
 
             drop(entity);
             let _ = tx.send(());

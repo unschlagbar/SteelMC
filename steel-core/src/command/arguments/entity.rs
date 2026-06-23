@@ -6,8 +6,8 @@ use crate::entity::Entity;
 use crate::player::Player;
 use rand::seq::IteratorRandom;
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 use steel_protocol::packets::game::{ArgumentType, SuggestionEntry, SuggestionType};
+use steel_utils::locks::SyncMutex;
 use steel_utils::translations::{
     ARGUMENT_ENTITY_SELECTOR_ALL_ENTITIES, ARGUMENT_ENTITY_SELECTOR_ALL_PLAYERS,
     ARGUMENT_ENTITY_SELECTOR_NEAREST_ENTITY, ARGUMENT_ENTITY_SELECTOR_NEAREST_PLAYER,

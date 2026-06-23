@@ -9,7 +9,6 @@ use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::sound_events;
 use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_entities;
-use steel_utils::locks::SyncMutex;
 use steel_utils::{BlockPos, WorldAabb};
 
 use crate::entity::{
@@ -22,8 +21,9 @@ use crate::world::World;
 pub struct LeashFenceKnotEntity {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
-    block_pos: SyncMutex<BlockPos>,
-    check_interval: SyncMutex<i32>,
+    /// blockpos of the entity
+    pub block_pos: BlockPos,
+    check_interval: i32,
 }
 
 impl LeashFenceKnotEntity {
@@ -31,8 +31,8 @@ impl LeashFenceKnotEntity {
         Self {
             base,
             entity_type,
-            block_pos: SyncMutex::new(block_pos),
-            check_interval: SyncMutex::new(0),
+            block_pos,
+            check_interval: 0,
         }
     }
 
@@ -86,12 +86,6 @@ impl LeashFenceKnotEntity {
         })
     }
 
-    /// Returns the fence block this knot is attached to.
-    #[must_use]
-    pub fn block_pos(&self) -> BlockPos {
-        *self.block_pos.lock()
-    }
-
     /// Returns true when the backing fence block still supports this knot.
     #[must_use]
     pub fn survives(&self) -> bool {
@@ -99,7 +93,7 @@ impl LeashFenceKnotEntity {
             return false;
         };
         world
-            .get_block_state(self.block_pos())
+            .get_block_state(self.block_pos)
             .get_block()
             .has_tag(&BlockTag::FENCES)
     }
@@ -120,7 +114,7 @@ impl LeashFenceKnotEntity {
                 let mut entity = entity.lock_entity();
                 entity
                     .downcast::<Self>()
-                    .is_some_and(|knot| knot.block_pos() == pos)
+                    .is_some_and(|knot| knot.block_pos == pos)
             })
             .into_iter()
             .next()
@@ -142,13 +136,12 @@ impl LeashFenceKnotEntity {
         Some(knot)
     }
 
-    fn should_check_survival(&self) -> bool {
-        let mut check_interval = self.check_interval.lock();
-        if *check_interval == 100 {
-            *check_interval = 0;
+    fn should_check_survival(&mut self) -> bool {
+        if self.check_interval == 100 {
+            self.check_interval = 0;
             true
         } else {
-            *check_interval += 1;
+            self.check_interval += 1;
             false
         }
     }
@@ -192,7 +185,7 @@ impl Entity for LeashFenceKnotEntity {
     }
 
     fn spawn_position(&self) -> DVec3 {
-        let block_pos = self.block_pos();
+        let block_pos = self.block_pos;
         DVec3::new(
             f64::from(block_pos.x()),
             f64::from(block_pos.y()),
