@@ -561,16 +561,14 @@ impl Entity for PigEntity {
     fn controlling_passenger(&self) -> Option<SharedEntity> {
         if self.is_saddled()
             && let Some(passenger) = self.first_passenger()
-            && passenger
-                .with_entity_ref(|e| {
-                    e.as_player().is_some_and(|player| {
-                        let mut is_holding_carrot_on_a_stick = |item_stack: &ItemStack| {
-                            item_stack.is(&vanilla_items::ITEMS.carrot_on_a_stick)
-                        };
-                        player.is_holding(&mut is_holding_carrot_on_a_stick)
-                    })
+            && passenger.with_entity(|e| {
+                e.as_player().is_some_and(|player| {
+                    let mut is_holding_carrot_on_a_stick = |item_stack: &ItemStack| {
+                        item_stack.is(&vanilla_items::ITEMS.carrot_on_a_stick)
+                    };
+                    player.is_holding(&mut is_holding_carrot_on_a_stick)
                 })
-                .unwrap_or(false)
+            })
         {
             return Some(passenger);
         }
@@ -1868,7 +1866,8 @@ mod tests {
         // so build them as packed `SharedEntity`s and drive the concrete pigs
         // through the `with_*` helpers (each acquires the behavior lock for the
         // duration of the closure only).
-        let vehicle: SharedEntity = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let vehicle: SharedEntity =
+            PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let passenger: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);

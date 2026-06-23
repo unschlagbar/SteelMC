@@ -87,8 +87,7 @@ use crate::{
     entity::{
         AddEntityError, Entity, EntityChangeSenders, EntityChunkCallback, EntityMovementSyncPacket,
         EntityOwnership, EntityTracker, EntityVisibility, InactiveEntityCallback,
-        MobEffectSyncPacket, RemovalReason,
-        SharedEntity, WorldEntityManager, entities::ItemEntity,
+        MobEffectSyncPacket, RemovalReason, SharedEntity, WorldEntityManager, entities::ItemEntity,
     },
     fluid::{FluidStateExt as _, fluid_state_to_block},
     level_data::{LevelDataManager, WorldBorderData, WorldGenerationSettings},
@@ -307,6 +306,7 @@ impl NavigatingMobTracker {
 /// when no behavior lock is held. Mirrors vanilla running tracking in the chunk
 /// tick rather than inside `Entity.move`.
 #[derive(Clone, Copy)]
+#[allow(unused)]
 pub(crate) struct DeferredMoveTracking {
     entity_id: i32,
     old_chunk: ChunkPos,
@@ -1444,7 +1444,11 @@ impl World {
             self.entity_tracker.send_changes(
                 |chunk| self.player_area_map.get_tracking_players(chunk),
                 |player_id| self.players.get_by_entity_id(player_id),
-                |player_id| self.entity_manager.get_by_id(player_id).map(|e| e.position()),
+                |player_id| {
+                    self.entity_manager
+                        .get_by_id(player_id)
+                        .map(|e| e.position())
+                },
                 EntityChangeSenders {
                     movement: |entity_id, packet| {
                         self.broadcast_movement_sync_to_entity_trackers(entity_id, packet, None);
@@ -1775,17 +1779,13 @@ impl World {
     pub(crate) fn biome_at(&self, pos: BlockPos) -> Option<BiomeRef> {
         let biome_zoom_seed = obfuscate_biome_seed(self.seed());
         let mut missing_chunk = false;
-        let biome_id = fuzzed_biome_at_block(
-            biome_zoom_seed,
-            pos,
-            |quart| {
-                self.noise_biome_id(quart.x, quart.y, quart.z)
-                    .unwrap_or_else(|| {
-                        missing_chunk = true;
-                        0
-                    })
-            },
-        );
+        let biome_id = fuzzed_biome_at_block(biome_zoom_seed, pos, |quart| {
+            self.noise_biome_id(quart.x, quart.y, quart.z)
+                .unwrap_or_else(|| {
+                    missing_chunk = true;
+                    0
+                })
+        });
 
         if missing_chunk {
             return None;
@@ -2562,7 +2562,8 @@ impl World {
         state: BlockStateId,
         block_hit: ClipHitResult,
     ) -> ClipHitResult {
-        let Some(override_hit) = Self::clip_shape(pos, from, to, state.get_static_interaction_shape())
+        let Some(override_hit) =
+            Self::clip_shape(pos, from, to, state.get_static_interaction_shape())
         else {
             return block_hit;
         };
@@ -3049,8 +3050,10 @@ impl World {
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
                 // Read the listener's position lock-free from the entity base; locking
                 // the player here deadlocks when it is the (already-locked) source.
-                let Some(player_pos) =
-                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                let Some(player_pos) = self
+                    .entity_manager()
+                    .get_by_id(entity_id)
+                    .map(|e| e.position())
                 else {
                     continue;
                 };
@@ -3237,8 +3240,10 @@ impl World {
             if let Some(player) = self.players.get_by_entity_id(entity_id) {
                 // Read the listener's position lock-free from the entity base; locking
                 // the player here deadlocks when it is the (already-locked) source.
-                let Some(player_pos) =
-                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                let Some(player_pos) = self
+                    .entity_manager()
+                    .get_by_id(entity_id)
+                    .map(|e| e.position())
                 else {
                     continue;
                 };
@@ -3328,8 +3333,10 @@ impl World {
                 // Read the listener's position lock-free from the entity base. Locking
                 // the player here deadlocks when the listener is the sound source, whose
                 // behavior lock is already held (e.g. footsteps during its own tick).
-                let Some(player_pos) =
-                    self.entity_manager().get_by_id(entity_id).map(|e| e.position())
+                let Some(player_pos) = self
+                    .entity_manager()
+                    .get_by_id(entity_id)
+                    .map(|e| e.position())
                 else {
                     continue;
                 };
@@ -3413,15 +3420,17 @@ impl World {
 
         match pathfinder_known {
             Some(is_pathfinder_mob) => {
-                self.navigating_mobs.track_known(entity.id(), is_pathfinder_mob);
+                self.navigating_mobs
+                    .track_known(entity.id(), is_pathfinder_mob);
             }
             None => self.track_navigating_mob(entity),
         }
     }
 
     pub(crate) fn remove_entity_from_tracker(&self, entity_id: i32) {
-        self.entity_tracker
-            .remove(entity_id, |player_id| self.players.get_by_entity_id(player_id));
+        self.entity_tracker.remove(entity_id, |player_id| {
+            self.players.get_by_entity_id(player_id)
+        });
         self.untrack_navigating_mob(entity_id);
     }
 
@@ -3806,7 +3815,7 @@ impl World {
     pub fn get_entities_in_aabb_matching(
         &self,
         aabb: &WorldAabb,
-        predicate: impl FnMut(&dyn Entity) -> bool,
+        predicate: impl FnMut(&SharedEntity) -> bool,
     ) -> Vec<SharedEntity> {
         self.entity_manager
             .get_entities_in_aabb_matching(aabb, predicate)
@@ -3820,7 +3829,7 @@ impl World {
         &self,
         aabb: &WorldAabb,
         origin: DVec3,
-        predicate: impl FnMut(&dyn Entity) -> bool,
+        predicate: impl FnMut(&mut dyn Entity) -> bool,
     ) -> Option<SharedEntity> {
         self.entity_manager
             .nearest_entity_in_aabb_matching(aabb, origin, predicate)

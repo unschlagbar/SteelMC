@@ -61,7 +61,7 @@ use crate::world::game_event_context::GameEventContext;
 use crate::world::{ClipBlockShape, ClipFluid, World};
 use crate::{enchantment_helper, entity::damage::DamageSource, player::Player};
 
-use entities::{ExperienceOrbEntity, ItemEntity, LeashFenceKnotEntity};
+use entities::ExperienceOrbEntity;
 
 /// Global counter for allocating unique entity IDs.
 ///
@@ -111,9 +111,8 @@ fn transfer_leashables_to_holder(leashables: Vec<SharedEntity>, new_holder: &Sha
     for leashable in leashables {
         let accepted = leashable
             .with_mob(|mob| {
-                let can_attach = new_holder
-                    .with_entity_ref(|holder| mob.can_have_a_leash_attached_to(holder))
-                    .unwrap_or(false);
+                let can_attach =
+                    new_holder.with_entity(|holder| mob.can_have_a_leash_attached_to(holder));
                 if can_attach {
                     let _ = mob.set_leashed_to(new_holder);
                 }
@@ -784,6 +783,7 @@ pub enum AcceptedClientMovementOutcome {
 pub trait EntityEventSource {
     /// Returns this entity as a game-event source.
     fn as_entity_event_source(&self) -> &dyn Entity;
+    /// Todo
     fn as_entity_event_source_mut(&mut self) -> &mut dyn Entity;
 }
 
@@ -1510,21 +1510,6 @@ pub trait Entity: EntityEventSource + Send + Sync {
         self.base().set_level_callback(callback);
     }
 
-    /// Gets the entity as an `ItemEntity` if it is one.
-    fn as_item_entity_ref(&self) -> Option<&ItemEntity> {
-        None
-    }
-
-    /// Gets the entity as an `ExperienceOrbEntity` if it is one.
-    fn as_experience_orb_ref(&self) -> Option<&ExperienceOrbEntity> {
-        None
-    }
-
-    /// Returns this entity as a leash fence knot when it has that behavior.
-    fn as_leash_fence_knot(&self) -> Option<&LeashFenceKnotEntity> {
-        None
-    }
-
     /// Called by leashables while this entity is their live leash holder.
     fn notify_leash_holder(&self, _leashable: &dyn Entity) {}
 
@@ -1547,9 +1532,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
         let holder_id = holder.id();
         let scan_area = leash_scan_area(world_aabb_center(self.bounding_box()));
         world.get_entities_in_aabb_matching(&scan_area, |entity| {
-            entity.as_mob().is_some_and(|mob| {
-                mob.leash_holder()
-                    .is_some_and(|holder| holder.id() == holder_id)
+            entity.with_entity(|e| {
+                e.as_mob().is_some_and(|mob| {
+                    mob.leash_holder()
+                        .is_some_and(|holder| holder.id() == holder_id)
+                })
             })
         })
     }
@@ -5849,24 +5836,16 @@ fn living_entity_loot_ref<E: LivingEntity + ?Sized>(entity: &E) -> EntityRef<'_>
 }
 
 fn entity_loot_ref(entity: &EntityBase) -> EntityRef<'_> {
-    let flags = entity
-        .with_entity_ref(|e| {
-            let living_entity = e.as_living_entity();
-            EntityRefFlags {
-                is_on_fire: e.is_on_fire(),
-                is_sneaking: e.is_crouching(),
-                is_sprinting: living_entity.is_some_and(|entity| entity.is_sprinting()),
-                is_swimming: e.is_swimming(),
-                is_baby: living_entity.is_some_and(|entity| entity.is_baby()),
-            }
-        })
-        .unwrap_or(EntityRefFlags {
-            is_on_fire: false,
-            is_sneaking: false,
-            is_sprinting: false,
-            is_swimming: false,
-            is_baby: false,
-        });
+    let flags = entity.with_entity(|e| {
+        let living_entity = e.as_living_entity();
+        EntityRefFlags {
+            is_on_fire: e.is_on_fire(),
+            is_sneaking: e.is_crouching(),
+            is_sprinting: living_entity.is_some_and(|entity| entity.is_sprinting()),
+            is_swimming: e.is_swimming(),
+            is_baby: living_entity.is_some_and(|entity| entity.is_baby()),
+        }
+    });
     EntityRef {
         entity_type: Some(&entity.entity_type().key),
         flags,
@@ -6506,9 +6485,7 @@ mod tests {
             entity_id: entity.id(),
         }));
 
-        let result = entity
-            .with_entity(|e| e.move_without_physics(DVec3::new(1.0, 0.0, 0.0)))
-            .flatten();
+        let result = entity.with_entity(|e| e.move_without_physics(DVec3::new(1.0, 0.0, 0.0)));
 
         assert!(result.is_none());
         assert_vec3_close(entity.position(), DVec3::ZERO);
@@ -6560,8 +6537,7 @@ mod tests {
     fn look_angle_matches_vanilla_view_vector_axes() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
-        let look_angle =
-            |entity: &SharedEntity| entity.with_entity_ref(|e| e.look_angle()).unwrap();
+        let look_angle = |entity: &SharedEntity| entity.with_entity(|e| e.look_angle());
 
         entity.set_rotation((0.0, 0.0));
         assert_vec3_close(look_angle(&entity), DVec3::new(0.0, 0.0, 1.0));
@@ -7336,13 +7312,13 @@ mod tests {
     fn push_impulse_updates_velocity_and_marks_sync() {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
-        entity.with_entity_ref(|e| e.push_impulse(DVec3::new(0.1, 0.2, 0.3)));
+        entity.with_entity(|e| e.push_impulse(DVec3::new(0.1, 0.2, 0.3)));
 
         assert_vec3_close(entity.velocity(), DVec3::new(0.1, 0.2, 0.3));
         assert!(entity.needs_velocity_sync());
 
         entity.clear_velocity_sync();
-        entity.with_entity_ref(|e| e.push_impulse(DVec3::new(f64::INFINITY, 0.0, 0.0)));
+        entity.with_entity(|e| e.push_impulse(DVec3::new(f64::INFINITY, 0.0, 0.0)));
 
         assert_vec3_close(entity.velocity(), DVec3::new(0.1, 0.2, 0.3));
         assert!(!entity.needs_velocity_sync());
@@ -7362,11 +7338,7 @@ mod tests {
         let entity = PushableTestEntity::shared(1, DVec3::ZERO);
 
         assert!(entity.controlling_passenger().is_none());
-        assert!(
-            !entity
-                .with_entity_ref(|e| e.has_controlling_passenger())
-                .unwrap()
-        );
+        assert!(!entity.with_entity(|e| e.has_controlling_passenger()));
     }
 
     #[test]
@@ -7570,7 +7542,7 @@ mod tests {
         let vehicle = ControlledVehicleTestEntity::shared(2, Some(controller));
 
         assert!(vehicle.uses_client_movement_packets());
-        vehicle.with_entity_ref(|v| {
+        vehicle.with_entity(|v| {
             assert!(!v.is_server_driven_movement());
             assert!(!v.can_simulate_movement());
             assert!(!v.is_effective_ai());
@@ -7581,16 +7553,10 @@ mod tests {
         vehicle.set_position_local(DVec3::new(2.0, 0.0, 0.0));
         vehicle.advance_base_tick_state();
 
-        let known_movement =
-            |vehicle: &SharedEntity| vehicle.with_entity_ref(|v| v.known_movement()).unwrap();
-        let known_speed =
-            |vehicle: &SharedEntity| vehicle.with_entity_ref(|v| v.known_speed()).unwrap();
+        let known_movement = |vehicle: &SharedEntity| vehicle.with_entity(|v| v.known_movement());
+        let known_speed = |vehicle: &SharedEntity| vehicle.with_entity(|v| v.known_speed());
 
-        assert!(
-            vehicle
-                .with_entity_ref(|v| v.has_controlling_passenger())
-                .unwrap()
-        );
+        assert!(vehicle.with_entity(|v| v.has_controlling_passenger()));
         assert_vec3_close(known_movement(&vehicle), player_movement);
         assert_vec3_close(known_speed(&vehicle), player_speed);
 
@@ -7615,11 +7581,11 @@ mod tests {
         vehicle.advance_base_tick_state();
 
         assert_vec3_close(
-            vehicle.with_entity_ref(|v| v.known_movement()).unwrap(),
+            vehicle.with_entity(|v| v.known_movement()),
             DVec3::new(4.0, 0.0, 4.0),
         );
         assert_vec3_close(
-            vehicle.with_entity_ref(|v| v.known_speed()).unwrap(),
+            vehicle.with_entity(|v| v.known_speed()),
             DVec3::new(2.0, 0.0, 0.0),
         );
     }
@@ -7629,7 +7595,7 @@ mod tests {
         let left = PushableTestEntity::shared(1, DVec3::ZERO);
         let right = PushableTestEntity::shared(2, DVec3::new(1.0, 0.0, 0.0));
 
-        right.with_entity_ref(|r| left.push_entity(r));
+        right.with_entity(|r| left.push_entity(r));
 
         assert_vec3_close(left.velocity(), DVec3::new(-0.05, 0.0, 0.0));
         assert_vec3_close(right.velocity(), DVec3::new(0.05, 0.0, 0.0));

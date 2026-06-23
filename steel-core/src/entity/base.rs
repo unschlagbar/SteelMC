@@ -997,7 +997,7 @@ pub struct EntityBase {
     /// The concrete entity implementation. Empty until `attach_entity` is called.
     entity: OnceLock<Arc<SyncMutex<dyn Entity>>>,
     /// Set only for player bases. Like every other entity, a player is reached
-    /// mutably by locking; `with_entity`/`with_entity_ref` lock through this weak
+    /// mutably by locking; `with_entity`/`with_entity` lock through this weak
     /// reference. Kept separate from the `entity` slot only because the player is
     /// also held typed (`Arc<SyncMutex<Player>>`) by the player map and connection.
     player: Weak<SyncMutex<Player>>,
@@ -1154,8 +1154,6 @@ impl EntityBase {
         base
     }
 
-    // === Entity attachment and delegation ===
-
     /// Attaches the concrete entity implementation to this base.
     ///
     /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
@@ -1210,29 +1208,16 @@ impl EntityBase {
     /// Returns `None` if nothing is attached. Locks the player (or mob behavior
     /// mutex) to obtain `&mut dyn Entity`, so the `&mut self` entity-trait methods
     /// (and cross-entity mutation like `hurt`) work uniformly for players too.
-    pub fn with_entity<R>(&self, f: impl FnOnce(&mut dyn Entity) -> R) -> Option<R> {
+    pub fn with_entity<R>(&self, f: impl FnOnce(&mut dyn Entity) -> R) -> R {
         if let Some(player) = self.player.upgrade() {
-            return Some(f(player.lock().deref_mut()));
+            return f(player.lock().deref_mut());
         }
-        Some(f(self.entity.get()?.lock().deref_mut()))
-    }
-
-    /// Runs a closure with a shared reference to the attached entity or player.
-    ///
-    /// For mobs this locks the behavior mutex; for players it upgrades the weak
-    /// player reference and takes no lock at all (players use `&self` methods
-    /// with internal locking). Returns `None` if nothing is attached.
-    ///
-    /// # Lock discipline
-    /// Must not be called from code already running inside this entity's
-    /// behavior lock (re-entrant deadlock) — inside `impl Entity` code, call
-    /// methods on `self` directly. Cross-entity code should hold at most one
-    /// behavior lock at a time and read everything else through base state.
-    pub fn with_entity_ref<R>(&self, f: impl FnOnce(&dyn Entity) -> R) -> Option<R> {
-        if let Some(player) = self.player.upgrade() {
-            return Some(f(&*player.lock()));
-        }
-        Some(f(&*self.entity.get()?.lock()))
+        f(self
+            .entity
+            .get()
+            .expect("Entity must be initialised")
+            .lock()
+            .deref_mut())
     }
 
     /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
@@ -1240,8 +1225,7 @@ impl EntityBase {
         &self,
         f: impl FnOnce(&dyn crate::entity::LivingEntity) -> R,
     ) -> Option<R> {
-        self.with_entity_ref(|e| e.as_living_entity().map(f))
-            .flatten()
+        self.with_entity(|e| e.as_living_entity().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
@@ -1250,12 +1234,11 @@ impl EntityBase {
         f: impl FnOnce(&mut dyn crate::entity::LivingEntity) -> R,
     ) -> Option<R> {
         self.with_entity(|e| e.as_living_entity_mut().map(f))
-            .flatten()
     }
 
     /// Runs a closure with the attached entity as a [`Mob`], if it is one.
     pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&dyn crate::entity::Mob) -> R) -> Option<R> {
-        self.with_entity_ref(|e| e.as_mob().map(f)).flatten()
+        self.with_entity(|e| e.as_mob().map(f))
     }
 
     /// Runs a closure with the attached entity as a mutable [`Mob`], if it is one.
@@ -1263,7 +1246,7 @@ impl EntityBase {
         &self,
         f: impl FnOnce(&mut dyn crate::entity::Mob) -> R,
     ) -> Option<R> {
-        self.with_entity(|e| e.as_mob_mut().map(f)).flatten()
+        self.with_entity(|e| e.as_mob_mut().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`PathfinderMob`], if it is one.
@@ -1271,17 +1254,15 @@ impl EntityBase {
         &self,
         f: impl FnOnce(&dyn crate::entity::PathfinderMob) -> R,
     ) -> Option<R> {
-        self.with_entity_ref(|e| e.as_pathfinder_mob().map(f))
-            .flatten()
+        self.with_entity(|e| e.as_pathfinder_mob().map(f))
     }
 
     /// Runs a closure with the attached entity as a mutable [`PathfinderMob`], if it is one.
-    pub(crate) fn with_pathfinder_mob_mut<R>(
+    pub fn with_pathfinder_mob_mut<R>(
         &self,
         f: impl FnOnce(&mut dyn crate::entity::PathfinderMob) -> R,
     ) -> Option<R> {
         self.with_entity(|e| e.as_pathfinder_mob_mut().map(f))
-            .flatten()
     }
 
     /// Runs a closure with the attached entity as an [`Animal`](crate::entity::Animal), if it is one.
@@ -1289,7 +1270,7 @@ impl EntityBase {
         &self,
         f: impl FnOnce(&mut dyn crate::entity::Animal) -> R,
     ) -> Option<R> {
-        self.with_entity(|e| e.as_animal_mut().map(f)).flatten()
+        self.with_entity(|e| e.as_animal_mut().map(f))
     }
 
     /// Runs a closure with a shared reference to the attached entity downcast to `T`.
@@ -1298,7 +1279,6 @@ impl EntityBase {
     /// Returns `None` if no entity is attached or the entity type does not match `kind`.
     pub fn with_entity_as<T: EntityIdentifier, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         self.with_entity(|e| downcast_entity::<T>(e).map(f))
-            .flatten()
     }
 
     /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
@@ -1317,102 +1297,89 @@ impl EntityBase {
         self.entity.get().unwrap().lock_arc()
     }
 
-    // === Entity-specific delegates ===
-    // These go through `with_entity_ref`: mobs take the behavior lock, players
+    // These go through `with_entity`: mobs take the behavior lock, players
     // are reached lock-free. Never call these from code already inside this
     // entity's behavior lock — use `self` directly there. Prefer direct base
     // methods for lock-free state access.
 
     /// Returns the entity type for this entity.
     pub fn entity_type(&self) -> steel_registry::entity_type::EntityTypeRef {
-        self.with_entity_ref(|e| e.entity_type())
-            .expect("entity_type called before entity was attached")
+        self.with_entity(|e| e.entity_type())
     }
 
     /// Returns `true` if the entity can be targeted and damaged.
     pub fn attackable(&self) -> bool {
-        self.with_entity_ref(|e| e.attackable()).unwrap_or(false)
+        self.with_entity(|e| e.attackable())
     }
 
     /// Returns `true` if players can pick up this entity (items, orbs, etc.).
     pub fn is_pickable(&self) -> bool {
-        self.with_entity_ref(|e| e.is_pickable()).unwrap_or(false)
+        self.with_entity(|e| e.is_pickable())
     }
 
     /// Returns `true` if another entity can push this entity via physics.
     pub fn is_pushable(&self) -> bool {
-        self.with_entity_ref(|e| e.is_pushable()).unwrap_or(false)
+        self.with_entity(|e| e.is_pushable())
     }
 
     /// Returns `true` if the entity is a spectator (no physical presence).
     pub fn is_spectator(&self) -> bool {
-        self.with_entity_ref(|e| e.is_spectator()).unwrap_or(false)
+        self.with_entity(|e| e.is_spectator())
     }
 
     /// Returns `true` if the entity is alive (not dead/removed).
     pub fn is_alive(&self) -> bool {
-        self.with_entity_ref(|e| e.is_alive()).unwrap_or(false)
+        self.with_entity(|e| e.is_alive())
     }
 
     /// Returns `true` if this entity can accept an additional passenger.
     pub fn could_accept_passenger(&self) -> bool {
-        self.with_entity_ref(|e| e.could_accept_passenger())
-            .unwrap_or(false)
+        self.with_entity(|e| e.could_accept_passenger())
     }
 
     /// Returns `true` if `passenger` may board this entity.
     pub fn can_add_passenger(&self, passenger: &EntityBase) -> bool {
-        passenger
-            .with_entity_ref(|pass| {
-                self.with_entity_ref(|e| e.can_add_passenger(pass))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
+        passenger.with_entity(|pass| self.with_entity(|e| e.can_add_passenger(pass)))
     }
 
     /// Returns `true` if this entity should be broadcast to the given player.
     pub fn broadcast_to_player(&self, player: &crate::player::Player) -> bool {
-        self.with_entity_ref(|e| e.broadcast_to_player(player))
-            .unwrap_or(true)
+        self.with_entity(|e| e.broadcast_to_player(player))
     }
 
     /// Runs vanilla despawn checking for this entity.
     pub fn check_despawn(&self) {
-        self.with_entity_ref(|e| e.check_despawn());
+        self.with_entity(|e| e.check_despawn());
     }
 
     /// Applies damage to this entity from the given source.
     pub fn hurt(&self, source: &crate::entity::damage::DamageSource, amount: f32) -> bool {
         self.with_entity(|e| e.hurt(source, amount))
-            .unwrap_or(false)
     }
 
     /// Returns the entity's head yaw in degrees.
     pub fn head_yaw(&self) -> f32 {
-        self.with_entity_ref(|e| e.head_yaw()).unwrap_or(0.0)
+        self.with_entity(|e| e.head_yaw())
     }
 
     /// Returns the entity's spawn position for the add-entity packet.
     pub fn spawn_position(&self) -> DVec3 {
-        self.with_entity_ref(|e| e.spawn_position())
-            .unwrap_or(self.position())
+        self.with_entity(|e| e.spawn_position())
     }
 
     /// Returns the entity's spawn data integer for the add-entity packet.
     pub fn spawn_data(&self) -> i32 {
-        self.with_entity_ref(|e| e.spawn_data()).unwrap_or(0)
+        self.with_entity(|e| e.spawn_data())
     }
 
     /// Packs only the dirty synced entity data values.
     pub fn pack_dirty_entity_data(&self) -> Option<Vec<DataValue>> {
-        self.with_entity_ref(|e| e.pack_dirty_entity_data())
-            .flatten()
+        self.with_entity(|e| e.pack_dirty_entity_data())
     }
 
     /// Packs all synced entity data values.
     pub fn pack_all_entity_data(&self) -> Vec<DataValue> {
-        self.with_entity_ref(|e| e.pack_all_entity_data())
-            .unwrap_or_default()
+        self.with_entity(|e| e.pack_all_entity_data())
     }
 
     /// Runs pre-sync entity data updates.
@@ -1422,37 +1389,32 @@ impl EntityBase {
 
     /// Packs all syncable attribute snapshots.
     pub fn pack_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.with_entity_ref(|e| e.pack_syncable_attributes())
-            .unwrap_or_default()
+        self.with_entity(|e| e.pack_syncable_attributes())
     }
 
     /// Drains dirty syncable attribute snapshots.
     pub fn drain_dirty_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.with_entity_ref(|e| e.drain_dirty_syncable_attributes())
-            .unwrap_or_default()
+        self.with_entity(|e| e.drain_dirty_syncable_attributes())
     }
 
     /// Drains dirty mob effect sync changes.
     pub fn drain_dirty_mob_effects(&self) -> Vec<crate::entity::living_base::MobEffectSyncChange> {
-        self.with_entity_ref(|e| e.drain_dirty_mob_effects())
-            .unwrap_or_default()
+        self.with_entity(|e| e.drain_dirty_mob_effects())
     }
 
     /// Packs all equipment slots.
     pub fn pack_all_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
-        self.with_entity_ref(|e| e.pack_all_equipment())
-            .unwrap_or_default()
+        self.with_entity(|e| e.pack_all_equipment())
     }
 
     /// Drains dirty equipment slots.
     pub fn drain_dirty_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
-        self.with_entity_ref(|e| e.drain_dirty_equipment())
-            .unwrap_or_default()
+        self.with_entity(|e| e.drain_dirty_equipment())
     }
 
     /// Saves entity-type-specific NBT data.
     pub fn save_additional(&self, nbt: &mut simdnbt::owned::NbtCompound) {
-        self.with_entity_ref(|e| e.save_additional(nbt));
+        self.with_entity(|e| e.save_additional(nbt));
     }
 
     /// Loads entity-type-specific NBT data.
@@ -1477,8 +1439,7 @@ impl EntityBase {
 
     /// Returns whether this entity uses client-authoritative movement packets.
     pub fn uses_client_movement_packets(&self) -> bool {
-        self.with_entity_ref(|e| e.uses_client_movement_packets())
-            .unwrap_or(false)
+        self.with_entity(|e| e.uses_client_movement_packets())
     }
 
     /// Teleports this entity to a new world dimension.
@@ -1488,93 +1449,95 @@ impl EntityBase {
 
     /// Returns whether this entity blocks structure building.
     pub fn blocks_building(&self) -> bool {
-        self.with_entity_ref(|e| e.blocks_building())
-            .unwrap_or(false)
+        self.with_entity(|e| e.blocks_building())
     }
 
     /// Returns whether exactly one player is a passenger.
     pub fn has_exactly_one_player_passenger(&self) -> bool {
-        self.with_entity_ref(|e| e.has_exactly_one_player_passenger())
-            .unwrap_or(false)
+        self.with_entity(|e| e.has_exactly_one_player_passenger())
     }
 
     /// Returns the number of player passengers.
     pub fn count_player_passengers(&self) -> usize {
-        self.with_entity_ref(|e| e.count_player_passengers())
-            .unwrap_or(0)
+        self.with_entity(|e| e.count_player_passengers())
     }
 
-    // === Additional entity-method delegates ===
-
+    /// Todo
     pub fn is_passenger(&self) -> bool {
         self.vehicle().is_some()
     }
 
+    /// Todo
     pub fn has_passenger(&self, passenger: &EntityBase) -> bool {
         self.has_passenger_id(passenger.id())
     }
 
     /// Returns the passenger that drives this vehicle, if any.
     pub fn controlling_passenger(&self) -> Option<SharedEntity> {
-        self.with_entity_ref(|e| e.controlling_passenger())
-            .flatten()
+        self.with_entity(|e| e.controlling_passenger())
     }
 
+    /// Todo
     pub fn block_position(&self) -> BlockPos {
         BlockPos::from(self.position())
     }
 
+    /// Todo
     pub fn is_living_entity(&self) -> bool {
-        self.with_entity_ref(|e| e.is_living_entity())
-            .unwrap_or(false)
+        self.with_entity(|e| e.is_living_entity())
     }
 
+    /// Todo
     pub fn is_mob(&self) -> bool {
-        self.with_entity_ref(|e| e.is_mob()).unwrap_or(false)
+        self.with_entity(|e| e.is_mob())
     }
 
+    /// Todo
     pub fn forces_fall_flying_velocity_sync(&self) -> bool {
-        self.with_entity_ref(|e| e.forces_fall_flying_velocity_sync())
-            .unwrap_or(false)
+        self.with_entity(|e| e.forces_fall_flying_velocity_sync())
     }
 
+    /// Todo
     pub fn is_descending(&self) -> bool {
-        self.with_entity_ref(|e| e.is_descending()).unwrap_or(false)
+        self.with_entity(|e| e.is_descending())
     }
 
+    /// Todo
     pub fn can_be_collided_with(&self) -> bool {
-        self.with_entity_ref(|e| e.can_be_collided_with(None))
-            .unwrap_or(false)
+        self.with_entity(|e| e.can_be_collided_with(None))
     }
 
+    /// Todo
     pub fn can_interact_with_level(&self) -> bool {
-        self.with_entity_ref(|e| e.can_interact_with_level())
-            .unwrap_or(false)
+        self.with_entity(|e| e.can_interact_with_level())
     }
 
+    /// Todo
     pub fn get_eye_y(&self) -> f64 {
-        self.with_entity_ref(|e| e.get_eye_y())
-            .unwrap_or_else(|| self.dimensions().height as f64 * 0.85)
+        self.with_entity(|e| e.get_eye_y())
     }
 
+    /// Todo
     pub fn get_gravity(&self) -> f64 {
-        self.with_entity_ref(|e| e.get_gravity()).unwrap_or(0.08)
+        self.with_entity(|e| e.get_gravity())
     }
 
+    /// Todo
     pub fn known_movement(&self) -> DVec3 {
-        self.with_entity_ref(|e| e.known_movement())
-            .unwrap_or(DVec3::ZERO)
+        self.with_entity(|e| e.known_movement())
     }
 
+    /// Todo
     pub fn on_climbable(&self) -> bool {
-        self.with_entity_ref(|e| e.on_climbable()).unwrap_or(false)
+        self.with_entity(|e| e.on_climbable())
     }
 
+    /// Todo
     pub fn refresh_fluid_contact(&self) -> EntityFluidContact {
-        self.with_entity_ref(|e| e.refresh_fluid_contact())
-            .unwrap_or_default()
+        self.with_entity(|e| e.refresh_fluid_contact())
     }
 
+    /// Todo
     pub fn set_pose(&self, pose: EntityPose) {
         self.with_entity(|e| e.set_pose(pose));
     }
@@ -1583,37 +1546,35 @@ impl EntityBase {
     ///
     /// Takes `&dyn Entity` because callers invoke this from inside the
     /// leashee's own behavior code, where re-locking the leashee would deadlock.
-    pub fn notify_leashee_removed(&self, leashable: &dyn Entity) {
-        self.with_entity_ref(|e| e.notify_leashee_removed(leashable));
-    }
+    //pub fn notify_leashee_removed(&self, leashable: &dyn Entity) {
+    //    self.with_entity(|e| e.notify_leashee_removed(leashable));
+    //}
 
     /// Pushes this entity away from `pusher` via vanilla physics.
     ///
     /// Takes `&dyn Entity` because pushers call this from inside their own
     /// behavior code, where re-locking the pusher would deadlock.
     pub fn push_entity(&self, pusher: &dyn Entity) {
-        self.with_entity_ref(|e| e.push_entity(pusher));
+        self.with_entity(|e| e.push_entity(pusher));
     }
 
     /// Returns `true` if an attack from `source` should be skipped.
     pub fn skip_attack_interaction(&self, source: &dyn Entity) -> bool {
-        self.with_entity_ref(|e| e.skip_attack_interaction(source))
-            .unwrap_or(false)
+        self.with_entity(|e| e.skip_attack_interaction(source))
     }
 
+    /// Todo
     pub fn can_ride(&self, vehicle: &EntityBase) -> bool {
-        vehicle
-            .with_entity_ref(|v| self.with_entity_ref(|e| e.can_ride(v)).unwrap_or(false))
-            .unwrap_or(false)
+        vehicle.with_entity(|v| self.with_entity(|e| e.can_ride(v)))
     }
 
+    /// Todo
     pub fn move_entity(
         &self,
         mover_type: crate::physics::entity_move::MoverType,
         delta: DVec3,
     ) -> Option<crate::physics::entity_move::MoveResult> {
         self.with_entity(|e| e.move_entity(mover_type, delta))
-            .flatten()
     }
 
     /// Applies accepted client-authored vehicle movement.
@@ -1622,11 +1583,9 @@ impl EntityBase {
         &self,
         world: &Arc<World>,
         accepted: crate::entity::AcceptedClientMovement,
-    ) -> Option<Result<crate::entity::AcceptedClientMovementOutcome, EntityMoveError>> {
+    ) -> Result<crate::entity::AcceptedClientMovementOutcome, EntityMoveError> {
         self.with_entity(|e| e.apply_accepted_client_vehicle_movement(world, accepted))
     }
-
-    // === Accessors for Entity trait delegation ===
 
     /// Gets the entity's unique network ID.
     #[inline]
@@ -2815,7 +2774,6 @@ impl EntityBase {
         location: DVec3,
     ) -> InteractionResult {
         self.with_entity(|e| e.interact(player, hand, location))
-            .unwrap()
     }
 
     /// Applies vanilla fall damage. Base entities only propagate to passengers.
@@ -2826,7 +2784,6 @@ impl EntityBase {
         source: &DamageSource,
     ) -> bool {
         self.with_entity(|e| e.cause_fall_damage(fall_distance, damage_modifier, source))
-            .unwrap()
     }
 }
 

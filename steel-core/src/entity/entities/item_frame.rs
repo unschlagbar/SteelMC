@@ -132,6 +132,7 @@ impl ItemFrameEntity {
         self.entity_data.item.get().has(MAP_ID)
     }
 
+    /// Todo
     pub fn frame_center(block_pos: BlockPos, direction: Direction) -> DVec3 {
         let (dx, dy, dz) = direction.offset();
         DVec3::new(

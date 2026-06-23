@@ -208,12 +208,10 @@ impl LeashData {
     /// Computes the vanilla leash attachment for a holder handle: fence knots
     /// attach by block position, everything else by UUID.
     fn holder_attachment(holder: &SharedEntity) -> LeashAttachment {
-        holder
-            .with_entity_ref(|e| {
-                e.as_leash_fence_knot()
-                    .map(|knot| LeashAttachment::FenceKnot(knot.block_pos()))
-            })
-            .flatten()
+        let mut entity = holder.lock_entity();
+        entity
+            .downcast::<LeashFenceKnotEntity>()
+            .map(|knot| LeashAttachment::FenceKnot(knot.block_pos()))
             .unwrap_or_else(|| LeashAttachment::Entity(holder.uuid()))
     }
 
@@ -1070,7 +1068,7 @@ pub trait Mob: LivingEntity {
         if let Some(old_holder) = old_holder
             && old_holder.id() != holder.id()
         {
-            old_holder.notify_leashee_removed(self.as_entity_event_source());
+            old_holder.with_entity(|e| e.notify_leashee_removed(self.as_entity_event_source()));
         }
         true
     }
@@ -1088,10 +1086,8 @@ pub trait Mob: LivingEntity {
                 return;
             }
 
-            let distance_to = holder
-                .with_entity_ref(|h| self.leash_distance_to(h))
-                .unwrap_or(0.0);
-            holder.with_entity_ref(|h| self.when_leashed_to(h));
+            let distance_to = holder.with_entity(|h| self.leash_distance_to(h));
+            holder.with_entity(|h| self.when_leashed_to(h));
             let angular_momentum_before_distance_action = self.leash_angular_momentum();
             if distance_to > self.leash_snap_distance() {
                 if let Some(world) = self.level() {
@@ -1109,13 +1105,11 @@ pub trait Mob: LivingEntity {
                 > self.leash_elastic_distance()
                     - f64::from(holder.dimensions().width)
                     - f64::from(self.base().dimensions().width)
-                && holder
-                    .with_entity_ref(|h| self.check_elastic_interactions(h))
-                    .unwrap_or(false)
+                && holder.with_entity(|h| self.check_elastic_interactions(h))
             {
                 self.on_elastic_leash_pull();
             } else {
-                holder.with_entity_ref(|h| self.close_range_leash_behaviour(h));
+                holder.with_entity(|h| self.close_range_leash_behaviour(h));
             }
             if !self.apply_leash_angular_momentum()
                 && let Some(angular_momentum) = angular_momentum_before_distance_action
@@ -1167,14 +1161,14 @@ pub trait Mob: LivingEntity {
         let holder = self.remove_leash_state();
         let _ = self.spawn_at_location(ItemStack::new(&vanilla_items::ITEMS.lead), 0.0);
         if let Some(holder) = holder {
-            holder.notify_leashee_removed(self.as_entity_event_source());
+            holder.with_entity(|e| e.notify_leashee_removed(self.as_entity_event_source()));
         }
     }
 
     fn remove_leash(&self) {
         if self.leash_holder().is_some() {
             if let Some(holder) = self.remove_leash_state() {
-                holder.notify_leashee_removed(self.as_entity_event_source());
+                holder.with_entity(|e| e.notify_leashee_removed(self.as_entity_event_source()));
             }
         }
     }
@@ -1278,9 +1272,7 @@ pub trait Mob: LivingEntity {
 
     fn controlling_passenger_mob(&self) -> Option<SharedEntity> {
         let first_passenger = self.first_passenger()?;
-        let can_control = first_passenger
-            .with_entity_ref(|e| e.can_control_vehicle())
-            .unwrap_or(false);
+        let can_control = first_passenger.with_entity(|e| e.can_control_vehicle());
         if self.is_no_ai() || !first_passenger.is_mob() || !can_control {
             return None;
         }
@@ -2049,8 +2041,8 @@ pub trait PathfinderMob: Mob {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle() {
             // The closure consumes `path`; only enter it when there is a
             // pathfinder vehicle so we don't lose `path` on the fallthrough.
-            if let Some(result) =
-                vehicle.with_pathfinder_mob(|pathfinder| pathfinder.move_to_path(path, speed_modifier))
+            if let Some(result) = vehicle
+                .with_pathfinder_mob(|pathfinder| pathfinder.move_to_path(path, speed_modifier))
             {
                 return result;
             }
@@ -2377,7 +2369,12 @@ mod tests {
         fn new(nearest_player_distance_sqr: Option<f64>, remove_when_far_away: bool) -> Self {
             // Build a real (strongly held) base so `base()`/base-backed state
             // works and the registry is initialized — mirrors `with_position_self`.
-            Self::with_position_self(0, DVec3::ZERO, nearest_player_distance_sqr, remove_when_far_away)
+            Self::with_position_self(
+                0,
+                DVec3::ZERO,
+                nearest_player_distance_sqr,
+                remove_when_far_away,
+            )
         }
 
         fn with_position_self(

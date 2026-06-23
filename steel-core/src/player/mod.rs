@@ -1504,12 +1504,10 @@ impl Entity for Player {
             return;
         };
 
-        let passenger_ids = old_vehicle
-            .with_entity_ref(|vehicle| {
-                self.remove_active_effects_for_vehicle(vehicle);
-                Self::passenger_ids_for_packet(vehicle)
-            })
-            .unwrap_or_default();
+        let passenger_ids = old_vehicle.with_entity(|vehicle| {
+            self.remove_active_effects_for_vehicle(vehicle);
+            Self::passenger_ids_for_packet(vehicle)
+        });
         self.send_packet(CSetPassengers::new(old_vehicle.id(), passenger_ids));
     }
 
@@ -1533,12 +1531,10 @@ impl Entity for Player {
                 self.id()
             );
         }
-        let passenger_ids = entity_to_ride
-            .with_entity_ref(|vehicle| {
-                self.send_active_effects_for_vehicle(vehicle);
-                Self::passenger_ids_for_packet(vehicle)
-            })
-            .unwrap_or_default();
+        let passenger_ids = entity_to_ride.with_entity(|vehicle| {
+            self.send_active_effects_for_vehicle(vehicle);
+            Self::passenger_ids_for_packet(vehicle)
+        });
         self.send_packet(CSetPassengers::new(entity_to_ride.id(), passenger_ids));
         true
     }

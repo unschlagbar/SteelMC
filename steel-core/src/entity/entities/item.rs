@@ -200,7 +200,7 @@ impl ItemEntity {
         world: Weak<World>,
     ) -> SharedEntity {
         let yaw = rand::random::<f32>() * 360.0;
-        std::sync::Arc::new_cyclic(|weak: &Weak<EntityBase>| {
+        Arc::new_cyclic(|weak: &Weak<EntityBase>| {
             let mut entity_data = ItemEntityData::new();
             entity_data.set_item(item);
             let inner = Self {
@@ -228,8 +228,6 @@ impl ItemEntity {
             rand::random::<f64>() * 0.2 - 0.1,
         )
     }
-
-    // === Item Access ===
 
     /// Gets a clone of the item stack.
     #[must_use]
@@ -706,10 +704,6 @@ impl Entity for ItemEntity {
 
     fn should_play_lava_hurt_sound(&self) -> bool {
         self.get_health() <= 0 || self.tick_count() % 10 == 0
-    }
-
-    fn as_item_entity_ref(&self) -> Option<&ItemEntity> {
-        Some(self)
     }
 
     fn player_touch(&mut self, player: &mut Player) {

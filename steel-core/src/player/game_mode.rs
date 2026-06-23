@@ -352,7 +352,10 @@ impl Player {
 
     /// Ticks vanilla attack-strength recovery and resets it on main-hand item changes.
     pub(super) fn tick_attack_strength(&self) {
-        self.server_player().tick_state.lock().advance_attack_strength_ticker();
+        self.server_player()
+            .tick_state
+            .lock()
+            .advance_attack_strength_ticker();
 
         let main_hand_item = {
             let inventory = self.inventory.lock();
@@ -373,7 +376,10 @@ impl Player {
     }
 
     fn reset_attack_strength_ticker(&self) {
-        self.server_player().tick_state.lock().reset_attack_strength_ticker();
+        self.server_player()
+            .tick_state
+            .lock()
+            .reset_attack_strength_ticker();
     }
 
     fn current_item_attack_strength_delay(&self) -> f32 {
@@ -400,7 +406,11 @@ impl Player {
         partial_tick: f32,
         attack_strength_delay: f32,
     ) -> f32 {
-        let ticker = self.server_player().tick_state.lock().attack_strength_ticker() as f32;
+        let ticker = self
+            .server_player()
+            .tick_state
+            .lock()
+            .attack_strength_ticker() as f32;
         ((ticker + partial_tick) / attack_strength_delay).clamp(0.0, 1.0)
     }
 
@@ -553,7 +563,7 @@ impl Player {
             .inflate(1.0);
         let mut hits = world
             .get_entities_in_aabb_matching(&search_area, |entity| {
-                self.can_piercing_hit_entity(entity)
+                entity.with_entity(|e| self.can_piercing_hit_entity(e))
             })
             .into_iter()
             .filter_map(|entity| {
@@ -915,7 +925,12 @@ impl Player {
         }
 
         let optimistic_strength = {
-            let ticker = self.server_player().tick_state.lock().attack_strength_ticker() + tolerance;
+            let ticker = self
+                .server_player()
+                .tick_state
+                .lock()
+                .attack_strength_ticker()
+                + tolerance;
             ticker as f32 / self.current_item_attack_strength_delay()
         };
         optimistic_strength < required_strength
@@ -1087,12 +1102,19 @@ impl Player {
     /// The ack is batched and sent once per tick (in `tick_ack_block_changes`),
     /// matching vanilla behavior.
     pub fn ack_block_changes_up_to(&self, sequence: i32) {
-        self.server_player().tick_state.lock().ack_block_changes_up_to(sequence);
+        self.server_player()
+            .tick_state
+            .lock()
+            .ack_block_changes_up_to(sequence);
     }
 
     /// Sends pending block change ack if any. Called once per tick.
     pub(super) fn tick_ack_block_changes(&self) {
-        let sequence = self.server_player().tick_state.lock().take_ack_block_changes_up_to();
+        let sequence = self
+            .server_player()
+            .tick_state
+            .lock()
+            .take_ack_block_changes_up_to();
         if sequence > -1 {
             self.send_packet(CBlockChangedAck { sequence });
         }

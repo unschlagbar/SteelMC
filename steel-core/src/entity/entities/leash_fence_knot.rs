@@ -117,8 +117,9 @@ impl LeashFenceKnotEntity {
         );
         world
             .get_entities_in_aabb_matching(&search_box, |entity| {
+                let mut entity = entity.lock_entity();
                 entity
-                    .as_leash_fence_knot()
+                    .downcast::<Self>()
                     .is_some_and(|knot| knot.block_pos() == pos)
             })
             .into_iter()
@@ -164,6 +165,8 @@ impl LeashFenceKnotEntity {
         )
     }
 
+    /// Todo
+    #[allow(unused)]
     fn knot_bounding_box(entity_type: EntityTypeRef, block_pos: BlockPos) -> WorldAabb {
         let center = Self::knot_center(block_pos);
         let half_width = f64::from(entity_type.dimensions.width) / 2.0;
@@ -195,16 +198,6 @@ impl Entity for LeashFenceKnotEntity {
             f64::from(block_pos.y()),
             f64::from(block_pos.z()),
         )
-    }
-
-    fn as_leash_fence_knot(&self) -> Option<&LeashFenceKnotEntity> {
-        Some(self)
-    }
-
-    fn notify_leashee_removed(&self, _leashable: &dyn Entity) {
-        if self.level().is_some() && self.leashables_leashed_to().is_empty() {
-            self.set_removed(RemovalReason::Discarded);
-        }
     }
 
     fn tick(&mut self) {

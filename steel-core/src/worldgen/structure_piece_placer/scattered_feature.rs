@@ -312,7 +312,8 @@ impl<'a, 'world> ScatteredFeaturePlacer<'a, 'world> {
         )
     }
 
-    pub(super) fn weak_world(&self) -> Weak<World> {
+    #[allow(unused)]
+    pub(crate) fn weak_world(&self) -> Weak<World> {
         self.region.weak_world()
     }
 

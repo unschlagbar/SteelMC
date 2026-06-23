@@ -535,9 +535,7 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
                 Some(source) => {
                     entity.id() != source.id()
                         && !entity.is_spectator()
-                        && entity
-                            .with_entity_ref(|e| source.can_collide_with(e))
-                            .unwrap_or(false)
+                        && entity.with_entity(|e| source.can_collide_with(e))
                 }
                 None => !entity.is_spectator() && entity.can_be_collided_with(),
             })
@@ -563,9 +561,7 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
                         Some(source) => {
                             entity.id() != source.id()
                                 && !entity.is_spectator()
-                                && entity
-                                    .with_entity_ref(|e| source.can_collide_with(e))
-                                    .unwrap_or(false)
+                                && entity.with_entity(|e| source.can_collide_with(e))
                         }
                         None => !entity.is_spectator() && entity.can_be_collided_with(),
                     }

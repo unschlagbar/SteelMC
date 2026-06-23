@@ -585,7 +585,7 @@ impl Player {
                 reset_fall_distance: false,
             },
         );
-        match outcome.unwrap_or(Ok(AcceptedClientMovementOutcome::Handled)) {
+        match outcome {
             Ok(AcceptedClientMovementOutcome::Applied) => {}
             Ok(AcceptedClientMovementOutcome::Handled) => return,
             Err(error) => {
@@ -610,7 +610,7 @@ impl Player {
             .lock()
             .set_last_known_client_movement(client_delta);
         world.chunk_map.update_player_status(self);
-        vehicle.with_entity_ref(|v| {
+        vehicle.with_entity(|v| {
             self.record_client_vehicle_floating(
                 &world,
                 v,

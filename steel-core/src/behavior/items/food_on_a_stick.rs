@@ -35,18 +35,15 @@ impl ItemBehavior for FoodOnAStickItem {
         if vehicle.entity_type() != self.can_interact_with {
             return self.pass_without_boost();
         }
-        if let Some(result) = vehicle
-            .with_entity(|e| {
-                let Some(steerable) = e.as_item_steerable() else {
-                    return Some(self.pass_without_boost());
-                };
-                if !steerable.boost() {
-                    return Some(self.pass_without_boost());
-                };
-                None
-            })
-            .unwrap()
-        {
+        if let Some(result) = vehicle.with_entity(|e| {
+            let Some(steerable) = e.as_item_steerable() else {
+                return Some(self.pass_without_boost());
+            };
+            if !steerable.boost() {
+                return Some(self.pass_without_boost());
+            };
+            None
+        }) {
             return result;
         }
 

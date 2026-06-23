@@ -620,7 +620,7 @@ impl EntityTracker {
                     &get_player_pos,
                 )
             } else {
-                base.with_entity_ref(|e| {
+                base.with_entity(|e| {
                     Self::visible_players_for_entity(
                         entity_id,
                         base,
@@ -632,7 +632,6 @@ impl EntityTracker {
                         &get_player_pos,
                     )
                 })
-                .unwrap_or_default()
             };
 
             let mut seen_by = tracked.seen_by.write();
@@ -688,20 +687,18 @@ impl EntityTracker {
             // Runs from `send_changes` outside any behavior lock, so resolve the concrete
             // entity once via `with_entity_ref` (player-safe; mobs lock the mutex once).
             let base = entity.as_ref();
-            let new_seen_by = base
-                .with_entity_ref(|e| {
-                    Self::visible_players_for_entity(
-                        entity_id,
-                        base,
-                        e,
-                        tracked.registered_chunk,
-                        tracked.tracking_range,
-                        get_players_in_chunk,
-                        get_player,
-                        get_player_pos,
-                    )
-                })
-                .unwrap_or_default();
+            let new_seen_by = base.with_entity(|e| {
+                Self::visible_players_for_entity(
+                    entity_id,
+                    base,
+                    e,
+                    tracked.registered_chunk,
+                    tracked.tracking_range,
+                    get_players_in_chunk,
+                    get_player,
+                    get_player_pos,
+                )
+            });
 
             let mut seen_by = tracked.seen_by.write();
             players_to_remove.extend(seen_by.difference(&new_seen_by).copied());
@@ -910,7 +907,7 @@ impl EntityTracker {
 }
 
 fn leash_holder_id(entity: &EntityBase) -> Option<i32> {
-    entity.with_entity_ref(leash_holder_id_of).flatten()
+    entity.with_entity(|e| leash_holder_id_of(e))
 }
 
 /// Leash holder id from an already-locked concrete entity, without re-locking.
@@ -991,9 +988,7 @@ impl EntitySpawnPairing {
     fn from_entity(entity: &SharedEntity, passenger_packets: Vec<CSetPassengers>) -> Self {
         // Resolve the concrete entity once (player-safe). Callers running inside the
         // entity's behavior lock must use `from_locked_entity` instead.
-        entity
-            .with_entity(|e| Self::from_locked_entity(entity.as_ref(), e, passenger_packets))
-            .expect("spawn pairing requires an attached entity")
+        entity.with_entity(|e| Self::from_locked_entity(entity.as_ref(), e, passenger_packets))
     }
 
     /// Builds the spawn pairing from an already-locked concrete entity, reading

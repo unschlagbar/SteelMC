@@ -756,11 +756,11 @@ impl WorldEntityManager {
     pub fn get_entities_in_aabb_matching(
         &self,
         aabb: &WorldAabb,
-        mut predicate: impl FnMut(&dyn Entity) -> bool,
+        predicate: impl FnMut(&SharedEntity) -> bool,
     ) -> Vec<SharedEntity> {
         self.get_entities_in_aabb(aabb)
             .into_iter()
-            .filter(|entity| entity.with_entity_ref(|e| predicate(e)).unwrap_or(false))
+            .filter(predicate)
             .collect()
     }
 
@@ -770,11 +770,11 @@ impl WorldEntityManager {
         &self,
         aabb: &WorldAabb,
         origin: DVec3,
-        mut predicate: impl FnMut(&dyn Entity) -> bool,
+        mut predicate: impl FnMut(&mut dyn Entity) -> bool,
     ) -> Option<SharedEntity> {
         self.get_entities_in_aabb(aabb)
             .into_iter()
-            .filter(|entity| entity.with_entity_ref(|e| predicate(e)).unwrap_or(false))
+            .filter(|entity| entity.with_entity(|e| predicate(e)))
             .min_by(|first, second| {
                 first
                     .position()

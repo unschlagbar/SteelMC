@@ -90,8 +90,7 @@ impl PotentSulfurBlockEntity {
 
     fn find_source_block(world: &World, origin: BlockPos) -> Option<BlockPos> {
         let max_y = origin.y() + MAX_WATER_BLOCKS_ABOVE + 1;
-        let geyser_position_context =
-            BlockCollisionContext::entity(f64::from(origin.y()), false);
+        let geyser_position_context = BlockCollisionContext::entity(f64::from(origin.y()), false);
         let mut pos = BlockPos::new(origin.x(), origin.y() + 1, origin.z());
 
         while pos.y() <= max_y {
@@ -205,18 +204,12 @@ impl PotentSulfurBlockEntity {
                 continue;
             }
             let vel = entity.velocity();
-            entity.with_entity_ref(|e| e.check_fall_distance_accumulation());
+            entity.with_entity(|e| e.check_fall_distance_accumulation());
 
-            if !entity
-                .with_entity_ref(|e| e.can_simulate_movement())
-                .unwrap_or(false)
-            {
+            if !entity.with_entity(|e| e.can_simulate_movement()) {
                 continue;
             }
-            if entity
-                .with_entity_ref(|e| e.is_flying_player())
-                .unwrap_or(false)
-            {
+            if entity.with_entity(|e| e.is_flying_player()) {
                 continue;
             }
             if entity.is_passenger() {

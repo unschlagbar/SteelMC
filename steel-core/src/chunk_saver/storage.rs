@@ -3051,37 +3051,17 @@ mod tests {
 
         let promoted = LevelChunk::from_proto(loaded_proto, 0, 16, Weak::new());
         assert_eq!(promoted.pending_entities.len(), 1);
-        assert!(
-            promoted.pending_entities[0]
-                .with_entity_ref(|e| e.is_no_gravity())
-                .unwrap()
-        );
-        assert!(
-            promoted.pending_entities[0]
-                .with_entity_ref(|e| e.is_invulnerable())
-                .unwrap()
-        );
+        assert!(promoted.pending_entities[0].with_entity(|e| e.is_no_gravity()));
+        assert!(promoted.pending_entities[0].with_entity(|e| e.is_invulnerable()));
         assert_eq!(promoted.pending_entities[0].air_supply(), 120);
         assert_eq!(promoted.pending_entities[0].portal_cooldown(), 9);
         assert_eq!(
             promoted.pending_entities[0].custom_name(),
             Some(TextComponent::plain("End Test"))
         );
-        assert!(
-            promoted.pending_entities[0]
-                .with_entity_ref(|e| e.is_custom_name_visible())
-                .unwrap()
-        );
-        assert!(
-            promoted.pending_entities[0]
-                .with_entity_ref(|e| e.is_silent())
-                .unwrap()
-        );
-        assert!(
-            promoted.pending_entities[0]
-                .with_entity_ref(|e| e.has_glowing_tag())
-                .unwrap()
-        );
+        assert!(promoted.pending_entities[0].with_entity(|e| e.is_custom_name_visible()));
+        assert!(promoted.pending_entities[0].with_entity(|e| e.is_silent()));
+        assert!(promoted.pending_entities[0].with_entity(|e| e.has_glowing_tag()));
         assert_eq!(
             promoted.pending_entities[0].tags(),
             vec!["steel:test".to_owned()]

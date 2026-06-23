@@ -78,7 +78,9 @@ impl Goal for FollowMobGoal {
             if entity.uuid() == mob.uuid() {
                 return false;
             }
-            let Some(candidate_mob) = entity.as_mob() else {
+            let entity = entity.lock_entity();
+
+            let Some(candidate_mob) = entity.get().as_mob() else {
                 return false;
             };
             !candidate_mob.is_invisible() && (self.follow_predicate)(mob, candidate_mob)

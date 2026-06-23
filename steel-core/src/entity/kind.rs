@@ -49,6 +49,7 @@ pub fn downcast_entity<T: EntityIdentifier>(entity: &mut dyn Entity) -> Option<&
 /// if entity.entity_id() == ChestMinecartEntity::ID { ... }
 /// ```
 pub trait EntityIdentifier {
+    /// The vanilla Identifier used for downcasting validation
     const KEY: Identifier;
 }
 

@@ -29,6 +29,7 @@ impl RawEntity {
         Self::new_raw(next_entity_id(), entity_type)
     }
 
+    /// Todo
     #[must_use]
     pub fn new_raw(id: i32, entity_type: EntityTypeRef) -> SharedEntity {
         EntityBase::pack_with(

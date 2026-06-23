@@ -5,6 +5,7 @@ pub(crate) struct PlayerLifecycleState {
     pending_client_loaded: bool,
     client_loaded_timeout: i32,
     domain_switching: bool,
+    #[allow(unused)]
     pending_respawn: bool,
 }
 
@@ -92,7 +93,8 @@ impl PlayerLifecycleState {
         self.domain_switching = false;
     }
 
-    pub(super) const fn begin_respawn(&mut self) -> bool {
+    #[allow(unused)]
+    pub const fn begin_respawn(&mut self) -> bool {
         if self.pending_respawn {
             return false;
         }
@@ -101,7 +103,8 @@ impl PlayerLifecycleState {
         true
     }
 
-    pub(super) const fn finish_respawn(&mut self) {
+    #[allow(unused)]
+    pub const fn finish_respawn(&mut self) {
         self.pending_respawn = false;
     }
 

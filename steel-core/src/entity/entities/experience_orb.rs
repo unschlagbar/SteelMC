@@ -524,10 +524,6 @@ impl Entity for ExperienceOrbEntity {
         Some(&mut self.entity_data)
     }
 
-    fn as_experience_orb_ref(&self) -> Option<&ExperienceOrbEntity> {
-        Some(self)
-    }
-
     fn player_touch(&mut self, player: &mut Player) {
         self.try_pickup(player);
     }
