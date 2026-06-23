@@ -86,7 +86,8 @@ use crate::{
     chunk_saver::{ChunkStorage, RamOnlyStorage, RegionManager},
     entity::{
         AddEntityError, Entity, EntityChangeSenders, EntityChunkCallback, EntityMovementSyncPacket,
-        EntityOwnership, EntityTracker, InactiveEntityCallback, MobEffectSyncPacket, RemovalReason,
+        EntityOwnership, EntityTracker, EntityVisibility, InactiveEntityCallback,
+        MobEffectSyncPacket, RemovalReason,
         SharedEntity, WorldEntityManager, entities::ItemEntity,
     },
     fluid::{FluidStateExt as _, fluid_state_to_block},
@@ -440,6 +441,7 @@ impl World {
                 chunk_runtime,
                 weak_self.clone(),
                 dimension_type,
+                sea_level,
                 storage,
                 config.generator,
                 generation_pool,
@@ -840,7 +842,7 @@ impl World {
                 break;
             }
 
-            if is_face_full(state.get_collision_shape(), Direction::Up) {
+            if is_face_full(state.get_static_collision_shape(), Direction::Up) {
                 return Some(BlockPos::new(x, y + 1, z));
             }
         }
@@ -1775,11 +1777,9 @@ impl World {
         let mut missing_chunk = false;
         let biome_id = fuzzed_biome_at_block(
             biome_zoom_seed,
-            pos.x(),
-            pos.y(),
-            pos.z(),
-            |quart_x, quart_y, quart_z| {
-                self.noise_biome_id(quart_x, quart_y, quart_z)
+            pos,
+            |quart| {
+                self.noise_biome_id(quart.x, quart.y, quart.z)
                     .unwrap_or_else(|| {
                         missing_chunk = true;
                         0
@@ -2425,7 +2425,7 @@ impl World {
         to: DVec3,
     ) -> (bool, Option<Direction>) {
         let state = self.get_block_state(block_pos);
-        let shape = state.get_outline_shape();
+        let shape = state.get_static_outline_shape();
 
         match Self::clip_shape(block_pos, from, to, shape) {
             Some(hit) => (true, Some(hit.direction)),
@@ -2562,7 +2562,7 @@ impl World {
         state: BlockStateId,
         block_hit: ClipHitResult,
     ) -> ClipHitResult {
-        let Some(override_hit) = Self::clip_shape(pos, from, to, state.get_interaction_shape())
+        let Some(override_hit) = Self::clip_shape(pos, from, to, state.get_static_interaction_shape())
         else {
             return block_hit;
         };
@@ -2580,9 +2580,9 @@ impl World {
 
     fn clip_block_shape(&self, state: BlockStateId, shape: ClipBlockShape) -> VoxelShape {
         match shape {
-            ClipBlockShape::Collider => state.get_collision_shape(),
-            ClipBlockShape::Outline => state.get_outline_shape(),
-            ClipBlockShape::Visual => state.get_visual_shape(),
+            ClipBlockShape::Collider => state.get_static_collision_shape(),
+            ClipBlockShape::Outline => state.get_static_outline_shape(),
+            ClipBlockShape::Visual => state.get_static_visual_shape(),
             ClipBlockShape::FallDamageResetting { entity_is_player } => {
                 self.fall_damage_resetting_shape(state, entity_is_player)
             }
@@ -3310,7 +3310,7 @@ impl World {
         // Generate a random seed for sound variations
         let seed = rand::random::<i64>();
 
-        let packet = CSound::new(sound, source, pos.x, pos.y, pos.z, volume, pitch, seed);
+        let packet = CSound::new(sound, source, pos, volume, pitch, seed);
         let Ok(encoded) =
             EncodedPacket::from_bare(packet, self.compression, ConnectionProtocol::Play)
         else {
@@ -3573,6 +3573,20 @@ impl World {
         self.register_loaded_entity(entity)?;
         self.mark_chunk_dirty(chunk_pos);
         Ok(())
+    }
+
+    /// No-op shim for upstream's chunk entity-visibility lifecycle.
+    ///
+    /// Upstream `#225` drives entity activation through
+    /// `entity_manager.update_chunk_visibility`; this branch keeps its own
+    /// activation path (`on_entity_chunk_loaded`/`on_entity_chunk_unload_*`),
+    /// so the auto-merged `chunk_holder`/`chunk_map` callers resolve here to a
+    /// no-op rather than reintroducing the incompatible system.
+    pub(crate) fn update_entity_chunk_visibility(
+        self: &Arc<Self>,
+        _pos: ChunkPos,
+        _visibility: EntityVisibility,
+    ) {
     }
 
     pub(crate) fn on_entity_chunk_loaded(self: &Arc<Self>, pos: ChunkPos) {

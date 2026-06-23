@@ -27,11 +27,12 @@ pub mod player_data;
 pub mod player_data_storage;
 pub mod player_inventory;
 pub mod profile_key;
-mod signature_cache;
-mod teleport_state;
 /// The vanilla `ServerPlayer` split: the outer per-connection session that owns
 /// network/session state and references the locked [`Player`] entity.
 pub mod server_player;
+mod signature_cache;
+mod spam_throttler;
+mod teleport_state;
 mod tick_state;
 pub mod view;
 
@@ -42,8 +43,8 @@ use glam::DVec3;
 use health_sync::HealthSyncState;
 pub use input_state::PlayerInput;
 pub use message_validator::LastSeenMessagesValidator;
-pub use server_player::ServerPlayer;
 use movement_state::MovementState;
+pub use server_player::ServerPlayer;
 pub use signature_cache::{LastSeen, MessageCache};
 use steel_protocol::{
     packet_traits::{CompressionInfo, EncodedPacket},
@@ -286,12 +287,12 @@ impl Player {
 
     /// Returns the player's previous game mode.
     #[must_use]
-    pub fn previous_game_mode(&self) -> GameType {
+    pub fn previous_game_mode(&self) -> Option<GameType> {
         self.game_modes.lock().previous()
     }
 
     /// Restores current and previous game mode from persistent player data.
-    pub(crate) fn restore_game_modes(&self, current: GameType, previous: GameType) {
+    pub(crate) fn restore_game_modes(&self, current: GameType, previous: Option<GameType>) {
         self.game_modes.lock().set_pair(current, previous);
     }
 
@@ -1007,18 +1008,27 @@ impl Player {
 
     /// Marks whether the client has loaded into play.
     pub fn set_client_loaded(&self, client_loaded: bool) {
-        self.server_player().lifecycle.lock().set_client_loaded(client_loaded);
+        self.server_player()
+            .lifecycle
+            .lock()
+            .set_client_loaded(client_loaded);
     }
 
     /// Applies or buffers the client's play-loaded acknowledgement.
     ///
     /// Returns `true` when the acknowledgement can run gameplay side effects now.
     pub fn mark_client_loaded_from_network(&self) -> bool {
-        self.server_player().lifecycle.lock().mark_client_loaded_from_network()
+        self.server_player()
+            .lifecycle
+            .lock()
+            .mark_client_loaded_from_network()
     }
 
     fn tick_client_load_timeout(&self) {
-        self.server_player().lifecycle.lock().tick_client_load_timeout();
+        self.server_player()
+            .lifecycle
+            .lock()
+            .tick_client_load_timeout();
     }
 
     pub(crate) fn set_pending_root_vehicle(
@@ -1078,7 +1088,10 @@ impl Player {
 
     /// Sets vanilla `Player.takeXpDelay`.
     pub(crate) fn set_take_xp_delay(&self, delay: i32) {
-        self.server_player().tick_state.lock().set_take_xp_delay(delay);
+        self.server_player()
+            .tick_state
+            .lock()
+            .set_take_xp_delay(delay);
     }
 
     /// Gives raw experience points to this player.
@@ -1270,7 +1283,7 @@ impl ServerPlayer {
                 dimension_name: new_world.key.clone(),
                 hashed_seed: new_world.obfuscated_seed(),
                 gamemode: player.game_mode() as u8,
-                previous_gamemode: player.previous_game_mode() as i8,
+                previous_gamemode: player.previous_game_mode().map_or(-1, |g| g as i8),
                 is_debug: false,
                 is_flat: new_world.is_flat,
                 has_death_location: false,
@@ -1634,6 +1647,10 @@ impl Entity for Player {
         true
     }
 
+    fn is_flying_player(&self) -> bool {
+        self.is_flying()
+    }
+
     fn is_effective_ai(&self) -> bool {
         true
     }
@@ -1831,10 +1848,11 @@ impl Entity for Player {
             // The reset+spawn tail re-locks this entity (currently locked by the
             // world-change processor), so defer it to a safe point.
             // See `ServerPlayer::finish_world_change`.
-            self.server().queue_player_reset(PlayerResetRequest::WorldChange(
-                self.server_player(),
-                teleport_transition.clone(),
-            ));
+            self.server()
+                .queue_player_reset(PlayerResetRequest::WorldChange(
+                    self.server_player(),
+                    teleport_transition.clone(),
+                ));
         }
     }
 }

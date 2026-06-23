@@ -1377,8 +1377,6 @@ impl PlayerInventory {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Weak;
-
     use steel_registry::test_support::init_test_registry;
     use steel_registry::vanilla_items::ITEMS;
     use steel_utils::Identifier;

@@ -189,7 +189,7 @@ impl FeatureDecorationRunner {
             crystal.set_beam_target(
                 config
                     .crystal_beam_target
-                    .map(|[x, y, z]| BlockPos::new(x, y, z)),
+                    .map(|v| BlockPos::new(v.x, v.y, v.z)),
             );
             crystal.snap_to(position, random.next_f32() * 360.0, 0.0);
         }

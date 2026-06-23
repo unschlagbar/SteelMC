@@ -37,14 +37,6 @@ impl MobEffect {
     }
 }
 
-impl PartialEq for MobEffect {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-impl Eq for MobEffect {}
-
 impl Hash for MobEffect {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.key.hash(state);

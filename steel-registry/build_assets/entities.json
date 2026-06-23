@@ -1033,7 +1033,7 @@
     "baby_dimensions": {
       "width": 0.42000002,
       "height": 0.39000002,
-      "eye_height": 0.156
+      "eye_height": 0.21875
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -1915,9 +1915,9 @@
       }
     ],
     "baby_dimensions": {
-      "width": 0.5,
-      "height": 0.25,
-      "eye_height": 0.2
+      "width": 0.375,
+      "height": 0.21,
+      "eye_height": 0.09375
     },
     "mob_category": "AXOLOTLS",
     "client_tracking_range": 10,
@@ -2967,15 +2967,15 @@
   {
     "id": 11,
     "name": "bee",
-    "width": 0.7,
-    "height": 0.6,
+    "width": 0.55,
+    "height": 0.5,
     "eye_height": 0.3,
     "fixed": false,
     "attachments": {
       "passenger": [
         {
           "x": 0.0,
-          "y": 0.6000000238418579,
+          "y": 0.5,
           "z": 0.0
         }
       ],
@@ -2989,14 +2989,14 @@
       "name_tag": [
         {
           "x": 0.0,
-          "y": 0.6000000238418579,
+          "y": 0.5,
           "z": 0.0
         }
       ],
       "warden_chest": [
         {
           "x": 0.0,
-          "y": 0.30000001192092896,
+          "y": 0.25,
           "z": 0.0
         }
       ]
@@ -3033,8 +3033,8 @@
       }
     ],
     "baby_dimensions": {
-      "width": 0.35,
-      "height": 0.3,
+      "width": 0.275,
+      "height": 0.25,
       "eye_height": 0.15
     },
     "mob_category": "CREATURE",
@@ -5261,9 +5261,9 @@
       }
     ],
     "baby_dimensions": {
-      "width": 1.0200001,
-      "height": 1.4250001,
-      "eye_height": 1.3650001
+      "width": 0.95,
+      "height": 1.4,
+      "eye_height": 1.38
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -6005,7 +6005,7 @@
     "baby_dimensions": {
       "width": 0.3,
       "height": 0.35,
-      "eye_height": 0.175
+      "eye_height": 0.34375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 8,
@@ -7415,7 +7415,7 @@
     "baby_dimensions": {
       "width": 0.3,
       "height": 0.4,
-      "eye_height": 0.28
+      "eye_height": 0.28125
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -8645,7 +8645,7 @@
     "baby_dimensions": {
       "width": 0.45,
       "height": 0.7,
-      "eye_height": 0.665
+      "eye_height": 0.69
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -10116,7 +10116,7 @@
     "baby_dimensions": {
       "width": 0.585,
       "height": 0.39000002,
-      "eye_height": 0.19500001
+      "eye_height": 0.09375
     },
     "mob_category": "WATER_CREATURE",
     "client_tracking_range": 5,
@@ -10996,7 +10996,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.775
     },
     "mob_category": "MONSTER",
@@ -14765,7 +14765,7 @@
     "baby_dimensions": {
       "width": 0.36,
       "height": 0.42000002,
-      "eye_height": 0.2975
+      "eye_height": 0.34375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 8,
@@ -16022,7 +16022,7 @@
     "baby_dimensions": {
       "width": 0.95,
       "height": 0.95,
-      "eye_height": 0.61749995
+      "eye_height": 0.46875
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -16877,7 +16877,7 @@
     ],
     "baby_dimensions": {
       "width": 0.5,
-      "height": 0.63,
+      "height": 0.5,
       "eye_height": 0.37
     },
     "mob_category": "UNDERGROUND_WATER_CREATURE",
@@ -17216,9 +17216,9 @@
       }
     ],
     "baby_dimensions": {
-      "width": 0.495,
-      "height": 0.715,
-      "eye_height": 0.60775
+      "width": 0.45,
+      "height": 0.65,
+      "eye_height": 0.59375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -17885,16 +17885,16 @@
       }
     ],
     "baby_dimensions": {
-      "width": 0.6982422,
-      "height": 0.7,
-      "eye_height": 0.595
+      "width": 0.75,
+      "height": 0.85,
+      "eye_height": 0.625
     },
     "mob_category": "MONSTER",
     "client_tracking_range": 8,
     "update_interval": 3,
     "fire_immune": false,
     "summonable": true,
-    "allowed_in_peaceful": true,
+    "allowed_in_peaceful": false,
     "can_serialize": true,
     "can_spawn_far_from_player": false,
     "synched_data": {
@@ -18813,7 +18813,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.825
     },
     "mob_category": "MONSTER",
@@ -21984,7 +21984,7 @@
         }
       ]
     },
-    "java_class": "net.minecraft.world.entity.monster.MagmaCube",
+    "java_class": "net.minecraft.world.entity.monster.cubemob.MagmaCube",
     "class_hierarchy": [
       {
         "java_class": "net.minecraft.world.entity.Entity",
@@ -21999,11 +21999,19 @@
         "simple_name": "Mob"
       },
       {
-        "java_class": "net.minecraft.world.entity.monster.Slime",
-        "simple_name": "Slime"
+        "java_class": "net.minecraft.world.entity.PathfinderMob",
+        "simple_name": "PathfinderMob"
       },
       {
-        "java_class": "net.minecraft.world.entity.monster.MagmaCube",
+        "java_class": "net.minecraft.world.entity.AgeableMob",
+        "simple_name": "AgeableMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+        "simple_name": "AbstractCubeMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.MagmaCube",
         "simple_name": "MagmaCube"
       }
     ],
@@ -22021,7 +22029,7 @@
     "can_serialize": true,
     "can_spawn_far_from_player": false,
     "synched_data": {
-      "java_class": "net.minecraft.world.entity.monster.MagmaCube",
+      "java_class": "net.minecraft.world.entity.monster.cubemob.MagmaCube",
       "class_hierarchy": [
         {
           "java_class": "net.minecraft.world.entity.Entity",
@@ -22036,11 +22044,19 @@
           "simple_name": "Mob"
         },
         {
-          "java_class": "net.minecraft.world.entity.monster.Slime",
-          "simple_name": "Slime"
+          "java_class": "net.minecraft.world.entity.PathfinderMob",
+          "simple_name": "PathfinderMob"
         },
         {
-          "java_class": "net.minecraft.world.entity.monster.MagmaCube",
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.MagmaCube",
           "simple_name": "MagmaCube"
         }
       ],
@@ -22196,11 +22212,33 @@
           ]
         },
         {
-          "java_class": "net.minecraft.world.entity.monster.Slime",
-          "simple_name": "Slime",
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob",
           "fields": [
             {
               "index": 16,
+              "name": "baby_id",
+              "accessor_field": "DATA_BABY_ID",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 17,
+              "name": "age_locked",
+              "accessor_field": "AGE_LOCKED",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob",
+          "fields": [
+            {
+              "index": 18,
               "name": "id_size",
               "accessor_field": "ID_SIZE",
               "serializer_id": 1,
@@ -23474,7 +23512,7 @@
     "baby_dimensions": {
       "width": 0.45,
       "height": 0.7,
-      "eye_height": 0.665
+      "eye_height": 0.69
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -25026,7 +25064,7 @@
     "baby_dimensions": {
       "width": 0.3,
       "height": 0.35,
-      "eye_height": 0.2975
+      "eye_height": 0.34375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -26194,7 +26232,7 @@
     "baby_dimensions": {
       "width": 0.65,
       "height": 0.625,
-      "eye_height": 0.53125
+      "eye_height": 0.28125
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -27543,7 +27581,7 @@
     "baby_dimensions": {
       "width": 0.45,
       "height": 0.45,
-      "eye_height": 0.3825
+      "eye_height": 0.40625
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -27895,7 +27933,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.78
     },
     "mob_category": "MONSTER",
@@ -28901,7 +28939,7 @@
     "baby_dimensions": {
       "width": 0.7,
       "height": 0.7,
-      "eye_height": 0.595
+      "eye_height": 0.34375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -30968,7 +31006,7 @@
     "baby_dimensions": {
       "width": 0.45,
       "height": 0.65,
-      "eye_height": 0.6175
+      "eye_height": 0.65625
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -32707,7 +32745,7 @@
         }
       ]
     },
-    "java_class": "net.minecraft.world.entity.monster.Slime",
+    "java_class": "net.minecraft.world.entity.monster.cubemob.Slime",
     "class_hierarchy": [
       {
         "java_class": "net.minecraft.world.entity.Entity",
@@ -32722,7 +32760,19 @@
         "simple_name": "Mob"
       },
       {
-        "java_class": "net.minecraft.world.entity.monster.Slime",
+        "java_class": "net.minecraft.world.entity.PathfinderMob",
+        "simple_name": "PathfinderMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.AgeableMob",
+        "simple_name": "AgeableMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+        "simple_name": "AbstractCubeMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.Slime",
         "simple_name": "Slime"
       }
     ],
@@ -32740,7 +32790,7 @@
     "can_serialize": true,
     "can_spawn_far_from_player": false,
     "synched_data": {
-      "java_class": "net.minecraft.world.entity.monster.Slime",
+      "java_class": "net.minecraft.world.entity.monster.cubemob.Slime",
       "class_hierarchy": [
         {
           "java_class": "net.minecraft.world.entity.Entity",
@@ -32755,7 +32805,19 @@
           "simple_name": "Mob"
         },
         {
-          "java_class": "net.minecraft.world.entity.monster.Slime",
+          "java_class": "net.minecraft.world.entity.PathfinderMob",
+          "simple_name": "PathfinderMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.Slime",
           "simple_name": "Slime"
         }
       ],
@@ -32911,11 +32973,33 @@
           ]
         },
         {
-          "java_class": "net.minecraft.world.entity.monster.Slime",
-          "simple_name": "Slime",
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob",
           "fields": [
             {
               "index": 16,
+              "name": "baby_id",
+              "accessor_field": "DATA_BABY_ID",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 17,
+              "name": "age_locked",
+              "accessor_field": "AGE_LOCKED",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob",
+          "fields": [
+            {
+              "index": 18,
               "name": "id_size",
               "accessor_field": "ID_SIZE",
               "serializer_id": 1,
@@ -35265,7 +35349,7 @@
     ],
     "baby_dimensions": {
       "width": 0.5,
-      "height": 0.63,
+      "height": 0.5,
       "eye_height": 0.37
     },
     "mob_category": "WATER_CREATURE",
@@ -35889,7 +35973,7 @@
     "baby_dimensions": {
       "width": 0.45,
       "height": 0.85,
-      "eye_height": 0.7225
+      "eye_height": 0.4375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -36165,6 +36249,365 @@
   },
   {
     "id": 130,
+    "name": "sulfur_cube",
+    "width": 0.49,
+    "height": 0.49,
+    "eye_height": 0.175,
+    "fixed": false,
+    "attachments": {
+      "passenger": [
+        {
+          "x": 0.0,
+          "y": 0.49000000953674316,
+          "z": 0.0
+        }
+      ],
+      "vehicle": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      ],
+      "name_tag": [
+        {
+          "x": 0.0,
+          "y": 0.49000000953674316,
+          "z": 0.0
+        }
+      ],
+      "warden_chest": [
+        {
+          "x": 0.0,
+          "y": 0.24500000476837158,
+          "z": 0.0
+        }
+      ]
+    },
+    "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube",
+    "class_hierarchy": [
+      {
+        "java_class": "net.minecraft.world.entity.Entity",
+        "simple_name": "Entity"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.LivingEntity",
+        "simple_name": "LivingEntity"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.Mob",
+        "simple_name": "Mob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.PathfinderMob",
+        "simple_name": "PathfinderMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.AgeableMob",
+        "simple_name": "AgeableMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+        "simple_name": "AbstractCubeMob"
+      },
+      {
+        "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube",
+        "simple_name": "SulfurCube"
+      }
+    ],
+    "baby_dimensions": {
+      "width": 0.49,
+      "height": 0.49,
+      "eye_height": 0.175
+    },
+    "mob_category": "MONSTER",
+    "client_tracking_range": 10,
+    "update_interval": 3,
+    "fire_immune": false,
+    "summonable": true,
+    "allowed_in_peaceful": true,
+    "can_serialize": true,
+    "can_spawn_far_from_player": false,
+    "synched_data": {
+      "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube",
+      "class_hierarchy": [
+        {
+          "java_class": "net.minecraft.world.entity.Entity",
+          "simple_name": "Entity"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.LivingEntity",
+          "simple_name": "LivingEntity"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.Mob",
+          "simple_name": "Mob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.PathfinderMob",
+          "simple_name": "PathfinderMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob"
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube",
+          "simple_name": "SulfurCube"
+        }
+      ],
+      "layers": [
+        {
+          "java_class": "net.minecraft.world.entity.Entity",
+          "simple_name": "Entity",
+          "fields": [
+            {
+              "index": 0,
+              "name": "shared_flags_id",
+              "accessor_field": "DATA_SHARED_FLAGS_ID",
+              "serializer_id": 0,
+              "serializer": "byte",
+              "default_value": 0
+            },
+            {
+              "index": 1,
+              "name": "air_supply_id",
+              "accessor_field": "DATA_AIR_SUPPLY_ID",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": 300
+            },
+            {
+              "index": 2,
+              "name": "custom_name",
+              "accessor_field": "DATA_CUSTOM_NAME",
+              "serializer_id": 6,
+              "serializer": "optional_component",
+              "default_value": {
+                "present": false
+              }
+            },
+            {
+              "index": 3,
+              "name": "custom_name_visible",
+              "accessor_field": "DATA_CUSTOM_NAME_VISIBLE",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 4,
+              "name": "silent",
+              "accessor_field": "DATA_SILENT",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 5,
+              "name": "no_gravity",
+              "accessor_field": "DATA_NO_GRAVITY",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 6,
+              "name": "pose",
+              "accessor_field": "DATA_POSE",
+              "serializer_id": 20,
+              "serializer": "pose",
+              "default_value": "STANDING"
+            },
+            {
+              "index": 7,
+              "name": "ticks_frozen",
+              "accessor_field": "DATA_TICKS_FROZEN",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": 0
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.LivingEntity",
+          "simple_name": "LivingEntity",
+          "fields": [
+            {
+              "index": 8,
+              "name": "living_entity_flags",
+              "accessor_field": "DATA_LIVING_ENTITY_FLAGS",
+              "serializer_id": 0,
+              "serializer": "byte",
+              "default_value": 0
+            },
+            {
+              "index": 9,
+              "name": "health_id",
+              "accessor_field": "DATA_HEALTH_ID",
+              "serializer_id": 3,
+              "serializer": "float",
+              "default_value": 1.0
+            },
+            {
+              "index": 10,
+              "name": "effect_particles",
+              "accessor_field": "DATA_EFFECT_PARTICLES",
+              "serializer_id": 17,
+              "serializer": "particles",
+              "default_value": []
+            },
+            {
+              "index": 11,
+              "name": "effect_ambience_id",
+              "accessor_field": "DATA_EFFECT_AMBIENCE_ID",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 12,
+              "name": "arrow_count_id",
+              "accessor_field": "DATA_ARROW_COUNT_ID",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": 0
+            },
+            {
+              "index": 13,
+              "name": "stinger_count_id",
+              "accessor_field": "DATA_STINGER_COUNT_ID",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": 0
+            },
+            {
+              "index": 14,
+              "name": "sleeping_pos_id",
+              "accessor_field": "SLEEPING_POS_ID",
+              "serializer_id": 11,
+              "serializer": "optional_block_pos",
+              "default_value": {
+                "present": false
+              }
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.Mob",
+          "simple_name": "Mob",
+          "fields": [
+            {
+              "index": 15,
+              "name": "mob_flags_id",
+              "accessor_field": "DATA_MOB_FLAGS_ID",
+              "serializer_id": 0,
+              "serializer": "byte",
+              "default_value": 0
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.AgeableMob",
+          "simple_name": "AgeableMob",
+          "fields": [
+            {
+              "index": 16,
+              "name": "baby_id",
+              "accessor_field": "DATA_BABY_ID",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            },
+            {
+              "index": 17,
+              "name": "age_locked",
+              "accessor_field": "AGE_LOCKED",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.AbstractCubeMob",
+          "simple_name": "AbstractCubeMob",
+          "fields": [
+            {
+              "index": 18,
+              "name": "id_size",
+              "accessor_field": "ID_SIZE",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": 1
+            }
+          ]
+        },
+        {
+          "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube",
+          "simple_name": "SulfurCube",
+          "fields": [
+            {
+              "index": 19,
+              "name": "max_fuse",
+              "accessor_field": "MAX_FUSE",
+              "serializer_id": 1,
+              "serializer": "int",
+              "default_value": -1
+            },
+            {
+              "index": 20,
+              "name": "from_bucket",
+              "accessor_field": "FROM_BUCKET",
+              "serializer_id": 8,
+              "serializer": "boolean",
+              "default_value": false
+            }
+          ]
+        }
+      ]
+    },
+    "attributes": {
+      "max_health": 20.0,
+      "follow_range": 16.0,
+      "knockback_resistance": 0.0,
+      "movement_speed": 0.7,
+      "attack_knockback": 0.0,
+      "armor": 0.0,
+      "armor_toughness": 0.0,
+      "jump_strength": 0.41999998688697815,
+      "gravity": 0.08,
+      "safe_fall_distance": 3.0,
+      "fall_damage_multiplier": 1.0,
+      "scale": 1.0,
+      "step_height": 0.6,
+      "entity_interaction_range": 3.0,
+      "oxygen_bonus": 0.0,
+      "water_movement_efficiency": 0.0,
+      "burning_time": 1.0,
+      "explosion_knockback_resistance": 0.0,
+      "movement_efficiency": 0.0,
+      "tempt_range": 8.0
+    },
+    "flags": {
+      "is_pushable": false,
+      "is_attackable": true,
+      "is_pickable": false,
+      "can_be_collided_with": false,
+      "is_pushed_by_fluid": true,
+      "can_freeze": true,
+      "can_be_hit_by_projectile": false,
+      "is_sensitive_to_water": false,
+      "can_breathe_underwater": false,
+      "can_be_seen_as_enemy": false
+    }
+  },
+  {
+    "id": 131,
     "name": "tadpole",
     "width": 0.4,
     "height": 0.3,
@@ -36493,7 +36936,7 @@
     }
   },
   {
-    "id": 131,
+    "id": 132,
     "name": "text_display",
     "width": 0.0,
     "height": 0.0,
@@ -36844,7 +37287,7 @@
     }
   },
   {
-    "id": 132,
+    "id": 133,
     "name": "tnt",
     "width": 0.98,
     "height": 0.98,
@@ -37019,7 +37462,7 @@
     }
   },
   {
-    "id": 133,
+    "id": 134,
     "name": "tnt_minecart",
     "width": 0.98,
     "height": 0.7,
@@ -37242,7 +37685,7 @@
     }
   },
   {
-    "id": 134,
+    "id": 135,
     "name": "trader_llama",
     "width": 0.9,
     "height": 1.87,
@@ -37639,7 +38082,7 @@
     }
   },
   {
-    "id": 135,
+    "id": 136,
     "name": "trident",
     "width": 0.5,
     "height": 0.5,
@@ -37860,7 +38303,7 @@
     }
   },
   {
-    "id": 136,
+    "id": 137,
     "name": "tropical_fish",
     "width": 0.5,
     "height": 0.4,
@@ -38196,7 +38639,7 @@
     }
   },
   {
-    "id": 137,
+    "id": 138,
     "name": "turtle",
     "width": 1.2,
     "height": 0.4,
@@ -38541,7 +38984,7 @@
     }
   },
   {
-    "id": 138,
+    "id": 139,
     "name": "vex",
     "width": 0.4,
     "height": 0.8,
@@ -38848,7 +39291,7 @@
     }
   },
   {
-    "id": 139,
+    "id": 140,
     "name": "villager",
     "width": 0.6,
     "height": 1.95,
@@ -38917,7 +39360,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.63
     },
     "mob_category": "MISC",
@@ -39210,7 +39653,7 @@
     }
   },
   {
-    "id": 140,
+    "id": 141,
     "name": "vindicator",
     "width": 0.6,
     "height": 1.95,
@@ -39541,7 +39984,7 @@
     }
   },
   {
-    "id": 141,
+    "id": 142,
     "name": "wandering_trader",
     "width": 0.6,
     "height": 1.95,
@@ -39877,7 +40320,7 @@
     }
   },
   {
-    "id": 142,
+    "id": 143,
     "name": "warden",
     "width": 0.9,
     "height": 2.9,
@@ -40184,7 +40627,7 @@
     }
   },
   {
-    "id": 143,
+    "id": 144,
     "name": "wind_charge",
     "width": 0.3125,
     "height": 0.3125,
@@ -40361,7 +40804,7 @@
     }
   },
   {
-    "id": 144,
+    "id": 145,
     "name": "witch",
     "width": 0.6,
     "height": 1.95,
@@ -40698,7 +41141,7 @@
     }
   },
   {
-    "id": 145,
+    "id": 146,
     "name": "wither",
     "width": 0.9,
     "height": 3.5,
@@ -41030,7 +41473,7 @@
     }
   },
   {
-    "id": 146,
+    "id": 147,
     "name": "wither_skeleton",
     "width": 0.7,
     "height": 2.4,
@@ -41331,7 +41774,7 @@
     }
   },
   {
-    "id": 147,
+    "id": 148,
     "name": "wither_skull",
     "width": 0.3125,
     "height": 0.3125,
@@ -41514,7 +41957,7 @@
     }
   },
   {
-    "id": 148,
+    "id": 149,
     "name": "wolf",
     "width": 0.6,
     "height": 0.85,
@@ -41588,7 +42031,7 @@
     "baby_dimensions": {
       "width": 0.3,
       "height": 0.425,
-      "eye_height": 0.34
+      "eye_height": 0.34375
     },
     "mob_category": "CREATURE",
     "client_tracking_range": 10,
@@ -41916,7 +42359,7 @@
     }
   },
   {
-    "id": 149,
+    "id": 150,
     "name": "zoglin",
     "width": 1.3964844,
     "height": 1.4,
@@ -41980,9 +42423,9 @@
       }
     ],
     "baby_dimensions": {
-      "width": 0.6982422,
-      "height": 0.7,
-      "eye_height": 0.595
+      "width": 0.75,
+      "height": 0.85,
+      "eye_height": 0.625
     },
     "mob_category": "MONSTER",
     "client_tracking_range": 8,
@@ -42223,7 +42666,7 @@
     }
   },
   {
-    "id": 150,
+    "id": 151,
     "name": "zombie",
     "width": 0.6,
     "height": 1.95,
@@ -42288,7 +42731,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.775
     },
     "mob_category": "MONSTER",
@@ -42547,7 +42990,7 @@
     }
   },
   {
-    "id": 151,
+    "id": 152,
     "name": "zombie_horse",
     "width": 1.3964844,
     "height": 1.6,
@@ -42892,7 +43335,7 @@
     }
   },
   {
-    "id": 152,
+    "id": 153,
     "name": "zombie_nautilus",
     "width": 0.875,
     "height": 0.95,
@@ -43284,7 +43727,7 @@
     }
   },
   {
-    "id": 153,
+    "id": 154,
     "name": "zombie_villager",
     "width": 0.6,
     "height": 1.95,
@@ -43353,7 +43796,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.67
     },
     "mob_category": "MONSTER",
@@ -43596,8 +44039,8 @@
               "serializer_id": 18,
               "serializer": "villager_data",
               "default_value": {
-                "type": "minecraft:desert",
-                "profession": "minecraft:cartographer",
+                "type": "minecraft:plains",
+                "profession": "minecraft:nitwit",
                 "level": 1
               }
             },
@@ -43650,7 +44093,7 @@
     }
   },
   {
-    "id": 154,
+    "id": 155,
     "name": "zombified_piglin",
     "width": 0.6,
     "height": 1.95,
@@ -43719,7 +44162,7 @@
     ],
     "baby_dimensions": {
       "width": 0.49,
-      "height": 0.99,
+      "height": 0.98,
       "eye_height": 0.78
     },
     "mob_category": "MONSTER",
@@ -43982,7 +44425,7 @@
     }
   },
   {
-    "id": 155,
+    "id": 156,
     "name": "player",
     "width": 0.6,
     "height": 1.8,
@@ -44299,7 +44742,7 @@
     }
   },
   {
-    "id": 156,
+    "id": 157,
     "name": "fishing_bobber",
     "width": 0.25,
     "height": 0.25,

@@ -17,18 +17,10 @@ pub struct CAddEntity {
     pub uuid: Uuid,
     /// The entity type (from registry)
     pub entity_type: i32,
-    /// X position
-    pub x: f64,
-    /// Y position
-    pub y: f64,
-    /// Z position
-    pub z: f64,
-    /// X velocity (blocks per tick)
-    pub velocity_x: f64,
-    /// Y velocity (blocks per tick)
-    pub velocity_y: f64,
-    /// Z velocity (blocks per tick)
-    pub velocity_z: f64,
+    /// The entity position
+    pub position: DVec3,
+    /// The entity velocity (blocks per tick)
+    pub velocity: DVec3,
     /// Pitch (vertical rotation) as angle byte
     pub x_rot: i8,
     /// Yaw (horizontal rotation) as angle byte
@@ -44,12 +36,12 @@ impl WriteTo for CAddEntity {
         VarInt(self.id).write(writer)?;
         self.uuid.write(writer)?;
         VarInt(self.entity_type).write(writer)?;
-        writer.write_all(&self.x.to_be_bytes())?;
-        writer.write_all(&self.y.to_be_bytes())?;
-        writer.write_all(&self.z.to_be_bytes())?;
+        writer.write_all(&self.position.x.to_be_bytes())?;
+        writer.write_all(&self.position.y.to_be_bytes())?;
+        writer.write_all(&self.position.z.to_be_bytes())?;
 
         // Write velocity as LpVec3
-        write_lp_vec3(writer, self.velocity_x, self.velocity_y, self.velocity_z)?;
+        write_lp_vec3(writer, self.velocity)?;
 
         self.x_rot.write(writer)?;
         self.y_rot.write(writer)?;
@@ -64,26 +56,18 @@ impl WriteTo for CAddEntity {
 ///
 /// Zero velocity is encoded as a single 0 byte.
 /// Non-zero velocity uses 6+ bytes with bit-packed components.
-pub fn write_lp_vec3(
-    writer: &mut impl std::io::Write,
-    x: f64,
-    y: f64,
-    z: f64,
-) -> std::io::Result<()> {
-    LpVec3(DVec3::new(x, y, z)).write(writer)
+pub fn write_lp_vec3(writer: &mut impl std::io::Write, velocity: DVec3) -> std::io::Result<()> {
+    LpVec3(velocity).write(writer)
 }
 
 impl CAddEntity {
     /// Creates a new CAddEntity packet for spawning a player.
     #[must_use]
-    #[expect(clippy::too_many_arguments)]
-    pub fn player(
+    pub const fn player(
         id: i32,
         uuid: Uuid,
         entity_type_id: i32,
-        x: f64,
-        y: f64,
-        z: f64,
+        position: DVec3,
         yaw: f32,
         pitch: f32,
     ) -> Self {
@@ -91,12 +75,8 @@ impl CAddEntity {
             id,
             uuid,
             entity_type: entity_type_id,
-            x,
-            y,
-            z,
-            velocity_x: 0.0,
-            velocity_y: 0.0,
-            velocity_z: 0.0,
+            position,
+            velocity: DVec3::ZERO,
             x_rot: super::to_angle_byte(pitch),
             y_rot: super::to_angle_byte(yaw),
             head_y_rot: super::to_angle_byte(yaw),
@@ -112,22 +92,29 @@ mod tests {
     #[test]
     fn test_zero_velocity() {
         let mut buf = Vec::new();
-        write_lp_vec3(&mut buf, 0.0, 0.0, 0.0).unwrap();
+        write_lp_vec3(&mut buf, DVec3::ZERO).unwrap();
         assert_eq!(buf, vec![0]);
     }
 
     #[test]
     fn test_tiny_velocity_is_zero() {
         let mut buf = Vec::new();
-        write_lp_vec3(&mut buf, 1e-6, 1e-6, 1e-6).unwrap();
+        write_lp_vec3(&mut buf, DVec3::splat(1e-6)).unwrap();
         assert_eq!(buf, vec![0]);
     }
 
     #[test]
     fn test_non_zero_velocity() {
         let mut buf = Vec::new();
-        write_lp_vec3(&mut buf, 1.0, 0.0, 0.0).unwrap();
+        write_lp_vec3(&mut buf, DVec3::ZERO.with_x(1.0)).unwrap();
         // Non-zero velocity should be 6 bytes (no continuation needed for scale=1)
+        assert_eq!(buf.len(), 6);
+    }
+
+    #[test]
+    fn test_negative_velocity_uses_absolute_scale() {
+        let mut buf = Vec::new();
+        write_lp_vec3(&mut buf, DVec3::ZERO.with_x(-1.0)).unwrap();
         assert_eq!(buf.len(), 6);
     }
 
@@ -135,7 +122,7 @@ mod tests {
     fn test_velocity_with_scale() {
         // Test velocity that requires scale > 3 (continuation bit)
         let mut buf = Vec::new();
-        write_lp_vec3(&mut buf, 5.0, 0.0, 0.0).unwrap();
+        write_lp_vec3(&mut buf, DVec3::ZERO.with_x(5.0)).unwrap();
         // scale=5, which is > 3, so needs continuation
         // First byte should have continuation flag set (bit 2)
         assert_eq!(buf[0] & 0x04, 0x04, "Continuation flag should be set");

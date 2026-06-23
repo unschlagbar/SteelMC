@@ -367,6 +367,7 @@ fn entity_effect_is_supported(effect: &EnchantmentEntityEffect) -> bool {
         | EnchantmentEntityEffect::ApplyExhaustion { .. }
         | EnchantmentEntityEffect::ApplyImpulse { .. }
         | EnchantmentEntityEffect::PlaySound { .. }
+        | EnchantmentEntityEffect::DamageEntity { .. }
         | EnchantmentEntityEffect::Unsupported { .. } => false,
         EnchantmentEntityEffect::Ignite { .. } => true,
         EnchantmentEntityEffect::ApplyMobEffect { to_apply, .. } => {
@@ -425,6 +426,7 @@ fn apply_supported_entity_effect(
         | EnchantmentEntityEffect::ApplyExhaustion { .. }
         | EnchantmentEntityEffect::ApplyImpulse { .. }
         | EnchantmentEntityEffect::PlaySound { .. }
+        | EnchantmentEntityEffect::DamageEntity { .. }
         | EnchantmentEntityEffect::Unsupported { .. } => {}
     }
 }
@@ -457,7 +459,8 @@ fn post_piercing_entity_effect_is_supported(effect: &EnchantmentEntityEffect) ->
         EnchantmentEntityEffect::ApplyMobEffect { to_apply, .. } => {
             matches!(to_apply, MobEffectSelection::Single(_))
         }
-        EnchantmentEntityEffect::Unsupported { .. } => false,
+        EnchantmentEntityEffect::DamageEntity { .. }
+        | EnchantmentEntityEffect::Unsupported { .. } => false,
     }
 }
 
@@ -506,7 +509,8 @@ fn apply_supported_post_piercing_entity_effect(
         EnchantmentEntityEffect::Ignite { .. } | EnchantmentEntityEffect::ApplyMobEffect { .. } => {
             apply_supported_entity_effect(effect, level, user);
         }
-        EnchantmentEntityEffect::Unsupported { .. } => {}
+        EnchantmentEntityEffect::DamageEntity { .. }
+        | EnchantmentEntityEffect::Unsupported { .. } => {}
     }
 }
 
@@ -565,7 +569,8 @@ fn requirements_state(
         EnchantmentEffectRequirements::DamageSourceProperties(predicate) => Some(
             damage_source_predicate_matches(predicate, context.damage_source),
         ),
-        EnchantmentEffectRequirements::Unsupported { .. } => None,
+        EnchantmentEffectRequirements::RandomChance { .. }
+        | EnchantmentEffectRequirements::Unsupported { .. } => None,
     }
 }
 
@@ -616,6 +621,7 @@ fn entity_requirements_state(
         } => entity_predicate_matches_entity(predicate, entity),
         EnchantmentEffectRequirements::EntityProperties { .. }
         | EnchantmentEffectRequirements::DamageSourceProperties(_)
+        | EnchantmentEffectRequirements::RandomChance { .. }
         | EnchantmentEffectRequirements::Unsupported { .. } => None,
     }
 }

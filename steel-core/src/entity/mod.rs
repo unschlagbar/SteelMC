@@ -689,6 +689,24 @@ pub(crate) use ticking::{
 };
 pub use tracker::{EntityChangeSenders, EntityTracker};
 
+/// Visibility/activation level of a chunk's entities.
+///
+/// NOTE: master's `update_entity_chunk_visibility` lifecycle system is part of
+/// the upstream entity-manager refactor, which is incompatible with this
+/// branch's locked-entity model. This enum exists so the auto-merged
+/// `chunk_holder`/`chunk_map` callers compile; the branch keeps its own entity
+/// activation path and the visibility update is a no-op (see
+/// `World::update_entity_chunk_visibility`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityVisibility {
+    /// Chunk is not entity-loaded; entities hidden.
+    Hidden,
+    /// Entities are tracked (sent to clients) but not ticked.
+    Tracked,
+    /// Entities are fully ticking.
+    Ticking,
+}
+
 /// Type alias for a shared entity reference.
 pub type SharedEntity = Arc<EntityBase>;
 
@@ -876,7 +894,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
             return false;
         };
 
-        let target_box = self.bounding_box().move_vec(delta);
+        let target_box = self.bounding_box().translate(delta);
         let collision_world =
             WorldCollisionProvider::for_entity(&world, self.as_entity_event_source());
         if collision_world.has_collision_with_context(
@@ -1628,7 +1646,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
                     continue;
                 }
 
-                let shearing_sound = equippable.shearing_sound;
+                let shearing_sound = equippable.shearing_sound.registry_ref();
                 (equipment.take(slot), shearing_sound)
             };
             let (item_stack, shearing_sound) = sheared;
@@ -1651,7 +1669,9 @@ pub trait Entity: EntityEventSource + Send + Sync {
                     &GameEventContext::new(Some(player), None),
                 );
             }
-            self.play_sound(shearing_sound, 1.0, 1.0);
+            if let Some(shearing_sound) = shearing_sound {
+                self.play_sound(shearing_sound, 1.0, 1.0);
+            }
 
             let dimensions = self.base().dimensions();
             let spawn_offset = dimensions
@@ -1900,6 +1920,13 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Returns true when vanilla allows this side to apply movement simulation side effects.
     fn can_simulate_movement(&self) -> bool {
         self.is_server_driven_movement()
+    }
+
+    /// Returns true when this entity is a player that is currently flying.
+    ///
+    /// Overridden by `Player`; defaults to `false` for non-players.
+    fn is_flying_player(&self) -> bool {
+        false
     }
 
     /// Returns true when vanilla allows this side to run entity AI/travel logic.
@@ -3610,7 +3637,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
             && !self.base().on_ground_no_blocks()
             && let Some(movement) = movement
         {
-            let previous_test_area = test_area.move_by(-movement.x, 0.0, -movement.z);
+            let previous_test_area = test_area.translate(DVec3::new(-movement.x, 0.0, -movement.z));
             supporting_block = collision_world.find_supporting_block(
                 self.position(),
                 &previous_test_area,
@@ -4699,7 +4726,11 @@ pub trait LivingEntity: Entity {
     /// Returns the equip sound Steel can currently resolve for this entity.
     fn equip_sound(&self, slot: EquipmentSlot, stack: &ItemStack) -> Option<SoundEventRef> {
         let equippable = stack.get_equippable()?;
-        (slot == equippable.slot).then_some(equippable.equip_sound)
+        if slot == equippable.slot {
+            equippable.equip_sound.registry_ref()
+        } else {
+            None
+        }
     }
 
     /// Runs vanilla's equippable `ItemStack.interactLivingEntity` branch.

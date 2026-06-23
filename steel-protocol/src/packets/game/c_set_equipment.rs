@@ -1,6 +1,6 @@
 //! Clientbound set equipment packet.
 
-use std::io::{Result, Write};
+use std::io::{Error, ErrorKind, Result, Write};
 
 use steel_macros::ClientPacket;
 use steel_registry::{
@@ -60,6 +60,12 @@ impl CSetEquipment {
 
 impl WriteTo for CSetEquipment {
     fn write(&self, writer: &mut impl Write) -> Result<()> {
+        if self.slots.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "CSetEquipment requires at least one slot",
+            ));
+        }
         VarInt(self.entity_id).write(writer)?;
         let last_index = self.slots.len().saturating_sub(1);
         for (index, slot_item) in self.slots.iter().enumerate() {
@@ -75,8 +81,6 @@ impl WriteTo for CSetEquipment {
 
 #[cfg(test)]
 mod tests {
-    use steel_utils::serial::WriteTo as _;
-
     use super::*;
 
     #[test]
@@ -99,5 +103,14 @@ mod tests {
         packet.write(&mut bytes).expect("packet should encode");
 
         assert_eq!(bytes, vec![42, 0x80, 0, 5, 0]);
+    }
+
+    #[test]
+    fn equipment_packet_rejects_empty_slot_updates() {
+        let packet = CSetEquipment::new(42, Vec::new());
+
+        let error = packet.write(&mut Vec::new()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 }

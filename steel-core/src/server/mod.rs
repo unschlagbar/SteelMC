@@ -75,7 +75,7 @@ fn apply_first_visit_defaults(player: &Player, world: &Arc<World>) {
         f64::from(spawn.z),
     ));
     player.set_rotation((spawn.angle, 0.0));
-    player.restore_game_modes(world.default_gamemode, world.default_gamemode);
+    player.restore_game_modes(world.default_gamemode, Some(world.default_gamemode));
     player
         .abilities
         .lock()
@@ -740,6 +740,7 @@ impl Server {
         player.send_packet(CLogin {
             player_id: player.id(),
             hardcore: false,
+            online_mode: self.config.online_mode,
             levels: self.worlds.keys().cloned().collect(),
             max_players: self.config.max_players as i32,
             chunk_radius: player.view_distance().into(),
@@ -752,7 +753,7 @@ impl Server {
                 dimension: world.key.clone(),
                 seed: hashed_seed,
                 game_type: player.game_mode(),
-                previous_game_type: Some(player.previous_game_mode()),
+                previous_game_type: player.previous_game_mode(),
                 is_debug: false,
                 is_flat: world.is_flat,
                 last_death_location: None,

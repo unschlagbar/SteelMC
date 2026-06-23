@@ -781,6 +781,14 @@
       "class": "Block"
     },
     {
+      "name": "potent_sulfur",
+      "class": "PotentSulfurBlock"
+    },
+    {
+      "name": "sulfur_spike",
+      "class": "SulfurSpikeBlock"
+    },
+    {
       "name": "bricks",
       "class": "Block"
     },

@@ -109,6 +109,9 @@ impl ServerPlayer {
             ))
         });
 
+        let chat_spam_threshold_seconds = config.chat_spam_threshold_seconds;
+        let command_spam_threshold_seconds = config.command_spam_threshold_seconds;
+
         Self {
             connection,
             server,
@@ -116,7 +119,10 @@ impl ServerPlayer {
             entity,
             inbound_rx: SyncMutex::new(inbound_rx),
             view: Arc::new(PlayerView::new(ChunkPos::new(0, 0))),
-            chat: SyncMutex::new(ChatState::new()),
+            chat: SyncMutex::new(ChatState::new(
+                chat_spam_threshold_seconds,
+                command_spam_threshold_seconds,
+            )),
             chunk_sender: Arc::new(SyncMutex::new(ChunkSender::default())),
             last_tracking_view: SyncMutex::new(None),
             client_information: SyncMutex::new(client_information),

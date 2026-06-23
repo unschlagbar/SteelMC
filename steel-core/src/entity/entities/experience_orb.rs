@@ -465,7 +465,7 @@ impl Entity for ExperienceOrbEntity {
         self.follow_nearby_player(&world);
         if self.state.lock().following_player_id.is_none() && colliding {
             let next_colliding =
-                self.is_aabb_colliding(&world, self.bounding_box().move_vec(self.velocity()));
+                self.is_aabb_colliding(&world, self.bounding_box().translate(self.velocity()));
             if next_colliding {
                 let bounding_box = self.bounding_box();
                 self.move_towards_closest_space(

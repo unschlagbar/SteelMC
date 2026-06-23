@@ -264,11 +264,11 @@ struct BlockPredicateJson {
 /// Entity predicate - can have many fields
 #[derive(Deserialize, Debug, Clone)]
 struct EntityPredicateJson {
-    #[serde(rename = "type", default)]
+    #[serde(rename = "type", alias = "minecraft:entity_type", default)]
     entity_type: Option<String>,
-    #[serde(default)]
+    #[serde(alias = "minecraft:flags", default)]
     flags: Option<EntityFlagsJson>,
-    #[serde(default)]
+    #[serde(alias = "minecraft:equipment", default)]
     equipment: Option<EntityEquipmentJson>,
 }
 

@@ -340,7 +340,7 @@ impl PlayerDataFile {
             has_visual_fire: data.has_visual_fire,
             health: data.health,
             game_mode: data.game_mode,
-            prev_game_mode: data.prev_game_mode,
+            prev_game_mode: data.prev_game_mode.unwrap_or(-1),
             abilities: AbilitiesFile {
                 invulnerable: data.abilities.invulnerable,
                 flying: data.abilities.flying,
@@ -403,7 +403,7 @@ impl PlayerDataFile {
             has_visual_fire: self.has_visual_fire,
             health: self.health,
             game_mode: self.game_mode,
-            prev_game_mode: self.prev_game_mode,
+            prev_game_mode: (self.prev_game_mode >= 0).then_some(self.prev_game_mode),
             abilities: PersistentAbilities {
                 invulnerable: self.abilities.invulnerable,
                 flying: self.abilities.flying,

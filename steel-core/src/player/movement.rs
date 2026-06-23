@@ -346,7 +346,7 @@ impl Player {
             && !is_spectator
             && !in_impulse_grace;
 
-        let new_aabb = self.bounding_box().move_vec(target_pos - self.position());
+        let new_aabb = self.bounding_box().translate(target_pos - self.position());
         let collision_world = WorldCollisionProvider::for_entity(&world, self);
         let old_collision = collision_world.has_entity_context_collision(
             old_aabb,
@@ -460,9 +460,9 @@ impl Player {
     )]
     pub fn handle_move_vehicle(&mut self, packet: SMoveVehicle) {
         if Self::is_invalid_position(
-            packet.position.x,
-            packet.position.y,
-            packet.position.z,
+            packet.pos.x,
+            packet.pos.y,
+            packet.pos.z,
             packet.x_rot,
             packet.y_rot,
         ) {
@@ -492,9 +492,9 @@ impl Player {
         let world = self.get_world();
         let old_position = vehicle.position();
         let target_pos = DVec3::new(
-            clamp_horizontal(packet.position.x),
-            clamp_vertical(packet.position.y),
-            clamp_horizontal(packet.position.z),
+            clamp_horizontal(packet.pos.x),
+            clamp_vertical(packet.pos.y),
+            clamp_horizontal(packet.pos.z),
         );
         let target_yaw = wrap_degrees(packet.y_rot);
         let target_pitch = wrap_degrees(packet.x_rot);
@@ -540,7 +540,7 @@ impl Player {
 
         let new_aabb = vehicle
             .bounding_box()
-            .move_vec(target_pos - vehicle.position());
+            .translate(target_pos - vehicle.position());
         let vehicle_y = vehicle.position().y;
         let descending = vehicle.is_descending();
         let (old_collision, new_collision) = {
@@ -786,7 +786,12 @@ impl Player {
             movement.reset_last_known_client_movement();
         }
 
-        self.send_packet(CPlayerPosition::absolute(new_id, x, y, z, yaw, pitch));
+        self.send_packet(CPlayerPosition::absolute(
+            new_id,
+            DVec3::new(x, y, z),
+            yaw,
+            pitch,
+        ));
         Ok(())
     }
 

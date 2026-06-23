@@ -147,7 +147,13 @@ impl EntityTracker {
         // since `None` only comes from callers running outside the behavior lock).
         match locked_entity {
             Some(e) => {
-                self.add_with_entity(entity, e, &get_players_in_chunk, &get_player, &get_player_pos);
+                self.add_with_entity(
+                    entity,
+                    e,
+                    &get_players_in_chunk,
+                    &get_player,
+                    &get_player_pos,
+                );
             }
             None => {
                 entity.with_entity(|e| {
@@ -442,16 +448,12 @@ impl EntityTracker {
                 let velocity = entity.velocity();
                 packets_to_broadcast.push((
                     entity_id,
-                    EntityMovementSyncPacket::from(CSetEntityMotion::new(
-                        entity_id, velocity.x, velocity.y, velocity.z,
-                    )),
+                    EntityMovementSyncPacket::from(CSetEntityMotion::new(entity_id, velocity)),
                 ));
                 if entity.entity_type() == &vanilla_entities::PLAYER {
                     self_movement_packets.push((
                         entity_id,
-                        EntityMovementSyncPacket::from(CSetEntityMotion::new(
-                            entity_id, velocity.x, velocity.y, velocity.z,
-                        )),
+                        EntityMovementSyncPacket::from(CSetEntityMotion::new(entity_id, velocity)),
                     ));
                 }
                 entity.clear_hurt_mark();
@@ -1021,12 +1023,8 @@ impl EntitySpawnPairing {
                 id: base.id(),
                 uuid: base.uuid(),
                 entity_type: entity_type_id,
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-                velocity_x: vel.x,
-                velocity_y: vel.y,
-                velocity_z: vel.z,
+                position: pos,
+                velocity: vel,
                 x_rot,
                 y_rot,
                 head_y_rot,
@@ -1260,11 +1258,7 @@ mod tests {
             let EntityMovementSyncPacket::Velocity(packet) = packet else {
                 return false;
             };
-            *sent_entity_id == entity_id
-                && packet.entity_id == entity_id
-                && packet.velocity_x.to_bits() == velocity.x.to_bits()
-                && packet.velocity_y.to_bits() == velocity.y.to_bits()
-                && packet.velocity_z.to_bits() == velocity.z.to_bits()
+            *sent_entity_id == entity_id && packet.entity_id == entity_id && packet.vel == velocity
         });
         assert!(
             has_packet,
@@ -1407,9 +1401,7 @@ mod tests {
         );
         let pairing = EntitySpawnPairing::from_entity(&entity, Vec::new());
 
-        assert_eq!(pairing.spawn_packet.x, 4.0);
-        assert_eq!(pairing.spawn_packet.y, 65.0);
-        assert_eq!(pairing.spawn_packet.z, -9.0);
+        assert_eq!(pairing.spawn_packet.position, DVec3::new(4.0, 65.0, -9.0));
     }
 
     #[test]
@@ -1569,9 +1561,7 @@ mod tests {
             );
         };
         assert_eq!(packet.entity_id, 1);
-        assert_eq!(packet.velocity_x.to_bits(), 0.25_f64.to_bits());
-        assert_eq!(packet.velocity_y.to_bits(), 0.4_f64.to_bits());
-        assert_eq!(packet.velocity_z.to_bits(), (-0.125_f64).to_bits());
+        assert_eq!(packet.vel, DVec3::new(0.25, 0.4, -0.125));
         assert!(!entity_typed.hurt_marked());
     }
 

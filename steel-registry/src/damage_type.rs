@@ -4,7 +4,7 @@ use simdnbt::owned::NbtTag;
 use steel_utils::Identifier;
 
 /// Represents a damage type definition from a data pack JSON file.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct DamageType {
     pub key: Identifier,
     pub message_id: &'static str,

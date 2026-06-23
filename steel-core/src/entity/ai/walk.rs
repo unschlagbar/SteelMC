@@ -938,7 +938,7 @@ impl WalkNodeEvaluator {
         let step_delta = delta / f64::from(steps);
 
         for _ in 1..=steps {
-            bounding_box = bounding_box.move_vec(step_delta);
+            bounding_box = bounding_box.translate(step_delta);
             if collision.has_collision(bounding_box) {
                 return false;
             }

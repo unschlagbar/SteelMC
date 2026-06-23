@@ -13,7 +13,7 @@ use crate::entity::{
 use crate::world::World;
 use crate::world::tick_scheduler::{BlockTickList, FluidTickList, ScheduledTick, TickPriority};
 use crate::worldgen::carving_mask::CarvingMask;
-use glam::DVec3;
+use glam::{DVec3, IVec3};
 use rustc_hash::FxHashSet;
 use simdnbt::ToNbtTag;
 use simdnbt::borrow::read_compound as read_borrowed_compound;
@@ -339,8 +339,8 @@ fn compare_identifiers(a: &Identifier, b: &Identifier) -> CmpOrdering {
 use super::ram_only::RamOnlyStorage;
 use super::region_manager::RegionManager;
 use super::{
-    PersistentBiomeData, PersistentBlockEntity, PersistentBlockState, PersistentChunk,
-    PersistentDesertPyramidPieceData, PersistentEntity, PersistentHeightmap,
+    PersistentBiomeData, PersistentBlockEntity, PersistentBlockState, PersistentBoundingBox,
+    PersistentChunk, PersistentDesertPyramidPieceData, PersistentEntity, PersistentHeightmap,
     PersistentJigsawJunction, PersistentJigsawPieceData, PersistentJungleTemplePieceData,
     PersistentMineshaftPieceData, PersistentMineshaftPieceKind, PersistentNetherFortressPieceData,
     PersistentOceanMonumentChildPiece, PersistentOceanMonumentChildPieceKind,
@@ -528,6 +528,10 @@ impl ChunkStorage {
         clippy::similar_names,
         reason = "`pois` vs `pos` are semantically distinct"
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "chunk save preparation keeps related serialization setup in one pass"
+    )]
     pub fn prepare_chunk_save(
         chunk: &ChunkAccess,
         runtime_entities: &[SharedEntity],
@@ -535,6 +539,18 @@ impl ChunkStorage {
     ) -> Option<PreparedChunkSave> {
         if !force && !chunk.is_dirty() {
             return None;
+        }
+
+        // Finalize any sections still in worldgen Building mode. Proto chunks
+        // can be saved before being upgraded to `LevelChunk::from_proto`
+        // (which is where `recalculate_counts` normally runs and implicitly
+        // finalizes). Without this, `section_to_persistent` would panic on
+        // the Building variant.
+        for section_holder in &chunk.sections().sections {
+            let mut guard = section_holder.write();
+            if matches!(&guard.states, PalettedContainer::Building(_)) {
+                guard.recalculate_counts();
+            }
         }
 
         let pos = chunk.pos();
@@ -997,6 +1013,10 @@ impl ChunkStorage {
                     biomes,
                 }
             }
+            PalettedContainer::Building(_) => panic!(
+                "section_to_persistent called on a section still in worldgen Building mode; \
+                 finalize_building must be called before serialization"
+            ),
         }
     }
 
@@ -1041,6 +1061,10 @@ impl ChunkStorage {
                     biome_data,
                 }
             }
+            PalettedContainer::Building(_) => panic!(
+                "biomes_to_persistent called on a section still in worldgen Building mode; \
+                 finalize_building must be called before serialization"
+            ),
         }
     }
 
@@ -1529,7 +1553,7 @@ impl ChunkStorage {
     fn jigsaw_piece_data_to_persistent(data: &JigsawPieceData) -> PersistentJigsawPieceData {
         PersistentJigsawPieceData {
             pool_element: Self::pool_element_to_persistent(&data.pool_element),
-            position: [data.position.0, data.position.1, data.position.2],
+            position: [data.position.x, data.position.y, data.position.z],
             rotation: rotation_to_persistent(data.rotation),
             liquid_settings: liquid_settings_to_persistent(data.liquid_settings),
         }
@@ -1538,7 +1562,7 @@ impl ChunkStorage {
     fn persistent_to_jigsaw_piece_data(data: &PersistentJigsawPieceData) -> JigsawPieceData {
         JigsawPieceData {
             pool_element: Self::persistent_to_pool_element(&data.pool_element),
-            position: (data.position[0], data.position[1], data.position[2]),
+            position: IVec3::new(data.position[0], data.position[1], data.position[2]),
             rotation: rotation_from_persistent(data.rotation),
             liquid_settings: liquid_settings_from_persistent(data.liquid_settings),
         }
@@ -1670,7 +1694,7 @@ impl ChunkStorage {
         child: &OceanMonumentChildPiece,
     ) -> PersistentOceanMonumentChildPiece {
         PersistentOceanMonumentChildPiece {
-            bounding_box: child.bounding_box,
+            bounding_box: PersistentBoundingBox::from_bounding_box(child.bounding_box),
             kind: Self::ocean_monument_child_kind_to_persistent(&child.kind),
         }
     }
@@ -1679,7 +1703,7 @@ impl ChunkStorage {
         child: &PersistentOceanMonumentChildPiece,
     ) -> OceanMonumentChildPiece {
         OceanMonumentChildPiece {
-            bounding_box: child.bounding_box,
+            bounding_box: child.bounding_box.to_bounding_box(),
             kind: Self::persistent_to_ocean_monument_child_kind(&child.kind),
         }
     }
@@ -2133,7 +2157,10 @@ impl ChunkStorage {
             MineshaftPieceKind::Room {
                 child_entrance_boxes,
             } => PersistentMineshaftPieceKind::Room {
-                child_entrance_boxes: Self::copy_bounding_boxes(child_entrance_boxes),
+                child_entrance_boxes: child_entrance_boxes
+                    .iter()
+                    .map(|&b| PersistentBoundingBox::from_bounding_box(b))
+                    .collect(),
             },
             MineshaftPieceKind::Corridor {
                 has_rails,
@@ -2162,7 +2189,10 @@ impl ChunkStorage {
             PersistentMineshaftPieceKind::Room {
                 child_entrance_boxes,
             } => MineshaftPieceKind::Room {
-                child_entrance_boxes: Self::copy_bounding_boxes(child_entrance_boxes),
+                child_entrance_boxes: child_entrance_boxes
+                    .iter()
+                    .map(|b| b.to_bounding_box())
+                    .collect(),
             },
             PersistentMineshaftPieceKind::Corridor {
                 has_rails,
@@ -2186,14 +2216,6 @@ impl ChunkStorage {
         }
     }
 
-    fn copy_bounding_boxes(boxes: &[steel_utils::BoundingBox]) -> Vec<steel_utils::BoundingBox> {
-        let mut copied = Vec::with_capacity(boxes.len());
-        for bounding_box in boxes {
-            copied.push(*bounding_box);
-        }
-        copied
-    }
-
     fn structure_piece_payload_to_persistent(
         payload: &StructurePiecePayload,
     ) -> PersistentStructurePiecePayload {
@@ -2205,16 +2227,16 @@ impl ChunkStorage {
                 PersistentStructurePiecePayload::Template(PersistentTemplatePieceData {
                     template_id: data.template_id.clone(),
                     template_position: [
-                        data.template_position.0,
-                        data.template_position.1,
-                        data.template_position.2,
+                        data.template_position.x,
+                        data.template_position.y,
+                        data.template_position.z,
                     ],
                     rotation: rotation_to_persistent(data.rotation),
                     mirror: mirror_to_persistent(data.mirror),
                     rotation_pivot: [
-                        data.rotation_pivot.0,
-                        data.rotation_pivot.1,
-                        data.rotation_pivot.2,
+                        data.rotation_pivot.x,
+                        data.rotation_pivot.y,
+                        data.rotation_pivot.z,
                     ],
                     block_ignore: block_ignore_to_persistent(data.block_ignore),
                     late_block_ignore: block_ignore_to_persistent(data.late_block_ignore),
@@ -2244,14 +2266,14 @@ impl ChunkStorage {
             PersistentStructurePiecePayload::Template(data) => {
                 StructurePiecePayload::Template(TemplatePieceData {
                     template_id: data.template_id.clone(),
-                    template_position: (
+                    template_position: IVec3::new(
                         data.template_position[0],
                         data.template_position[1],
                         data.template_position[2],
                     ),
                     rotation: rotation_from_persistent(data.rotation),
                     mirror: mirror_from_persistent(data.mirror),
-                    rotation_pivot: (
+                    rotation_pivot: IVec3::new(
                         data.rotation_pivot[0],
                         data.rotation_pivot[1],
                         data.rotation_pivot[2],
@@ -2452,7 +2474,7 @@ impl ChunkStorage {
                     .iter()
                     .map(|piece| PersistentStructurePiece {
                         piece_type: piece.piece_type.clone(),
-                        bounding_box: piece.bounding_box,
+                        bounding_box: PersistentBoundingBox::from_bounding_box(piece.bounding_box),
                         gen_depth: piece.gen_depth,
                         orientation: direction_to_2d(piece.orientation),
                         payload: Self::structure_piece_payload_to_persistent(&piece.payload),
@@ -2462,9 +2484,9 @@ impl ChunkStorage {
                             .junctions
                             .iter()
                             .map(|junction| PersistentJigsawJunction {
-                                source_x: junction.source_x,
-                                source_ground_y: junction.source_ground_y,
-                                source_z: junction.source_z,
+                                source_x: junction.source_pos.x,
+                                source_ground_y: junction.source_pos.y,
+                                source_z: junction.source_pos.z,
                                 delta_y: junction.delta_y,
                                 dest_projection: projection_to_persistent(Some(
                                     junction.dest_projection,
@@ -2516,7 +2538,7 @@ impl ChunkStorage {
                     .iter()
                     .map(|pp| StructurePiece {
                         piece_type: pp.piece_type.clone(),
-                        bounding_box: pp.bounding_box,
+                        bounding_box: pp.bounding_box.to_bounding_box(),
                         gen_depth: pp.gen_depth,
                         orientation: direction_from_2d(pp.orientation),
                         payload: Self::persistent_to_structure_piece_payload(&pp.payload),
@@ -2525,9 +2547,11 @@ impl ChunkStorage {
                             .junctions
                             .iter()
                             .map(|junction| JigsawJunction {
-                                source_x: junction.source_x,
-                                source_ground_y: junction.source_ground_y,
-                                source_z: junction.source_z,
+                                source_pos: IVec3::new(
+                                    junction.source_x,
+                                    junction.source_ground_y,
+                                    junction.source_z,
+                                ),
                                 delta_y: junction.delta_y,
                                 dest_projection: required_projection_from_persistent(
                                     junction.dest_projection,
@@ -2704,7 +2728,7 @@ mod tests {
     use crate::entity::{
         DEFAULT_MAX_AIR_SUPPLY, Entity, SharedEntity,
         entities::{EndCrystalEntity, RawEntity},
-        init_entities,
+        init_entities, next_entity_id,
     };
     use glam::DVec3;
     use rustc_hash::FxHashMap;
@@ -2712,6 +2736,7 @@ mod tests {
     use steel_registry::vanilla_block_entity_types;
     use steel_registry::vanilla_blocks;
     use steel_registry::vanilla_entities;
+    use steel_utils::BoundingBox;
     use steel_utils::types::UpdateFlags;
     use steel_worldgen::structure::StructureReferenceSet;
     use text_components::TextComponent;
@@ -2719,18 +2744,17 @@ mod tests {
     static RUNTIME_REGISTRIES: Once = Once::new();
 
     fn init_runtime_registries() {
-        init_test_registry();
         RUNTIME_REGISTRIES.call_once(|| {
+            init_entities();
             init_behaviors();
             init_block_entities();
-            init_entities();
         });
     }
 
     fn test_structure_piece() -> StructurePiece {
         StructurePiece {
             piece_type: Identifier::new_static("minecraft", "mscorridor"),
-            bounding_box: steel_utils::BoundingBox::new(0, 64, 0, 1, 65, 1),
+            bounding_box: BoundingBox::new(IVec3::new(0, 64, 0), IVec3::new(1, 65, 1)),
             gen_depth: 0,
             orientation: None,
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::Unimplemented),
@@ -2967,16 +2991,13 @@ mod tests {
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let crystal = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            entity_pos,
             Weak::new(),
         );
-        crystal.set_position_local(entity_pos);
-
         {
-            let mut crystal = crystal.lock_entity();
-            let crystal: &mut EndCrystalEntity = crystal.downcast().unwrap();
-
+            let mut guard = crystal.lock_entity();
+            let crystal: &mut EndCrystalEntity = guard.downcast().unwrap();
             crystal.set_beam_target(Some(BlockPos::new(0, 64, 0)));
             crystal.set_invulnerable(true);
             crystal.set_fall_distance(3.75);
@@ -2987,11 +3008,11 @@ mod tests {
             crystal.set_custom_name_visible(true);
             crystal.set_silent(true);
             crystal.set_glowing_tag(true);
+            assert!(crystal.add_tag("steel:test".to_owned()));
+            let mut custom_data = NbtCompound::new();
+            custom_data.insert("marker", "roundtrip");
+            crystal.set_custom_data(custom_data);
         }
-        assert!(crystal.add_tag("steel:test".to_owned()));
-        let mut custom_data = NbtCompound::new();
-        custom_data.insert("marker", "roundtrip");
-        crystal.set_custom_data(custom_data);
         proto.add_entity(crystal);
 
         let chunk = ChunkAccess::Proto(proto);
@@ -3030,23 +3051,37 @@ mod tests {
 
         let promoted = LevelChunk::from_proto(loaded_proto, 0, 16, Weak::new());
         assert_eq!(promoted.pending_entities.len(), 1);
-
-        promoted.pending_entities[0].with_entity(|entity| {
-            assert!(entity.is_no_gravity());
-            assert!(entity.is_invulnerable());
-        });
-
+        assert!(
+            promoted.pending_entities[0]
+                .with_entity_ref(|e| e.is_no_gravity())
+                .unwrap()
+        );
+        assert!(
+            promoted.pending_entities[0]
+                .with_entity_ref(|e| e.is_invulnerable())
+                .unwrap()
+        );
         assert_eq!(promoted.pending_entities[0].air_supply(), 120);
         assert_eq!(promoted.pending_entities[0].portal_cooldown(), 9);
         assert_eq!(
             promoted.pending_entities[0].custom_name(),
             Some(TextComponent::plain("End Test"))
         );
-        promoted.pending_entities[0].with_entity(|entity| {
-            assert!(entity.is_custom_name_visible());
-            assert!(entity.is_silent());
-            assert!(entity.has_glowing_tag());
-        });
+        assert!(
+            promoted.pending_entities[0]
+                .with_entity_ref(|e| e.is_custom_name_visible())
+                .unwrap()
+        );
+        assert!(
+            promoted.pending_entities[0]
+                .with_entity_ref(|e| e.is_silent())
+                .unwrap()
+        );
+        assert!(
+            promoted.pending_entities[0]
+                .with_entity_ref(|e| e.has_glowing_tag())
+                .unwrap()
+        );
         assert_eq!(
             promoted.pending_entities[0].tags(),
             vec!["steel:test".to_owned()]
@@ -3069,11 +3104,10 @@ mod tests {
         let chunk = ChunkAccess::Proto(proto);
         let entity: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            DVec3::new(5.5, 6.0, 7.5),
             Weak::new(),
         );
-        entity.set_position_local(DVec3::new(5.5, 6.0, 7.5));
 
         let Some(prepared) =
             ChunkStorage::prepare_chunk_save(&chunk, slice::from_ref(&entity), true)
@@ -3094,11 +3128,10 @@ mod tests {
         let chunk = ChunkAccess::Proto(proto);
         let entity: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            DVec3::new(5.5, 6.0, 7.5),
             Weak::new(),
         );
-        entity.set_position_local(DVec3::new(5.5, 6.0, 7.5));
 
         let Some(prepared) =
             ChunkStorage::prepare_chunk_save(&chunk, slice::from_ref(&entity), true)
@@ -3128,23 +3161,18 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-
         let vehicle: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            DVec3::new(5.5, 6.0, 7.5),
             Weak::new(),
         );
-        vehicle.set_position_local(DVec3::new(5.5, 6.0, 7.5));
-
         let passenger: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            DVec3::new(5.5, 8.0, 7.5),
             Weak::new(),
         );
-        passenger.set_position_local(DVec3::new(5.5, 8.0, 7.5));
-
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);
         let vehicle_uuid = vehicle.uuid();
         let passenger_uuid = passenger.uuid();
@@ -3197,18 +3225,13 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-
         let vehicle: SharedEntity = EndCrystalEntity::new(
             &vanilla_entities::END_CRYSTAL,
-            crate::entity::next_entity_id(),
-            DVec3::ZERO,
+            next_entity_id(),
+            DVec3::new(5.5, 6.0, 7.5),
             Weak::new(),
         );
-        vehicle.set_position_local(DVec3::new(5.5, 6.0, 7.5));
-
         let passenger: SharedEntity = RawEntity::new(&vanilla_entities::PLAYER);
-        passenger.set_position_local(DVec3::new(5.5, 8.0, 7.5));
-
         EntityBase::restore_passenger_relationship(&vehicle, &passenger);
         let vehicle_uuid = vehicle.uuid();
 
@@ -3390,7 +3413,7 @@ mod tests {
 
         let piece = StructurePiece {
             piece_type: piece_type.clone(),
-            bounding_box: steel_utils::BoundingBox::new(10, 64, 20, 15, 70, 25),
+            bounding_box: BoundingBox::new(IVec3::new(10, 64, 20), IVec3::new(15, 70, 25)),
             gen_depth: 3,
             orientation: Some(Direction::North),
             payload: StructurePiecePayload::Jigsaw(JigsawPieceData {
@@ -3408,15 +3431,13 @@ mod tests {
                     ],
                     projection: Projection::Rigid,
                 },
-                position: (10, 64, 20),
+                position: IVec3::new(10, 64, 20),
                 rotation: Rotation::Clockwise90,
                 liquid_settings: LiquidSettingsData::IgnoreWaterlogging,
             }),
             ground_level_delta: 1,
             junctions: vec![JigsawJunction {
-                source_x: 12,
-                source_ground_y: 65,
-                source_z: 24,
+                source_pos: IVec3::new(12, 65, 24),
                 delta_y: -1,
                 dest_projection: Projection::TerrainMatching,
             }],
@@ -3458,7 +3479,7 @@ mod tests {
         let StructurePiecePayload::Jigsaw(jigsaw) = &loaded_piece.payload else {
             panic!("typed jigsaw state should roundtrip");
         };
-        assert_eq!(jigsaw.position, (10, 64, 20));
+        assert_eq!(jigsaw.position, IVec3::new(10, 64, 20));
         assert_eq!(jigsaw.rotation, Rotation::Clockwise90);
         assert_eq!(
             jigsaw.liquid_settings,
@@ -3514,15 +3535,15 @@ mod tests {
 
         let template_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "shipwreck"),
-            bounding_box: steel_utils::BoundingBox::new(0, 70, 0, 12, 80, 12),
+            bounding_box: BoundingBox::new(IVec3::new(0, 70, 0), IVec3::new(12, 80, 12)),
             gen_depth: 2,
             orientation: Some(Direction::East),
             payload: StructurePiecePayload::Template(TemplatePieceData {
                 template_id: template_id.clone(),
-                template_position: (1, 70, 2),
+                template_position: IVec3::new(1, 70, 2),
                 rotation: Rotation::Clockwise180,
                 mirror: StructureMirror::FrontBack,
-                rotation_pivot: (4, 0, 15),
+                rotation_pivot: IVec3::new(4, 0, 15),
                 block_ignore: StructureBlockIgnore::StructureAndAir,
                 late_block_ignore: StructureBlockIgnore::None,
                 processors: TemplateProcessorList::Registry(processor_id.clone()),
@@ -3541,15 +3562,15 @@ mod tests {
         };
         let igloo_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "iglu"),
-            bounding_box: steel_utils::BoundingBox::new(4, 80, 4, 10, 84, 11),
+            bounding_box: BoundingBox::new(IVec3::new(4, 80, 4), IVec3::new(10, 84, 11)),
             gen_depth: 0,
             orientation: Some(Direction::North),
             payload: StructurePiecePayload::Template(TemplatePieceData {
                 template_id: igloo_template_id.clone(),
-                template_position: (4, 90, 4),
+                template_position: IVec3::new(4, 90, 4),
                 rotation: Rotation::Clockwise90,
                 mirror: StructureMirror::None,
-                rotation_pivot: (3, 5, 5),
+                rotation_pivot: IVec3::new(3, 5, 5),
                 block_ignore: StructureBlockIgnore::StructureBlock,
                 late_block_ignore: StructureBlockIgnore::None,
                 processors: TemplateProcessorList::Empty,
@@ -3567,15 +3588,15 @@ mod tests {
         };
         let ocean_ruin_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "orp"),
-            bounding_box: steel_utils::BoundingBox::new(12, 90, 12, 20, 96, 20),
+            bounding_box: BoundingBox::new(IVec3::new(12, 90, 12), IVec3::new(20, 96, 20)),
             gen_depth: 0,
             orientation: Some(Direction::North),
             payload: StructurePiecePayload::Template(TemplatePieceData {
                 template_id: ocean_ruin_template_id.clone(),
-                template_position: (12, 90, 12),
+                template_position: IVec3::new(12, 90, 12),
                 rotation: Rotation::CounterClockwise90,
                 mirror: StructureMirror::None,
-                rotation_pivot: (0, 0, 0),
+                rotation_pivot: IVec3::new(0, 0, 0),
                 block_ignore: StructureBlockIgnore::None,
                 late_block_ignore: StructureBlockIgnore::StructureAndAir,
                 processors: TemplateProcessorList::OceanRuin {
@@ -3594,13 +3615,13 @@ mod tests {
         };
         let procedural_piece = StructurePiece::non_jigsaw(
             Identifier::new_static("minecraft", "mscorridor"),
-            steel_utils::BoundingBox::new(20, 40, 20, 30, 50, 30),
+            BoundingBox::new(IVec3::new(20, 40, 20), IVec3::new(30, 50, 30)),
             5,
             Some(Direction::South),
         );
         let buried_treasure_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "btp"),
-            bounding_box: steel_utils::BoundingBox::new(41, 90, 43, 41, 90, 43),
+            bounding_box: BoundingBox::new(IVec3::new(41, 90, 43), IVec3::new(41, 90, 43)),
             gen_depth: 0,
             orientation: None,
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::BuriedTreasure),
@@ -3610,7 +3631,7 @@ mod tests {
         };
         let desert_pyramid_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "tedp"),
-            bounding_box: steel_utils::BoundingBox::new(48, 63, 48, 68, 77, 68),
+            bounding_box: BoundingBox::new(IVec3::new(48, 63, 48), IVec3::new(68, 77, 68)),
             gen_depth: 0,
             orientation: Some(Direction::East),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::DesertPyramid(
@@ -3627,7 +3648,7 @@ mod tests {
         };
         let jungle_temple_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "tejp"),
-            bounding_box: steel_utils::BoundingBox::new(64, 63, 64, 75, 72, 78),
+            bounding_box: BoundingBox::new(IVec3::new(64, 63, 64), IVec3::new(75, 72, 78)),
             gen_depth: 0,
             orientation: Some(Direction::South),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::JungleTemple(
@@ -3645,7 +3666,7 @@ mod tests {
         };
         let mineshaft_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "mscorridor"),
-            bounding_box: steel_utils::BoundingBox::new(32, 45, 32, 34, 47, 46),
+            bounding_box: BoundingBox::new(IVec3::new(32, 45, 32), IVec3::new(34, 47, 46)),
             gen_depth: 4,
             orientation: Some(Direction::North),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::Mineshaft(
@@ -3665,7 +3686,7 @@ mod tests {
         };
         let fortress_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "nemt"),
-            bounding_box: steel_utils::BoundingBox::new(48, 52, 48, 54, 59, 56),
+            bounding_box: BoundingBox::new(IVec3::new(48, 52, 48), IVec3::new(54, 59, 56)),
             gen_depth: 6,
             orientation: Some(Direction::East),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::NetherFortress(
@@ -3684,25 +3705,34 @@ mod tests {
         };
         let ocean_monument_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "omb"),
-            bounding_box: steel_utils::BoundingBox::new(64, 39, 64, 121, 61, 121),
+            bounding_box: BoundingBox::new(IVec3::new(64, 39, 64), IVec3::new(121, 61, 121)),
             gen_depth: 0,
             orientation: Some(Direction::South),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::OceanMonument(
                 OceanMonumentPieceData {
                     child_pieces: vec![
                         OceanMonumentChildPiece {
-                            bounding_box: steel_utils::BoundingBox::new(73, 39, 86, 80, 42, 93),
+                            bounding_box: BoundingBox::new(
+                                IVec3::new(73, 39, 86),
+                                IVec3::new(80, 42, 93),
+                            ),
                             kind: OceanMonumentChildPieceKind::SimpleRoom {
                                 room: ocean_monument_room,
                                 main_design: 2,
                             },
                         },
                         OceanMonumentChildPiece {
-                            bounding_box: steel_utils::BoundingBox::new(65, 40, 65, 87, 47, 85),
+                            bounding_box: BoundingBox::new(
+                                IVec3::new(65, 40, 65),
+                                IVec3::new(87, 47, 85),
+                            ),
                             kind: OceanMonumentChildPieceKind::WingRoom { main_design: 1 },
                         },
                         OceanMonumentChildPiece {
-                            bounding_box: steel_utils::BoundingBox::new(86, 52, 86, 99, 56, 99),
+                            bounding_box: BoundingBox::new(
+                                IVec3::new(86, 52, 86),
+                                IVec3::new(99, 56, 99),
+                            ),
                             kind: OceanMonumentChildPieceKind::Penthouse,
                         },
                     ],
@@ -3714,7 +3744,7 @@ mod tests {
         };
         let stronghold_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "shrc"),
-            bounding_box: steel_utils::BoundingBox::new(55, 35, 55, 65, 41, 65),
+            bounding_box: BoundingBox::new(IVec3::new(55, 35, 55), IVec3::new(65, 41, 65)),
             gen_depth: 7,
             orientation: Some(Direction::North),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::Stronghold(
@@ -3729,7 +3759,7 @@ mod tests {
         };
         let swamp_hut_piece = StructurePiece {
             piece_type: Identifier::new_static("minecraft", "tesh"),
-            bounding_box: steel_utils::BoundingBox::new(80, 63, 80, 86, 69, 88),
+            bounding_box: BoundingBox::new(IVec3::new(80, 63, 80), IVec3::new(86, 69, 88)),
             gen_depth: 0,
             orientation: Some(Direction::West),
             payload: StructurePiecePayload::Procedural(ProceduralPieceData::SwampHut(
@@ -3780,10 +3810,10 @@ mod tests {
             panic!("template payload should roundtrip");
         };
         assert_eq!(template.template_id, template_id);
-        assert_eq!(template.template_position, (1, 70, 2));
+        assert_eq!(template.template_position, IVec3::new(1, 70, 2));
         assert_eq!(template.rotation, Rotation::Clockwise180);
         assert_eq!(template.mirror, StructureMirror::FrontBack);
-        assert_eq!(template.rotation_pivot, (4, 0, 15));
+        assert_eq!(template.rotation_pivot, IVec3::new(4, 0, 15));
         assert_eq!(template.block_ignore, StructureBlockIgnore::StructureAndAir);
         assert_eq!(template.late_block_ignore, StructureBlockIgnore::None);
         assert_eq!(
@@ -3815,10 +3845,10 @@ mod tests {
             panic!("igloo template payload should roundtrip");
         };
         assert_eq!(template.template_id, igloo_template_id);
-        assert_eq!(template.template_position, (4, 90, 4));
+        assert_eq!(template.template_position, IVec3::new(4, 90, 4));
         assert_eq!(template.rotation, Rotation::Clockwise90);
         assert_eq!(template.mirror, StructureMirror::None);
-        assert_eq!(template.rotation_pivot, (3, 5, 5));
+        assert_eq!(template.rotation_pivot, IVec3::new(3, 5, 5));
         assert_eq!(template.block_ignore, StructureBlockIgnore::StructureBlock);
         assert_eq!(template.late_block_ignore, StructureBlockIgnore::None);
         assert_eq!(template.processors, TemplateProcessorList::Empty);
@@ -3836,10 +3866,10 @@ mod tests {
             panic!("ocean ruin template payload should roundtrip");
         };
         assert_eq!(template.template_id, ocean_ruin_template_id);
-        assert_eq!(template.template_position, (12, 90, 12));
+        assert_eq!(template.template_position, IVec3::new(12, 90, 12));
         assert_eq!(template.rotation, Rotation::CounterClockwise90);
         assert_eq!(template.mirror, StructureMirror::None);
-        assert_eq!(template.rotation_pivot, (0, 0, 0));
+        assert_eq!(template.rotation_pivot, IVec3::new(0, 0, 0));
         assert_eq!(template.block_ignore, StructureBlockIgnore::None);
         assert_eq!(
             template.late_block_ignore,

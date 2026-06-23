@@ -339,7 +339,7 @@ pub(crate) fn push_entities_up(
     for entity in world.get_entities_in_aabb(&query_box) {
         let offset = collide(
             Axis::Y,
-            &entity.bounding_box().move_by(0.0, 1.0, 0.0),
+            &entity.bounding_box().translate(DVec3::new(0.0, 1.0, 0.0)),
             &added_collision,
             -1.0,
         );
@@ -667,7 +667,7 @@ pub trait BlockBehavior: Send + Sync {
     fn is_pathfindable(&self, state: BlockStateId, computation_type: PathComputationType) -> bool {
         match computation_type {
             PathComputationType::Land | PathComputationType::Air => {
-                !is_shape_full_block(state.get_collision_shape())
+                !is_shape_full_block(state.get_static_collision_shape())
             }
             PathComputationType::Water => is_water_fluid(state.get_fluid_state().fluid_id),
         }
@@ -715,7 +715,7 @@ pub trait BlockBehavior: Send + Sync {
         pos: BlockPos,
         context: BlockCollisionContext,
     ) -> VoxelShape {
-        state.get_collision_shape()
+        state.get_static_collision_shape()
     }
 
     /// Returns this block state's collision shape for the supplied collision context.

@@ -27,8 +27,11 @@ pub struct Enchantment {
     pub supported_items: &'static str,
     pub primary_items: Option<&'static str>,
     pub exclusive_set: Option<&'static str>,
+    pub effects_nbt: fn() -> NbtCompound,
     pub effects: EnchantmentEffects,
 }
+
+crate::impl_registry_entry_eq!(Enchantment);
 
 impl RegistryEntry for Enchantment {
     fn key(&self) -> &Identifier {
@@ -79,7 +82,10 @@ impl ToNbtTag for &Enchantment {
             compound.insert("exclusive_set", exclusive);
         }
 
-        // TODO: Serialize enchantment effect payloads once the full effect AST exists.
+        let effects = (self.effects_nbt)();
+        if !effects.is_empty() {
+            compound.insert("effects", NbtTag::Compound(effects));
+        }
 
         NbtTag::Compound(compound)
     }
@@ -155,15 +161,6 @@ impl Enchantment {
 
 pub type EnchantmentRef = &'static Enchantment;
 
-impl PartialEq for EnchantmentRef {
-    #[expect(clippy::disallowed_methods)] // This IS the PartialEq impl; ptr::eq is correct here
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(*self, *other)
-    }
-}
-
-impl Eq for EnchantmentRef {}
-
 pub struct EnchantmentRegistry {
     enchantments_by_id: Vec<EnchantmentRef>,
     enchantments_by_key: FxHashMap<Identifier, usize>,
@@ -208,6 +205,8 @@ mod tests {
     };
     use crate::equipment::EquipmentSlot;
     use crate::vanilla_enchantments;
+    use simdnbt::ToNbtTag;
+    use simdnbt::owned::{NbtList, NbtTag};
     use steel_utils::Identifier;
 
     #[test]
@@ -223,6 +222,86 @@ mod tests {
     fn enchantment_matching_slot_uses_slot_groups() {
         assert!(vanilla_enchantments::BINDING_CURSE.matching_slot(EquipmentSlot::Head));
         assert!(!vanilla_enchantments::BINDING_CURSE.matching_slot(EquipmentSlot::MainHand));
+    }
+
+    #[test]
+    fn enchantment_nbt_includes_raw_effect_payloads() {
+        let NbtTag::Compound(compound) = (&vanilla_enchantments::LUNGE).to_nbt_tag() else {
+            panic!("enchantment NBT should be a compound");
+        };
+        let Some(NbtTag::Compound(effects)) = compound.get("effects") else {
+            panic!("enchantment NBT should include effects");
+        };
+        let Some(NbtTag::List(NbtList::Compound(post_piercing))) =
+            effects.get("minecraft:post_piercing_attack")
+        else {
+            panic!("Lunge should include post-piercing attack effects");
+        };
+
+        assert_eq!(post_piercing.len(), 1);
+        let Some(NbtTag::Compound(effect)) = post_piercing[0].get("effect") else {
+            panic!("post-piercing entry should include an effect compound");
+        };
+        assert_eq!(
+            effect.string("type").map(ToString::to_string).as_deref(),
+            Some("minecraft:all_of")
+        );
+
+        let Some(NbtTag::List(NbtList::Compound(children))) = effect.get("effects") else {
+            panic!("Lunge all_of effect should include child effects");
+        };
+        let impulse = children
+            .iter()
+            .find(|child| {
+                child.string("type").map(ToString::to_string).as_deref()
+                    == Some("minecraft:apply_impulse")
+            })
+            .expect("Lunge should include apply_impulse");
+
+        assert!(matches!(
+            impulse.get("direction"),
+            Some(NbtTag::List(NbtList::Double(values))) if values == &[0.0, 0.0, 1.0]
+        ));
+        assert!(matches!(
+            impulse.get("coordinate_scale"),
+            Some(NbtTag::List(NbtList::Double(values))) if values == &[1.0, 0.0, 1.0]
+        ));
+        assert!(matches!(
+            impulse.get("magnitude").and_then(|tag| tag.compound()).and_then(|compound| compound.get("base")),
+            Some(NbtTag::Float(value)) if value.to_bits() == 0.458_f32.to_bits()
+        ));
+    }
+
+    #[test]
+    fn movement_requirements_use_vanilla_double_bounds_in_nbt() {
+        let NbtTag::Compound(compound) = (&vanilla_enchantments::WIND_BURST).to_nbt_tag() else {
+            panic!("enchantment NBT should be a compound");
+        };
+        let Some(NbtTag::Compound(effects)) = compound.get("effects") else {
+            panic!("enchantment NBT should include effects");
+        };
+        let Some(NbtTag::List(NbtList::Compound(post_attack))) =
+            effects.get("minecraft:post_attack")
+        else {
+            panic!("Wind Burst should include post-attack effects");
+        };
+        let Some(NbtTag::Compound(requirements)) = post_attack[0].get("requirements") else {
+            panic!("Wind Burst effect should include requirements");
+        };
+        let Some(NbtTag::Compound(predicate)) = requirements.get("predicate") else {
+            panic!("entity_properties requirements should include predicate");
+        };
+        let Some(NbtTag::Compound(movement)) = predicate.get("minecraft:movement") else {
+            panic!("Wind Burst predicate should include movement bounds");
+        };
+        let Some(NbtTag::Compound(fall_distance)) = movement.get("fall_distance") else {
+            panic!("movement predicate should include fall distance bounds");
+        };
+
+        assert!(matches!(
+            fall_distance.get("min"),
+            Some(NbtTag::Double(value)) if value.to_bits() == 1.5_f64.to_bits()
+        ));
     }
 
     #[test]
@@ -333,5 +412,79 @@ mod tests {
                 .any(|effect| matches!(effect, EnchantmentEntityEffect::PlaySound { .. }))
         );
         assert!(effects[0].requirements.is_some());
+    }
+
+    #[test]
+    fn thorns_post_attack_preserves_random_damage_and_item_damage_effects() {
+        assert!(
+            vanilla_enchantments::THORNS
+                .effects
+                .has(EnchantmentEffectComponent::PostAttack)
+        );
+
+        let effects = vanilla_enchantments::THORNS.effects.post_attack;
+        assert!(effects.iter().any(|effect| {
+            effect
+                .requirements
+                .is_some_and(requirements_contain_random_chance)
+        }));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| entity_effect_contains_damage_entity(&effect.effect))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| entity_effect_contains_change_item_damage(&effect.effect))
+        );
+    }
+
+    fn requirements_contain_random_chance(requirements: &EnchantmentEffectRequirements) -> bool {
+        match requirements {
+            EnchantmentEffectRequirements::AllOf(children)
+            | EnchantmentEffectRequirements::AnyOf(children) => children
+                .iter()
+                .any(|child| requirements_contain_random_chance(child)),
+            EnchantmentEffectRequirements::Inverted(child) => {
+                requirements_contain_random_chance(child)
+            }
+            EnchantmentEffectRequirements::RandomChance { .. } => true,
+            EnchantmentEffectRequirements::EntityProperties { .. }
+            | EnchantmentEffectRequirements::DamageSourceProperties(_)
+            | EnchantmentEffectRequirements::Unsupported { .. } => false,
+        }
+    }
+
+    fn entity_effect_contains_damage_entity(effect: &EnchantmentEntityEffect) -> bool {
+        match effect {
+            EnchantmentEntityEffect::AllOf(children) => children
+                .iter()
+                .any(|child| entity_effect_contains_damage_entity(child)),
+            EnchantmentEntityEffect::DamageEntity { .. } => true,
+            EnchantmentEntityEffect::ChangeItemDamage { .. }
+            | EnchantmentEntityEffect::ApplyExhaustion { .. }
+            | EnchantmentEntityEffect::ApplyImpulse { .. }
+            | EnchantmentEntityEffect::PlaySound { .. }
+            | EnchantmentEntityEffect::Ignite { .. }
+            | EnchantmentEntityEffect::ApplyMobEffect { .. }
+            | EnchantmentEntityEffect::Unsupported { .. } => false,
+        }
+    }
+
+    fn entity_effect_contains_change_item_damage(effect: &EnchantmentEntityEffect) -> bool {
+        match effect {
+            EnchantmentEntityEffect::AllOf(children) => children
+                .iter()
+                .any(|child| entity_effect_contains_change_item_damage(child)),
+            EnchantmentEntityEffect::ChangeItemDamage { .. } => true,
+            EnchantmentEntityEffect::ApplyExhaustion { .. }
+            | EnchantmentEntityEffect::ApplyImpulse { .. }
+            | EnchantmentEntityEffect::PlaySound { .. }
+            | EnchantmentEntityEffect::DamageEntity { .. }
+            | EnchantmentEntityEffect::Ignite { .. }
+            | EnchantmentEntityEffect::ApplyMobEffect { .. }
+            | EnchantmentEntityEffect::Unsupported { .. } => false,
+        }
     }
 }

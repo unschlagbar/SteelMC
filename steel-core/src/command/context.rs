@@ -61,13 +61,15 @@ impl CommandContext {
                 |p| p.lock().position(),
             );
 
+        let rotation = player.as_ref().map_or((0.0, 0.0), |p| p.lock().rotation());
+
         Self {
             sender,
             player,
             world,
             server,
             position,
-            rotation: None,
+            rotation: Some(rotation),
             anchor: EntityAnchor::default(),
         }
     }

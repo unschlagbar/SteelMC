@@ -42,6 +42,8 @@ impl CommandDispatcher {
         dispatcher.register(commands::locate::command_handler());
         dispatcher.register(commands::give::command_handler());
         dispatcher.register(commands::seed::command_handler());
+        // Deferred with the `setworldspawn` module (see commands/mod.rs).
+        // dispatcher.register(commands::setworldspawn::command_handler());
         dispatcher.register(commands::stop::command_handler());
         dispatcher.register(commands::summon::command_handler());
         dispatcher.register(commands::tellraw::command_handler());

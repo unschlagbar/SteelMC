@@ -4,8 +4,8 @@
 //! message validator, chat session, and message chain.
 
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use steel_utils::locks::SyncMutex;
 
 use steel_crypto::{SignatureValidator, public_key_from_bytes, signature::NoValidation};
 use steel_protocol::packets::game::CSystemChatMessage;
@@ -13,6 +13,7 @@ use steel_protocol::packets::game::{
     CPlayerChat, CPlayerInfoUpdate, ChatTypeBound, FilterType, SChat, SChatAck, SChatSessionUpdate,
 };
 use steel_registry::{RegistryEntry, vanilla_chat_types};
+use steel_utils::translations;
 use text_components::Modifier;
 use text_components::TextComponent;
 use text_components::interactivity::{ClickEvent, HoverEvent};
@@ -20,6 +21,7 @@ use text_components::interactivity::{ClickEvent, HoverEvent};
 use super::LastSeenMessagesValidator;
 use super::message_chain::SignedMessageChain;
 use super::profile_key::RemoteChatSession;
+use super::spam_throttler::TickThrottler;
 use super::{LastSeen, MessageCache};
 use crate::entity::Entity;
 use crate::player::{Player, message_chain, profile_key};
@@ -42,10 +44,12 @@ pub struct ChatState {
     pub chat_session: Option<RemoteChatSession>,
     /// Message chain state for tracking signed message sequence.
     pub message_chain: Option<SignedMessageChain>,
+    chat_spam_throttler: TickThrottler,
+    command_spam_throttler: TickThrottler,
 }
 
 impl ChatState {
-    pub fn new() -> Self {
+    pub fn new(chat_spam_threshold_seconds: i32, command_spam_threshold_seconds: i32) -> Self {
         Self {
             messages_sent: 0,
             messages_received: 0,
@@ -53,11 +57,59 @@ impl ChatState {
             message_validator: LastSeenMessagesValidator::new(),
             chat_session: None,
             message_chain: None,
+            chat_spam_throttler: TickThrottler::new(
+                20,
+                chat_spam_threshold_seconds.wrapping_mul(20),
+            ),
+            command_spam_throttler: TickThrottler::new(
+                20,
+                command_spam_threshold_seconds.wrapping_mul(20),
+            ),
         }
     }
 }
 
 impl Player {
+    /// Decays the per player chat and command spam counters once per server tick
+    pub fn tick_spam_throttlers(&self) {
+        let server_player = self.server_player();
+        let mut chat = server_player.chat.lock();
+        chat.chat_spam_throttler.tick();
+        chat.command_spam_throttler.tick();
+    }
+
+    const fn detect_rate_spam(throttler: &mut TickThrottler) -> bool {
+        throttler.increment();
+        !throttler.is_under_threshold()
+    }
+
+    /// Applies Vanilla command spam accounting after a command is handled
+    pub fn detect_command_rate_spam(&self) {
+        let should_disconnect = {
+            let server_player = self.server_player();
+        let mut chat = server_player.chat.lock();
+            Self::detect_rate_spam(&mut chat.command_spam_throttler)
+        };
+
+        if should_disconnect {
+            // TODO: Skip operators and the singleplayer owner once Steel has operator state
+            self.disconnect(translations::DISCONNECT_SPAM.msg());
+        }
+    }
+
+    fn detect_chat_rate_spam(&self) {
+        let should_disconnect = {
+            let server_player = self.server_player();
+        let mut chat = server_player.chat.lock();
+            Self::detect_rate_spam(&mut chat.chat_spam_throttler)
+        };
+
+        if should_disconnect {
+            // TODO: Skip operators and the singleplayer owner once Steel has operator state.
+            self.disconnect(translations::DISCONNECT_SPAM.msg());
+        }
+    }
+
     /// Gets the next `messages_received` counter and increments it
     pub fn get_and_increment_messages_received(&self) -> i32 {
         let sp = self.server_player();
@@ -263,6 +315,8 @@ impl Player {
                 world.broadcast_unsigned_chat(chat_packet.clone());
             }
         }
+
+        this.lock().detect_chat_rate_spam();
     }
 
     /// Sends a system message to the player.

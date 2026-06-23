@@ -12,6 +12,10 @@ pub mod kill;
 pub mod list;
 pub mod locate;
 pub mod seed;
+// Deferred: upstream `setworldspawn` depends on `Server::set_respawn_data`, which
+// relies on the upstream worlds/level-data refactor that is incompatible with this
+// branch's model. Re-enable once that infrastructure is ported.
+// pub mod setworldspawn;
 pub mod steel;
 pub mod stop;
 pub mod summon;
