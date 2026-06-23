@@ -995,7 +995,7 @@ pub struct EntityBase {
     /// Set only for player bases. Like every other entity, a player is reached
     /// mutably by locking; `with_entity`/`with_entity` lock through this weak
     /// reference. Kept separate from the `entity` slot only because the player is
-    /// also held typed (`Arc<SyncMutex<Player>>`) by the player map and connection.
+    /// owned by `ServerPlayer`
     player: Weak<SyncMutex<Player>>,
 }
 
