@@ -1932,26 +1932,48 @@ pub trait PathfinderMob: Mob {
         let id_based_tick_count = self.tick_count().wrapping_add(self.id());
         let running_goals_only = id_based_tick_count % 2 != 0 && self.tick_count() > 1;
 
-        // Grab the selector mutexes as raw pointers *before* taking the
-        // `&mut self` borrow below — this detaches the lock guards' lifetimes
-        // from `self`, so the goals can be ticked with `&mut self`. See
-        // `tick_goal_selector_with_mob` for the safety rationale.
-        let target_selector = self.mob_base().target_selector() as *const _;
-        let goal_selector = self.mob_base().goal_selector() as *const _;
-        // SAFETY: both pointers reference selector mutexes owned by `self`'s
-        // `MobBase`, which is borrowed for the whole call and therefore stays
-        // alive and pinned.
-        unsafe {
-            crate::entity::ai::goal::tick_goal_selector_with_mob(
-                target_selector,
-                self,
-                running_goals_only,
-            );
-            crate::entity::ai::goal::tick_goal_selector_with_mob(
-                goal_selector,
-                self,
-                running_goals_only,
-            );
+        self.tick_goal_selector(|m| m.mob_base().target_selector(), running_goals_only);
+        self.tick_goal_selector(|m| m.mob_base().goal_selector(), running_goals_only);
+    }
+
+    /// Ticks one of this mob's goal selectors against the mob itself.
+    ///
+    /// `select` returns the selector mutex to tick; it lives *inside* `self`
+    /// (e.g. `self.mob_base().goal_selector()`). This indirection exists for a
+    /// borrow-checker reason: the naive
+    /// `self.mob_base().goal_selector().lock().tick(self)` is rejected because
+    /// the lock guard borrows `self` immutably for as long as it lives, which
+    /// conflicts with handing `&mut self` to the goals. We grab the selector as
+    /// a raw pointer (the cast ends the shared borrow), then lock through it so
+    /// the guard's lifetime is detached from `self`.
+    ///
+    /// While the tick runs the selector mutex is held and the very same `self`
+    /// is handed to each goal as `&mut self`. **A goal invoked this way must not
+    /// touch the goal selectors of the `self` it receives** — neither this
+    /// selector nor any other on the same mob (e.g.
+    /// `self.mob_base().goal_selector()` / `target_selector()`). Doing so is a
+    /// re-entrant access of state that is already borrowed/locked by this very
+    /// tick: the held mutex means re-locking deadlocks, and reaching the
+    /// selector's goals through `&mut self` while we are iterating them aliases
+    /// the same data. In short, goals drive the mob, they do not re-tick or
+    /// mutate the mob's goal selectors. Locking unrelated mob state is fine.
+    fn tick_goal_selector(
+        &mut self,
+        select: impl FnOnce(&Self) -> &SyncMutex<GoalSelector>,
+        running_goals_only: bool,
+    ) where
+        Self: Sized,
+    {
+        let selector = select(self) as *const SyncMutex<GoalSelector>;
+        // SAFETY: `selector` points into `self`, which is borrowed mutably for
+        // the whole call and so stays alive and pinned. Going through the raw
+        // pointer detaches the guard's lifetime from `self`, which is what lets
+        // the guard and the `&mut self` passed to the goals coexist.
+        let mut guard = unsafe { (*selector).lock() };
+        if running_goals_only {
+            guard.tick_running_goals(self, false);
+        } else {
+            guard.tick(self);
         }
     }
 
