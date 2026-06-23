@@ -115,14 +115,7 @@ fn spawn_swamp_hut_mob(
             0.0,
         );
     }
-    let _ = placer.add_fresh_entity(
-        entity,
-        DVec3::new(
-            f64::from(pos.x()) + 0.5,
-            f64::from(pos.y()),
-            f64::from(pos.z()) + 0.5,
-        ),
-    );
+    let _ = placer.add_fresh_entity(entity);
 }
 
 fn stairs(facing: Direction) -> BlockStateId {

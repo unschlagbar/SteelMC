@@ -1700,14 +1700,7 @@ fn spawn_elder(placer: &mut ScatteredFeaturePlacer<'_, '_>, x: i32, y: i32, z: i
             0.0,
         );
     }
-    let _ = placer.add_fresh_entity(
-        entity,
-        DVec3::new(
-            f64::from(pos.x()) + 0.5,
-            f64::from(pos.y()),
-            f64::from(pos.z()) + 0.5,
-        ),
-    );
+    let _ = placer.add_fresh_entity(entity);
 }
 
 fn fill_keeps(state: BlockStateId) -> bool {

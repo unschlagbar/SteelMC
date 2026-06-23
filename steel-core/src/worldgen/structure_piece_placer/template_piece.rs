@@ -1,4 +1,3 @@
-
 use glam::{DVec3, IVec3};
 use simdnbt::owned::NbtCompound;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
@@ -400,7 +399,7 @@ impl StructurePiecePlacer {
             entity.set_persistence_required();
             entity.snap_to(entity_pos, 0.0, 0.0);
         }
-        let _ = region.add_fresh_entity(entity, entity_pos);
+        let _ = region.add_fresh_entity(entity);
 
         let replacement = if pos.y() > region.sea_level() {
             vanilla_blocks::AIR.default_state()
@@ -511,7 +510,7 @@ impl StructurePiecePlacer {
             let entity: &mut RawEntity = entity.downcast().unwrap();
             entity.snap_to(entity_pos, 0.0, 0.0);
         }
-        let _ = region.add_fresh_entity(entity, entity_pos);
+        let _ = region.add_fresh_entity(entity);
     }
 
     fn spawn_end_city_elytra_frame(
@@ -525,7 +524,7 @@ impl StructurePiecePlacer {
             let frame: &mut ItemFrameEntity = frame.downcast().unwrap();
             frame.set_item(ItemStack::new(&vanilla_items::ITEMS.elytra));
         }
-        let _ = region.add_fresh_entity(entity, ItemFrameEntity::frame_center(pos, direction));
+        let _ = region.add_fresh_entity(entity);
     }
 
     fn handle_mansion_marker(
@@ -610,7 +609,7 @@ impl StructurePiecePlacer {
             entity.set_persistence_required();
             entity.snap_to(entity_pos, 0.0, 0.0);
         }
-        let _ = region.add_fresh_entity(entity, entity_pos);
+        let _ = region.add_fresh_entity(entity);
     }
 
     fn loot_table_nbt(loot_table: &'static str, seed: i64) -> NbtCompound {

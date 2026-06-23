@@ -1,6 +1,6 @@
 use std::sync::Weak;
 
-use glam::{DVec3, IVec3};
+use glam::IVec3;
 use steel_registry::blocks::block_state_ext::BlockStateExt as _;
 use steel_registry::blocks::properties::BlockStateProperties;
 use steel_registry::{Registry, vanilla_block_entity_types, vanilla_blocks};
@@ -317,8 +317,8 @@ impl<'a, 'world> ScatteredFeaturePlacer<'a, 'world> {
         self.region.weak_world()
     }
 
-    pub(super) fn add_fresh_entity(&mut self, entity: SharedEntity, position: DVec3) -> bool {
-        self.region.add_fresh_entity(entity, position)
+    pub(super) fn add_fresh_entity(&mut self, entity: SharedEntity) -> bool {
+        self.region.add_fresh_entity(entity)
     }
 
     fn get_block(&self, x: i32, y: i32, z: i32) -> BlockStateId {

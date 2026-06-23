@@ -13,7 +13,6 @@ use std::{
     time::Instant,
 };
 
-use glam::DVec3;
 use parking_lot::{RwLockReadGuard, RwLockWriteGuard};
 use simdnbt::owned::NbtCompound;
 use steel_registry::{
@@ -490,12 +489,11 @@ impl<'a> WorldGenRegion<'a> {
     /// Vanilla `WorldGenRegion.addFreshEntity` does not call `ensureCanWrite`, so entity
     /// insertion is allowed anywhere covered by the generation step's chunk dependencies.
     #[must_use]
-    pub fn add_fresh_entity(&self, entity: Arc<EntityBase>, position: DVec3) -> bool {
+    pub fn add_fresh_entity(&self, entity: Arc<EntityBase>) -> bool {
         let pos = BlockPos::from(entity.position());
         let (chunk_x, chunk_z, status) = self.dependency_chunk_for_pos(pos, "add entity");
 
         entity.set_world(self.weak_world().clone());
-        entity.set_position_local(position);
 
         self.with_cached_chunk(chunk_x, chunk_z, status, |chunk| chunk.add_entity(entity))
     }

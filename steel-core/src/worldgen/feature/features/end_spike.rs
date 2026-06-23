@@ -1,4 +1,5 @@
 use std::f64::consts::PI;
+use std::sync::Weak;
 
 use glam::DVec3;
 use steel_registry::vanilla_entities;
@@ -180,7 +181,7 @@ impl FeatureDecorationRunner {
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             position,
-            std::sync::Weak::new(),
+            Weak::new(),
         );
         {
             let mut crystal = crystal.lock_entity();
@@ -194,7 +195,7 @@ impl FeatureDecorationRunner {
             crystal.snap_to(position, random.next_f32() * 360.0, 0.0);
         }
         crystal.set_invulnerable(config.crystal_invulnerable);
-        let _ = region.add_fresh_entity(crystal, position);
+        let _ = region.add_fresh_entity(crystal);
 
         let crystal_pos = BlockPos::from(position);
         let bedrock = REGISTRY

@@ -69,7 +69,7 @@ impl ItemFrameEntity {
     ) -> SharedEntity {
         EntityBase::pack_with(
             next_entity_id(),
-            DVec3::ZERO,
+            ItemFrameEntity::frame_center(block_pos, direction),
             entity_type.dimensions,
             Weak::new(),
             |base| Self::build(base, entity_type, block_pos, direction),

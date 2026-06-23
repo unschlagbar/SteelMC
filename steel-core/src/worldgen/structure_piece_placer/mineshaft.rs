@@ -1,4 +1,3 @@
-
 use glam::DVec3;
 use steel_registry::blocks::block_state_ext::BlockStateExt as _;
 use steel_registry::blocks::properties::{BlockStateProperties, RailShape};
@@ -617,7 +616,7 @@ impl MineshaftPlacer<'_, '_> {
             let chest: &mut ChestMinecartEntity = chest.downcast().unwrap();
             chest.set_loot_table(ABANDONED_MINESHAFT_LOOT, loot_seed);
         }
-        let _ = self.region.add_fresh_entity(chest, chest_pos);
+        let _ = self.region.add_fresh_entity(chest);
         true
     }
 
