@@ -781,14 +781,6 @@
       "class": "Block"
     },
     {
-      "name": "potent_sulfur",
-      "class": "PotentSulfurBlock"
-    },
-    {
-      "name": "sulfur_spike",
-      "class": "SulfurSpikeBlock"
-    },
-    {
       "name": "bricks",
       "class": "Block"
     },
@@ -5340,6 +5332,120 @@
       "class": "Block"
     },
     {
+      "name": "sulfur",
+      "class": "Block"
+    },
+    {
+      "name": "potent_sulfur",
+      "class": "PotentSulfurBlock"
+    },
+    {
+      "name": "sulfur_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "sulfur_stairs",
+      "class": "StairBlock",
+      "base": "sulfur"
+    },
+    {
+      "name": "sulfur_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "polished_sulfur",
+      "class": "Block"
+    },
+    {
+      "name": "polished_sulfur_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "polished_sulfur_stairs",
+      "class": "StairBlock",
+      "base": "polished_sulfur"
+    },
+    {
+      "name": "polished_sulfur_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "sulfur_bricks",
+      "class": "Block"
+    },
+    {
+      "name": "sulfur_brick_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "sulfur_brick_stairs",
+      "class": "StairBlock",
+      "base": "sulfur_bricks"
+    },
+    {
+      "name": "sulfur_brick_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "chiseled_sulfur",
+      "class": "Block"
+    },
+    {
+      "name": "cinnabar",
+      "class": "Block"
+    },
+    {
+      "name": "cinnabar_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "cinnabar_stairs",
+      "class": "StairBlock",
+      "base": "cinnabar"
+    },
+    {
+      "name": "cinnabar_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "polished_cinnabar",
+      "class": "Block"
+    },
+    {
+      "name": "polished_cinnabar_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "polished_cinnabar_stairs",
+      "class": "StairBlock",
+      "base": "polished_cinnabar"
+    },
+    {
+      "name": "polished_cinnabar_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "cinnabar_bricks",
+      "class": "Block"
+    },
+    {
+      "name": "cinnabar_brick_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "cinnabar_brick_stairs",
+      "class": "StairBlock",
+      "base": "cinnabar_bricks"
+    },
+    {
+      "name": "cinnabar_brick_wall",
+      "class": "WallBlock"
+    },
+    {
+      "name": "chiseled_cinnabar",
+      "class": "Block"
+    },
+    {
       "name": "calcite",
       "class": "Block"
     },
@@ -5401,6 +5507,22 @@
       "weather_state": "oxidized"
     },
     {
+      "name": "waxed_copper_block",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_exposed_copper",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_weathered_copper",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_oxidized_copper",
+      "class": "Block"
+    },
+    {
       "name": "copper_ore",
       "class": "DropExperienceBlock",
       "xp_range_value": 0
@@ -5411,14 +5533,9 @@
       "xp_range_value": 0
     },
     {
-      "name": "oxidized_cut_copper",
+      "name": "cut_copper",
       "class": "WeatheringCopperFullBlock",
-      "weather_state": "oxidized"
-    },
-    {
-      "name": "weathered_cut_copper",
-      "class": "WeatheringCopperFullBlock",
-      "weather_state": "weathered"
+      "weather_state": "unaffected"
     },
     {
       "name": "exposed_cut_copper",
@@ -5426,24 +5543,30 @@
       "weather_state": "exposed"
     },
     {
-      "name": "cut_copper",
-      "class": "WeatheringCopperFullBlock",
-      "weather_state": "unaffected"
-    },
-    {
-      "name": "oxidized_chiseled_copper",
-      "class": "WeatheringCopperFullBlock",
-      "weather_state": "oxidized"
-    },
-    {
-      "name": "weathered_chiseled_copper",
+      "name": "weathered_cut_copper",
       "class": "WeatheringCopperFullBlock",
       "weather_state": "weathered"
     },
     {
-      "name": "exposed_chiseled_copper",
+      "name": "oxidized_cut_copper",
       "class": "WeatheringCopperFullBlock",
-      "weather_state": "exposed"
+      "weather_state": "oxidized"
+    },
+    {
+      "name": "waxed_cut_copper",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_exposed_cut_copper",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_weathered_cut_copper",
+      "class": "Block"
+    },
+    {
+      "name": "waxed_oxidized_cut_copper",
+      "class": "Block"
     },
     {
       "name": "chiseled_copper",
@@ -5451,11 +5574,22 @@
       "weather_state": "unaffected"
     },
     {
-      "name": "waxed_oxidized_chiseled_copper",
-      "class": "Block"
+      "name": "exposed_chiseled_copper",
+      "class": "WeatheringCopperFullBlock",
+      "weather_state": "exposed"
     },
     {
-      "name": "waxed_weathered_chiseled_copper",
+      "name": "weathered_chiseled_copper",
+      "class": "WeatheringCopperFullBlock",
+      "weather_state": "weathered"
+    },
+    {
+      "name": "oxidized_chiseled_copper",
+      "class": "WeatheringCopperFullBlock",
+      "weather_state": "oxidized"
+    },
+    {
+      "name": "waxed_chiseled_copper",
       "class": "Block"
     },
     {
@@ -5463,26 +5597,12 @@
       "class": "Block"
     },
     {
-      "name": "waxed_chiseled_copper",
+      "name": "waxed_weathered_chiseled_copper",
       "class": "Block"
     },
     {
-      "name": "oxidized_cut_copper_stairs",
-      "class": "WeatheringCopperStairBlock",
-      "weather_state": "oxidized",
-      "base": "oxidized_cut_copper"
-    },
-    {
-      "name": "weathered_cut_copper_stairs",
-      "class": "WeatheringCopperStairBlock",
-      "weather_state": "weathered",
-      "base": "weathered_cut_copper"
-    },
-    {
-      "name": "exposed_cut_copper_stairs",
-      "class": "WeatheringCopperStairBlock",
-      "weather_state": "exposed",
-      "base": "exposed_cut_copper"
+      "name": "waxed_oxidized_chiseled_copper",
+      "class": "Block"
     },
     {
       "name": "cut_copper_stairs",
@@ -5491,71 +5611,22 @@
       "base": "cut_copper"
     },
     {
-      "name": "oxidized_cut_copper_slab",
-      "class": "WeatheringCopperSlabBlock",
-      "weather_state": "oxidized"
+      "name": "exposed_cut_copper_stairs",
+      "class": "WeatheringCopperStairBlock",
+      "weather_state": "exposed",
+      "base": "exposed_cut_copper"
     },
     {
-      "name": "weathered_cut_copper_slab",
-      "class": "WeatheringCopperSlabBlock",
-      "weather_state": "weathered"
+      "name": "weathered_cut_copper_stairs",
+      "class": "WeatheringCopperStairBlock",
+      "weather_state": "weathered",
+      "base": "weathered_cut_copper"
     },
     {
-      "name": "exposed_cut_copper_slab",
-      "class": "WeatheringCopperSlabBlock",
-      "weather_state": "exposed"
-    },
-    {
-      "name": "cut_copper_slab",
-      "class": "WeatheringCopperSlabBlock",
-      "weather_state": "unaffected"
-    },
-    {
-      "name": "waxed_copper_block",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_weathered_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_exposed_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_oxidized_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_oxidized_cut_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_weathered_cut_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_exposed_cut_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_cut_copper",
-      "class": "Block"
-    },
-    {
-      "name": "waxed_oxidized_cut_copper_stairs",
-      "class": "StairBlock",
-      "base": "waxed_oxidized_cut_copper"
-    },
-    {
-      "name": "waxed_weathered_cut_copper_stairs",
-      "class": "StairBlock",
-      "base": "waxed_weathered_cut_copper"
-    },
-    {
-      "name": "waxed_exposed_cut_copper_stairs",
-      "class": "StairBlock",
-      "base": "waxed_exposed_cut_copper"
+      "name": "oxidized_cut_copper_stairs",
+      "class": "WeatheringCopperStairBlock",
+      "weather_state": "oxidized",
+      "base": "oxidized_cut_copper"
     },
     {
       "name": "waxed_cut_copper_stairs",
@@ -5563,11 +5634,42 @@
       "base": "waxed_cut_copper"
     },
     {
-      "name": "waxed_oxidized_cut_copper_slab",
-      "class": "SlabBlock"
+      "name": "waxed_exposed_cut_copper_stairs",
+      "class": "StairBlock",
+      "base": "waxed_exposed_cut_copper"
     },
     {
-      "name": "waxed_weathered_cut_copper_slab",
+      "name": "waxed_weathered_cut_copper_stairs",
+      "class": "StairBlock",
+      "base": "waxed_weathered_cut_copper"
+    },
+    {
+      "name": "waxed_oxidized_cut_copper_stairs",
+      "class": "StairBlock",
+      "base": "waxed_oxidized_cut_copper"
+    },
+    {
+      "name": "cut_copper_slab",
+      "class": "WeatheringCopperSlabBlock",
+      "weather_state": "unaffected"
+    },
+    {
+      "name": "exposed_cut_copper_slab",
+      "class": "WeatheringCopperSlabBlock",
+      "weather_state": "exposed"
+    },
+    {
+      "name": "weathered_cut_copper_slab",
+      "class": "WeatheringCopperSlabBlock",
+      "weather_state": "weathered"
+    },
+    {
+      "name": "oxidized_cut_copper_slab",
+      "class": "WeatheringCopperSlabBlock",
+      "weather_state": "oxidized"
+    },
+    {
+      "name": "waxed_cut_copper_slab",
       "class": "SlabBlock"
     },
     {
@@ -5575,7 +5677,11 @@
       "class": "SlabBlock"
     },
     {
-      "name": "waxed_cut_copper_slab",
+      "name": "waxed_weathered_cut_copper_slab",
+      "class": "SlabBlock"
+    },
+    {
+      "name": "waxed_oxidized_cut_copper_slab",
       "class": "SlabBlock"
     },
     {
@@ -5615,9 +5721,9 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "oxidized_copper_door",
+      "name": "weathered_copper_door",
       "class": "WeatheringCopperDoorBlock",
-      "weather_state": "oxidized",
+      "weather_state": "weathered",
       "type_name": "copper",
       "type_can_open_by_hand": true,
       "type_can_open_by_wind_charge": true,
@@ -5633,9 +5739,9 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "weathered_copper_door",
+      "name": "oxidized_copper_door",
       "class": "WeatheringCopperDoorBlock",
-      "weather_state": "weathered",
+      "weather_state": "oxidized",
       "type_name": "copper",
       "type_can_open_by_hand": true,
       "type_can_open_by_wind_charge": true,
@@ -5685,7 +5791,7 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "waxed_oxidized_copper_door",
+      "name": "waxed_weathered_copper_door",
       "class": "DoorBlock",
       "type_name": "copper",
       "type_can_open_by_hand": true,
@@ -5702,7 +5808,7 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "waxed_weathered_copper_door",
+      "name": "waxed_oxidized_copper_door",
       "class": "DoorBlock",
       "type_name": "copper",
       "type_can_open_by_hand": true,
@@ -5755,9 +5861,9 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "oxidized_copper_trapdoor",
+      "name": "weathered_copper_trapdoor",
       "class": "WeatheringCopperTrapDoorBlock",
-      "weather_state": "oxidized",
+      "weather_state": "weathered",
       "type_name": "copper",
       "type_can_open_by_hand": true,
       "type_can_open_by_wind_charge": true,
@@ -5773,9 +5879,9 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "weathered_copper_trapdoor",
+      "name": "oxidized_copper_trapdoor",
       "class": "WeatheringCopperTrapDoorBlock",
-      "weather_state": "weathered",
+      "weather_state": "oxidized",
       "type_name": "copper",
       "type_can_open_by_hand": true,
       "type_can_open_by_wind_charge": true,
@@ -5825,7 +5931,7 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "waxed_oxidized_copper_trapdoor",
+      "name": "waxed_weathered_copper_trapdoor",
       "class": "TrapDoorBlock",
       "type_name": "copper",
       "type_can_open_by_hand": true,
@@ -5842,7 +5948,7 @@
       "type_button_click_on": "block.stone_button.click_on"
     },
     {
-      "name": "waxed_weathered_copper_trapdoor",
+      "name": "waxed_oxidized_copper_trapdoor",
       "class": "TrapDoorBlock",
       "type_name": "copper",
       "type_can_open_by_hand": true,
@@ -6063,12 +6169,16 @@
       "class": "LightningRodBlock"
     },
     {
+      "name": "dripstone_block",
+      "class": "Block"
+    },
+    {
       "name": "pointed_dripstone",
       "class": "PointedDripstoneBlock"
     },
     {
-      "name": "dripstone_block",
-      "class": "Block"
+      "name": "sulfur_spike",
+      "class": "SulfurSpikeBlock"
     },
     {
       "name": "cave_vines",
@@ -6462,6 +6572,141 @@
       "block": "chiseled_tuff_bricks"
     },
     {
+      "name": "sulfur",
+      "class": "BlockItem",
+      "block": "sulfur"
+    },
+    {
+      "name": "potent_sulfur",
+      "class": "BlockItem",
+      "block": "potent_sulfur"
+    },
+    {
+      "name": "sulfur_slab",
+      "class": "BlockItem",
+      "block": "sulfur_slab"
+    },
+    {
+      "name": "sulfur_stairs",
+      "class": "BlockItem",
+      "block": "sulfur_stairs"
+    },
+    {
+      "name": "sulfur_wall",
+      "class": "BlockItem",
+      "block": "sulfur_wall"
+    },
+    {
+      "name": "polished_sulfur",
+      "class": "BlockItem",
+      "block": "polished_sulfur"
+    },
+    {
+      "name": "polished_sulfur_slab",
+      "class": "BlockItem",
+      "block": "polished_sulfur_slab"
+    },
+    {
+      "name": "polished_sulfur_stairs",
+      "class": "BlockItem",
+      "block": "polished_sulfur_stairs"
+    },
+    {
+      "name": "polished_sulfur_wall",
+      "class": "BlockItem",
+      "block": "polished_sulfur_wall"
+    },
+    {
+      "name": "sulfur_bricks",
+      "class": "BlockItem",
+      "block": "sulfur_bricks"
+    },
+    {
+      "name": "sulfur_brick_slab",
+      "class": "BlockItem",
+      "block": "sulfur_brick_slab"
+    },
+    {
+      "name": "sulfur_brick_stairs",
+      "class": "BlockItem",
+      "block": "sulfur_brick_stairs"
+    },
+    {
+      "name": "sulfur_brick_wall",
+      "class": "BlockItem",
+      "block": "sulfur_brick_wall"
+    },
+    {
+      "name": "chiseled_sulfur",
+      "class": "BlockItem",
+      "block": "chiseled_sulfur"
+    },
+    {
+      "name": "cinnabar",
+      "class": "BlockItem",
+      "block": "cinnabar"
+    },
+    {
+      "name": "cinnabar_slab",
+      "class": "BlockItem",
+      "block": "cinnabar_slab"
+    },
+    {
+      "name": "cinnabar_stairs",
+      "class": "BlockItem",
+      "block": "cinnabar_stairs"
+    },
+    {
+      "name": "cinnabar_wall",
+      "class": "BlockItem",
+      "block": "cinnabar_wall"
+    },
+    {
+      "name": "polished_cinnabar",
+      "class": "BlockItem",
+      "block": "polished_cinnabar"
+    },
+    {
+      "name": "polished_cinnabar_slab",
+      "class": "BlockItem",
+      "block": "polished_cinnabar_slab"
+    },
+    {
+      "name": "polished_cinnabar_stairs",
+      "class": "BlockItem",
+      "block": "polished_cinnabar_stairs"
+    },
+    {
+      "name": "polished_cinnabar_wall",
+      "class": "BlockItem",
+      "block": "polished_cinnabar_wall"
+    },
+    {
+      "name": "cinnabar_bricks",
+      "class": "BlockItem",
+      "block": "cinnabar_bricks"
+    },
+    {
+      "name": "cinnabar_brick_slab",
+      "class": "BlockItem",
+      "block": "cinnabar_brick_slab"
+    },
+    {
+      "name": "cinnabar_brick_stairs",
+      "class": "BlockItem",
+      "block": "cinnabar_brick_stairs"
+    },
+    {
+      "name": "cinnabar_brick_wall",
+      "class": "BlockItem",
+      "block": "cinnabar_brick_wall"
+    },
+    {
+      "name": "chiseled_cinnabar",
+      "class": "BlockItem",
+      "block": "chiseled_cinnabar"
+    },
+    {
       "name": "dripstone_block",
       "class": "BlockItem",
       "block": "dripstone_block"
@@ -6792,21 +7037,6 @@
       "block": "copper_block"
     },
     {
-      "name": "gold_block",
-      "class": "BlockItem",
-      "block": "gold_block"
-    },
-    {
-      "name": "diamond_block",
-      "class": "BlockItem",
-      "block": "diamond_block"
-    },
-    {
-      "name": "netherite_block",
-      "class": "BlockItem",
-      "block": "netherite_block"
-    },
-    {
       "name": "exposed_copper",
       "class": "BlockItem",
       "block": "exposed_copper"
@@ -6820,86 +7050,6 @@
       "name": "oxidized_copper",
       "class": "BlockItem",
       "block": "oxidized_copper"
-    },
-    {
-      "name": "chiseled_copper",
-      "class": "BlockItem",
-      "block": "chiseled_copper"
-    },
-    {
-      "name": "exposed_chiseled_copper",
-      "class": "BlockItem",
-      "block": "exposed_chiseled_copper"
-    },
-    {
-      "name": "weathered_chiseled_copper",
-      "class": "BlockItem",
-      "block": "weathered_chiseled_copper"
-    },
-    {
-      "name": "oxidized_chiseled_copper",
-      "class": "BlockItem",
-      "block": "oxidized_chiseled_copper"
-    },
-    {
-      "name": "cut_copper",
-      "class": "BlockItem",
-      "block": "cut_copper"
-    },
-    {
-      "name": "exposed_cut_copper",
-      "class": "BlockItem",
-      "block": "exposed_cut_copper"
-    },
-    {
-      "name": "weathered_cut_copper",
-      "class": "BlockItem",
-      "block": "weathered_cut_copper"
-    },
-    {
-      "name": "oxidized_cut_copper",
-      "class": "BlockItem",
-      "block": "oxidized_cut_copper"
-    },
-    {
-      "name": "cut_copper_stairs",
-      "class": "BlockItem",
-      "block": "cut_copper_stairs"
-    },
-    {
-      "name": "exposed_cut_copper_stairs",
-      "class": "BlockItem",
-      "block": "exposed_cut_copper_stairs"
-    },
-    {
-      "name": "weathered_cut_copper_stairs",
-      "class": "BlockItem",
-      "block": "weathered_cut_copper_stairs"
-    },
-    {
-      "name": "oxidized_cut_copper_stairs",
-      "class": "BlockItem",
-      "block": "oxidized_cut_copper_stairs"
-    },
-    {
-      "name": "cut_copper_slab",
-      "class": "BlockItem",
-      "block": "cut_copper_slab"
-    },
-    {
-      "name": "exposed_cut_copper_slab",
-      "class": "BlockItem",
-      "block": "exposed_cut_copper_slab"
-    },
-    {
-      "name": "weathered_cut_copper_slab",
-      "class": "BlockItem",
-      "block": "weathered_cut_copper_slab"
-    },
-    {
-      "name": "oxidized_cut_copper_slab",
-      "class": "BlockItem",
-      "block": "oxidized_cut_copper_slab"
     },
     {
       "name": "waxed_copper_block",
@@ -6922,6 +7072,41 @@
       "block": "waxed_oxidized_copper"
     },
     {
+      "name": "gold_block",
+      "class": "BlockItem",
+      "block": "gold_block"
+    },
+    {
+      "name": "diamond_block",
+      "class": "BlockItem",
+      "block": "diamond_block"
+    },
+    {
+      "name": "netherite_block",
+      "class": "BlockItem",
+      "block": "netherite_block"
+    },
+    {
+      "name": "chiseled_copper",
+      "class": "BlockItem",
+      "block": "chiseled_copper"
+    },
+    {
+      "name": "exposed_chiseled_copper",
+      "class": "BlockItem",
+      "block": "exposed_chiseled_copper"
+    },
+    {
+      "name": "weathered_chiseled_copper",
+      "class": "BlockItem",
+      "block": "weathered_chiseled_copper"
+    },
+    {
+      "name": "oxidized_chiseled_copper",
+      "class": "BlockItem",
+      "block": "oxidized_chiseled_copper"
+    },
+    {
       "name": "waxed_chiseled_copper",
       "class": "BlockItem",
       "block": "waxed_chiseled_copper"
@@ -6940,6 +7125,26 @@
       "name": "waxed_oxidized_chiseled_copper",
       "class": "BlockItem",
       "block": "waxed_oxidized_chiseled_copper"
+    },
+    {
+      "name": "cut_copper",
+      "class": "BlockItem",
+      "block": "cut_copper"
+    },
+    {
+      "name": "exposed_cut_copper",
+      "class": "BlockItem",
+      "block": "exposed_cut_copper"
+    },
+    {
+      "name": "weathered_cut_copper",
+      "class": "BlockItem",
+      "block": "weathered_cut_copper"
+    },
+    {
+      "name": "oxidized_cut_copper",
+      "class": "BlockItem",
+      "block": "oxidized_cut_copper"
     },
     {
       "name": "waxed_cut_copper",
@@ -6962,6 +7167,26 @@
       "block": "waxed_oxidized_cut_copper"
     },
     {
+      "name": "cut_copper_stairs",
+      "class": "BlockItem",
+      "block": "cut_copper_stairs"
+    },
+    {
+      "name": "exposed_cut_copper_stairs",
+      "class": "BlockItem",
+      "block": "exposed_cut_copper_stairs"
+    },
+    {
+      "name": "weathered_cut_copper_stairs",
+      "class": "BlockItem",
+      "block": "weathered_cut_copper_stairs"
+    },
+    {
+      "name": "oxidized_cut_copper_stairs",
+      "class": "BlockItem",
+      "block": "oxidized_cut_copper_stairs"
+    },
+    {
       "name": "waxed_cut_copper_stairs",
       "class": "BlockItem",
       "block": "waxed_cut_copper_stairs"
@@ -6980,6 +7205,26 @@
       "name": "waxed_oxidized_cut_copper_stairs",
       "class": "BlockItem",
       "block": "waxed_oxidized_cut_copper_stairs"
+    },
+    {
+      "name": "cut_copper_slab",
+      "class": "BlockItem",
+      "block": "cut_copper_slab"
+    },
+    {
+      "name": "exposed_cut_copper_slab",
+      "class": "BlockItem",
+      "block": "exposed_cut_copper_slab"
+    },
+    {
+      "name": "weathered_cut_copper_slab",
+      "class": "BlockItem",
+      "block": "weathered_cut_copper_slab"
+    },
+    {
+      "name": "oxidized_cut_copper_slab",
+      "class": "BlockItem",
+      "block": "oxidized_cut_copper_slab"
     },
     {
       "name": "waxed_cut_copper_slab",
@@ -10620,101 +10865,38 @@
     {
       "name": "minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "minecart"
     },
     {
       "name": "chest_minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.chest_minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "chest_minecart"
     },
     {
       "name": "furnace_minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.furnace_minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "furnace_minecart"
     },
     {
       "name": "tnt_minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.tnt_minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "tnt_minecart"
     },
     {
       "name": "hopper_minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.hopper_minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "hopper_minecart"
     },
     {
       "name": "carrot_on_a_stick",
       "class": "FoodOnAStickItem",
-      "can_interact_with_category": "creature",
-      "can_interact_with_serialize": true,
-      "can_interact_with_summon": true,
-      "can_interact_with_fire_immune": false,
-      "can_interact_with_can_spawn_far_from_player": true,
-      "can_interact_with_client_tracking_range": 10,
-      "can_interact_with_update_interval": 3,
-      "can_interact_with_description_id": "entity.minecraft.pig",
-      "can_interact_with_spawn_dimensions_scale": 1.0,
-      "can_interact_with_allowed_in_peaceful": true,
+      "can_interact_with": "pig",
       "consume_item_damage": 7
     },
     {
       "name": "warped_fungus_on_a_stick",
       "class": "FoodOnAStickItem",
-      "can_interact_with_category": "creature",
-      "can_interact_with_serialize": true,
-      "can_interact_with_summon": true,
-      "can_interact_with_fire_immune": true,
-      "can_interact_with_can_spawn_far_from_player": true,
-      "can_interact_with_client_tracking_range": 10,
-      "can_interact_with_update_interval": 3,
-      "can_interact_with_description_id": "entity.minecraft.strider",
-      "can_interact_with_spawn_dimensions_scale": 1.0,
-      "can_interact_with_allowed_in_peaceful": true,
+      "can_interact_with": "strider",
       "consume_item_damage": 1
     },
     {
@@ -10728,282 +10910,102 @@
     {
       "name": "oak_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.oak_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "oak_boat"
     },
     {
       "name": "oak_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.oak_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "oak_chest_boat"
     },
     {
       "name": "spruce_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.spruce_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "spruce_boat"
     },
     {
       "name": "spruce_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.spruce_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "spruce_chest_boat"
     },
     {
       "name": "birch_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.birch_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "birch_boat"
     },
     {
       "name": "birch_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.birch_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "birch_chest_boat"
     },
     {
       "name": "jungle_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.jungle_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "jungle_boat"
     },
     {
       "name": "jungle_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.jungle_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "jungle_chest_boat"
     },
     {
       "name": "acacia_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.acacia_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "acacia_boat"
     },
     {
       "name": "acacia_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.acacia_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "acacia_chest_boat"
     },
     {
       "name": "cherry_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.cherry_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "cherry_boat"
     },
     {
       "name": "cherry_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.cherry_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "cherry_chest_boat"
     },
     {
       "name": "dark_oak_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.dark_oak_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "dark_oak_boat"
     },
     {
       "name": "dark_oak_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.dark_oak_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "dark_oak_chest_boat"
     },
     {
       "name": "pale_oak_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.pale_oak_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "pale_oak_boat"
     },
     {
       "name": "pale_oak_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.pale_oak_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "pale_oak_chest_boat"
     },
     {
       "name": "mangrove_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.mangrove_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "mangrove_boat"
     },
     {
       "name": "mangrove_chest_boat",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.mangrove_chest_boat",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "mangrove_chest_boat"
     },
     {
       "name": "bamboo_raft",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.bamboo_raft",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "bamboo_raft"
     },
     {
       "name": "bamboo_chest_raft",
       "class": "BoatItem",
-      "entity_type_category": "misc",
-      "entity_type_serialize": true,
-      "entity_type_summon": true,
-      "entity_type_fire_immune": false,
-      "entity_type_can_spawn_far_from_player": true,
-      "entity_type_client_tracking_range": 10,
-      "entity_type_update_interval": 3,
-      "entity_type_description_id": "entity.minecraft.bamboo_chest_raft",
-      "entity_type_spawn_dimensions_scale": 1.0,
-      "entity_type_allowed_in_peaceful": true
+      "entity_type": "bamboo_chest_raft"
     },
     {
       "name": "structure_block",
@@ -11422,16 +11424,7 @@
     {
       "name": "painting",
       "class": "HangingEntityItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 10,
-      "type_update_interval": 2147483647,
-      "type_description_id": "entity.minecraft.painting",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "painting"
     },
     {
       "name": "golden_apple",
@@ -11645,96 +11638,49 @@
     {
       "name": "pufferfish_bucket",
       "class": "MobBucketItem",
-      "type_category": "water_ambient",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": false,
-      "type_client_tracking_range": 4,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.pufferfish",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "pufferfish",
       "empty_sound": "item.bucket.empty_fish",
       "content": "water"
     },
     {
       "name": "salmon_bucket",
       "class": "MobBucketItem",
-      "type_category": "water_ambient",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": false,
-      "type_client_tracking_range": 4,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.salmon",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "salmon",
       "empty_sound": "item.bucket.empty_fish",
       "content": "water"
     },
     {
       "name": "cod_bucket",
       "class": "MobBucketItem",
-      "type_category": "water_ambient",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": false,
-      "type_client_tracking_range": 4,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.cod",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "cod",
       "empty_sound": "item.bucket.empty_fish",
       "content": "water"
     },
     {
       "name": "tropical_fish_bucket",
       "class": "MobBucketItem",
-      "type_category": "water_ambient",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": false,
-      "type_client_tracking_range": 4,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.tropical_fish",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "tropical_fish",
       "empty_sound": "item.bucket.empty_fish",
       "content": "water"
     },
     {
       "name": "axolotl_bucket",
       "class": "MobBucketItem",
-      "type_category": "axolotls",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": false,
-      "type_client_tracking_range": 10,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.axolotl",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "axolotl",
       "empty_sound": "item.bucket.empty_axolotl",
       "content": "water"
     },
     {
+      "name": "sulfur_cube_bucket",
+      "class": "MobBucketItem",
+      "type": "sulfur_cube",
+      "empty_sound": "item.bucket.empty_sulfur_cube",
+      "content": "empty"
+    },
+    {
       "name": "tadpole_bucket",
       "class": "MobBucketItem",
-      "type_category": "creature",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 10,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.tadpole",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true,
+      "type": "tadpole",
       "empty_sound": "item.bucket.empty_tadpole",
       "content": "water"
     },
@@ -12328,6 +12274,10 @@
       "class": "SpawnEggItem"
     },
     {
+      "name": "sulfur_cube_spawn_egg",
+      "class": "SpawnEggItem"
+    },
+    {
       "name": "copper_golem_spawn_egg",
       "class": "SpawnEggItem"
     },
@@ -12562,30 +12512,12 @@
     {
       "name": "item_frame",
       "class": "ItemFrameItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 10,
-      "type_update_interval": 2147483647,
-      "type_description_id": "entity.minecraft.item_frame",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "item_frame"
     },
     {
       "name": "glow_item_frame",
       "class": "ItemFrameItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 10,
-      "type_update_interval": 2147483647,
-      "type_description_id": "entity.minecraft.glow_item_frame",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "glow_item_frame"
     },
     {
       "name": "flower_pot",
@@ -12762,16 +12694,7 @@
     {
       "name": "command_block_minecart",
       "class": "MinecartItem",
-      "type_category": "misc",
-      "type_serialize": true,
-      "type_summon": true,
-      "type_fire_immune": false,
-      "type_can_spawn_far_from_player": true,
-      "type_client_tracking_range": 8,
-      "type_update_interval": 3,
-      "type_description_id": "entity.minecraft.command_block_minecart",
-      "type_spawn_dimensions_scale": 1.0,
-      "type_allowed_in_peaceful": true
+      "type": "command_block_minecart"
     },
     {
       "name": "mutton",
@@ -13014,6 +12937,10 @@
     },
     {
       "name": "music_disc_blocks",
+      "class": "Item"
+    },
+    {
+      "name": "music_disc_bounce",
       "class": "Item"
     },
     {
@@ -13515,6 +13442,11 @@
       "name": "pointed_dripstone",
       "class": "BlockItem",
       "block": "pointed_dripstone"
+    },
+    {
+      "name": "sulfur_spike",
+      "class": "BlockItem",
+      "block": "sulfur_spike"
     },
     {
       "name": "ochre_froglight",
@@ -14315,7 +14247,7 @@
     {
       "name": "magma_cube",
       "class": "MagmaCube",
-      "java_class": "net.minecraft.world.entity.monster.MagmaCube"
+      "java_class": "net.minecraft.world.entity.monster.cubemob.MagmaCube"
     },
     {
       "name": "mangrove_boat",
@@ -14507,7 +14439,7 @@
     {
       "name": "slime",
       "class": "Slime",
-      "java_class": "net.minecraft.world.entity.monster.Slime"
+      "java_class": "net.minecraft.world.entity.monster.cubemob.Slime"
     },
     {
       "name": "small_fireball",
@@ -14571,6 +14503,11 @@
       "name": "strider",
       "class": "Strider",
       "java_class": "net.minecraft.world.entity.monster.Strider"
+    },
+    {
+      "name": "sulfur_cube",
+      "class": "SulfurCube",
+      "java_class": "net.minecraft.world.entity.monster.cubemob.SulfurCube"
     },
     {
       "name": "tadpole",
