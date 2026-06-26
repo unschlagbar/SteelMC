@@ -85,9 +85,10 @@ use crate::{
     chunk::heightmap::HeightmapType,
     chunk_saver::{ChunkStorage, RamOnlyStorage, RegionManager},
     entity::{
-        AddEntityError, Entity, EntityChangeSenders, EntityChunkCallback, EntityMovementSyncPacket,
-        EntityOwnership, EntityTracker, EntityVisibility, InactiveEntityCallback,
-        MobEffectSyncPacket, RemovalReason, SharedEntity, WorldEntityManager, entities::ItemEntity,
+        AddEntityError, Entity, EntityChangeSenders, EntityChunkCallback, EntityLifecycleChanges,
+        EntityMovementSyncPacket, EntityOwnership, EntityTracker, EntityVisibility,
+        InactiveEntityCallback, MobEffectSyncPacket, RemovalReason, SharedEntity,
+        WorldEntityManager, entities::ItemEntity,
     },
     fluid::{FluidStateExt as _, fluid_state_to_block},
     level_data::{LevelDataManager, WorldBorderData, WorldGenerationSettings},
@@ -1396,23 +1397,15 @@ impl World {
             self.chunk_map
                 .tick_game(self, tick_count, random_tick_speed, runs_normally);
 
-        let tickable_entity_chunks = if runs_normally {
-            self.chunk_map.tickable_full_chunk_positions()
-        } else {
-            Vec::new()
-        };
-        let tickable_entity_chunk_set = tickable_entity_chunks
-            .iter()
-            .copied()
-            .collect::<FxHashSet<_>>();
-
-        if runs_normally {
-            let dirty_chunks = self
-                .entity_manager
-                .tick_entities(tick_count as i32, &tickable_entity_chunks);
-            for chunk in dirty_chunks {
-                self.mark_chunk_dirty(chunk);
-            }
+        // Chunk entity visibility (driven by `update_entity_chunk_visibility`)
+        // already gates which manager-owned entities are in the tick list, so
+        // `tick_entities` only needs the freeze flag. Frozen ticks still let
+        // player-carrying vehicles advance, matching vanilla.
+        let entity_dirty = self
+            .entity_manager
+            .tick_entities(tick_count as i32, runs_normally);
+        for chunk in entity_dirty {
+            self.mark_chunk_dirty(chunk);
         }
 
         let player_tick = {
@@ -1424,10 +1417,9 @@ impl World {
                 if runs_normally {
                     let player_guard = player.entity().lock();
                     if !player_guard.is_passenger() {
-                        let dirty_chunks = self.entity_manager.tick_vehicle_passengers_for_root(
-                            &*player_guard,
-                            &tickable_entity_chunk_set,
-                        );
+                        let dirty_chunks = self
+                            .entity_manager
+                            .tick_vehicle_passengers_for_root(&*player_guard);
                         drop(player_guard);
                         for chunk in dirty_chunks {
                             self.mark_chunk_dirty(chunk);
@@ -3446,10 +3438,11 @@ impl World {
         self: &Arc<Self>,
         entity: SharedEntity,
     ) -> Result<(), AddEntityError> {
-        self.entity_manager
+        let lifecycle = self
+            .entity_manager
             .add_live_entity(entity.clone(), EntityOwnership::ManagerOwned)?;
         self.attach_managed_entity_callback(&entity);
-        self.add_entity_to_tracker(&entity);
+        self.apply_entity_lifecycle_changes(lifecycle);
         Ok(())
     }
 
@@ -3457,12 +3450,13 @@ impl World {
         self: &Arc<Self>,
         entities: &[SharedEntity],
     ) -> Result<(), AddEntityError> {
-        self.entity_manager
+        let lifecycle = self
+            .entity_manager
             .add_live_entity_tree(entities, EntityOwnership::ManagerOwned)?;
         for entity in entities {
             self.attach_managed_entity_callback(entity);
-            self.add_entity_to_tracker(entity);
         }
+        self.apply_entity_lifecycle_changes(lifecycle);
         Ok(())
     }
 
@@ -3584,18 +3578,32 @@ impl World {
         Ok(())
     }
 
-    /// No-op shim for upstream's chunk entity-visibility lifecycle.
+    /// Applies tracker membership changes reported by the entity manager.
     ///
-    /// Upstream `#225` drives entity activation through
-    /// `entity_manager.update_chunk_visibility`; this branch keeps its own
-    /// activation path (`on_entity_chunk_loaded`/`on_entity_chunk_unload_*`),
-    /// so the auto-merged `chunk_holder`/`chunk_map` callers resolve here to a
-    /// no-op rather than reintroducing the incompatible system.
+    /// Ticking transitions are internal to the manager's tick list, so only
+    /// tracking start/stop translate into tracker updates here.
+    pub(crate) fn apply_entity_lifecycle_changes(
+        self: &Arc<Self>,
+        changes: EntityLifecycleChanges,
+    ) {
+        for entity in changes.tracking_stopped {
+            self.remove_entity_from_tracker(entity.id());
+        }
+        for entity in changes.tracking_started {
+            self.add_entity_to_tracker(&entity);
+        }
+    }
+
+    /// Drives a chunk's entity visibility (hidden/tracked/ticking) into the
+    /// entity manager so entities activate, track, and tick in lockstep with
+    /// the chunk's ticket level.
     pub(crate) fn update_entity_chunk_visibility(
         self: &Arc<Self>,
-        _pos: ChunkPos,
-        _visibility: EntityVisibility,
+        pos: ChunkPos,
+        visibility: EntityVisibility,
     ) {
+        let changes = self.entity_manager.update_chunk_visibility(pos, visibility);
+        self.apply_entity_lifecycle_changes(changes);
     }
 
     pub(crate) fn on_entity_chunk_loaded(self: &Arc<Self>, pos: ChunkPos) {
@@ -3607,20 +3615,25 @@ impl World {
         if result.needs_save {
             self.mark_chunk_dirty(pos);
         }
-        for entity in result.restored {
-            self.attach_managed_entity_callback(&entity);
-            self.add_entity_to_tracker(&entity);
+        for entity in &result.restored {
+            self.attach_managed_entity_callback(entity);
         }
-        for entity in result.tracking_started {
-            self.add_entity_to_tracker(&entity);
-        }
+        self.apply_entity_lifecycle_changes(EntityLifecycleChanges {
+            tracking_started: result.tracking_started,
+            tracking_stopped: Vec::new(),
+            ticking_started: result.ticking_started,
+            ticking_stopped: Vec::new(),
+        });
     }
 
     pub(crate) fn on_entity_chunk_unload_start(self: &Arc<Self>, pos: ChunkPos) {
         let result = self.entity_manager.begin_chunk_unload(pos);
-        for entity in result.tracking_stopped {
-            self.remove_entity_from_tracker(entity.id());
-        }
+        self.apply_entity_lifecycle_changes(EntityLifecycleChanges {
+            tracking_started: Vec::new(),
+            tracking_stopped: result.tracking_stopped,
+            ticking_started: Vec::new(),
+            ticking_stopped: result.ticking_stopped,
+        });
         for entity in result.retained {
             let entity_id = entity.id();
             entity.set_level_callback(Arc::new(InactiveEntityCallback::new(entity_id)));

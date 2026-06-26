@@ -10,7 +10,7 @@ use crate::entity::Entity as _;
 /// Behavior for vanilla `FoodOnAStickItem`.
 #[item_behavior]
 pub struct FoodOnAStickItem {
-    #[json_arg(vanilla_entities, json = "can_interact_with_description_id")]
+    #[json_arg(vanilla_entities, json = "can_interact_with")]
     can_interact_with: EntityTypeRef,
     #[json_arg(value)]
     consume_item_damage: i32,

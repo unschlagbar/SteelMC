@@ -1295,6 +1295,13 @@ impl EntityBase {
         self.with_entity(|e| e.entity_type())
     }
 
+    /// Returns whether this entity ignores chunk ticking visibility.
+    ///
+    /// Mirrors vanilla `Entity.isAlwaysTicking`.
+    pub fn is_always_ticking(&self) -> bool {
+        self.with_entity(|e| e.is_always_ticking())
+    }
+
     /// Returns `true` if the entity can be targeted and damaged.
     pub fn attackable(&self) -> bool {
         self.with_entity(|e| e.attackable())
