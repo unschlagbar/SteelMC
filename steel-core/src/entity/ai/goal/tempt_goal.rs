@@ -111,7 +111,7 @@ impl Goal for TemptGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if self.calm_down > 0 {
             self.calm_down -= 1;
             return false;
@@ -132,7 +132,7 @@ impl Goal for TemptGoal {
         self.player.is_some()
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if self.can_scare() && !self.update_player_scare_state(mob) {
             return false;
         }
@@ -149,7 +149,7 @@ impl Goal for TemptGoal {
 
     fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.player = None;
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
         self.calm_down = reduced_tick_delay(100);
         self.is_running = false;
     }
@@ -163,16 +163,19 @@ impl Goal for TemptGoal {
             let guard = player.lock();
             (guard.position(), guard.get_eye_y())
         };
-        mob.mob_base().controls().lock().look_control.set_look_at(
+
+        let y_max_rot = mob.max_head_y_rot() + 20.0;
+        let x_max_rot = mob.max_head_x_rot();
+        mob.mob_base().controls.look_control.set_look_at(
             DVec3::new(player_position.x, eye_y, player_position.z),
-            mob.max_head_y_rot() + 20.0,
-            mob.max_head_x_rot(),
+            y_max_rot,
+            x_max_rot,
         );
 
         if mob.position().distance_squared(player_position)
             < self.stop_distance * self.stop_distance
         {
-            mob.mob_base().navigation().lock().stop();
+            mob.mob_base().navigation.stop();
         } else {
             mob.move_to_pos(player_position, self.speed_modifier);
         }

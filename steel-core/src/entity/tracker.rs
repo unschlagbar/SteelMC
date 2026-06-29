@@ -1673,7 +1673,7 @@ mod tests {
         let tracker = EntityTracker::new();
         let pig: SharedEntity = PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity = PairingTestEntity::new(2, Vec::new()).entity();
-        assert!(pig.with_mob(|mob| mob.set_leashed_to(&holder)).unwrap());
+        assert!(pig.with_mob_mut(|mob| mob.set_leashed_to(&holder)).unwrap());
 
         let pairing = tracker.spawn_pairing(&pig, 99);
 
@@ -1707,7 +1707,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        assert!(pig.with_mob(|mob| mob.set_leashed_to(&holder)).unwrap());
+        assert!(pig.with_mob_mut(|mob| mob.set_leashed_to(&holder)).unwrap());
         tracker.send_changes(
             |_| Vec::new(),
             |_| None,
@@ -1743,7 +1743,7 @@ mod tests {
         );
         assert!(updates.is_empty());
 
-        pig.with_mob(|mob| mob.remove_leash_state());
+        pig.with_mob_mut(|mob| mob.remove_leash_state());
         tracker.send_changes(
             |_| Vec::new(),
             |_| None,

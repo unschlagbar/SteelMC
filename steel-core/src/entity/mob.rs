@@ -20,7 +20,6 @@ use steel_registry::{
     vanilla_game_events, vanilla_items,
 };
 use steel_utils::UuidExt;
-use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random as _;
 use steel_utils::types::{Difficulty, InteractionHand};
 use steel_utils::{BlockPos, ChunkPos, Identifier, WorldAabb, axis::Axis};
@@ -146,22 +145,22 @@ impl DropChances {
 
 #[derive(Debug)]
 pub struct MobBase {
-    goal_selector: SyncMutex<GoalSelector>,
-    target_selector: SyncMutex<GoalSelector>,
-    target: SyncMutex<Option<WeakEntity>>,
-    sensing: SyncMutex<Sensing>,
-    controls: SyncMutex<MobControls>,
-    navigation: SyncMutex<PathNavigation>,
-    pathfinding_malus: SyncMutex<PathfindingMalus>,
-    persistence_required: SyncMutex<bool>,
-    can_pick_up_loot: SyncMutex<bool>,
-    drop_chances: SyncMutex<DropChances>,
-    home_restriction: SyncMutex<MobHomeRestriction>,
-    death_loot_table: SyncMutex<Option<Identifier>>,
-    death_loot_table_seed: SyncMutex<i64>,
-    leash_data: SyncMutex<Option<LeashData>>,
-    ambient_sound_time: SyncMutex<i32>,
-    xp_reward: SyncMutex<i32>,
+    pub goal_selector: GoalSelector,
+    pub target_selector: GoalSelector,
+    target: Option<WeakEntity>,
+    sensing: Sensing,
+    pub controls: MobControls,
+    pub navigation: PathNavigation,
+    pub pathfinding_malus: PathfindingMalus,
+    persistence_required: bool,
+    can_pick_up_loot: bool,
+    drop_chances: DropChances,
+    home_restriction: MobHomeRestriction,
+    death_loot_table: Option<Identifier>,
+    death_loot_table_seed: i64,
+    leash_data: Option<LeashData>,
+    ambient_sound_time: i32,
+    xp_reward: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -376,45 +375,29 @@ impl MobBase {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            goal_selector: SyncMutex::new(GoalSelector::new()),
-            target_selector: SyncMutex::new(GoalSelector::new()),
-            target: SyncMutex::new(None),
-            sensing: SyncMutex::new(Sensing::new()),
-            controls: SyncMutex::new(MobControls::new()),
-            navigation: SyncMutex::new(PathNavigation::new()),
-            pathfinding_malus: SyncMutex::new(PathfindingMalus::new()),
-            persistence_required: SyncMutex::new(false),
-            can_pick_up_loot: SyncMutex::new(false),
-            drop_chances: SyncMutex::new(DropChances::DEFAULT),
-            home_restriction: SyncMutex::new(MobHomeRestriction::none()),
-            death_loot_table: SyncMutex::new(None),
-            death_loot_table_seed: SyncMutex::new(0),
-            leash_data: SyncMutex::new(None),
-            ambient_sound_time: SyncMutex::new(0),
-            xp_reward: SyncMutex::new(0),
+            goal_selector: GoalSelector::new(),
+            target_selector: GoalSelector::new(),
+            target: None,
+            sensing: Sensing::new(),
+            controls: MobControls::new(),
+            navigation: PathNavigation::new(),
+            pathfinding_malus: PathfindingMalus::new(),
+            persistence_required: false,
+            can_pick_up_loot: false,
+            drop_chances: DropChances::DEFAULT,
+            home_restriction: MobHomeRestriction::none(),
+            death_loot_table: None,
+            death_loot_table_seed: 0,
+            leash_data: None,
+            ambient_sound_time: 0,
+            xp_reward: 0,
         }
     }
 
     #[must_use]
-    pub const fn goal_selector(&self) -> &SyncMutex<GoalSelector> {
-        &self.goal_selector
-    }
-
-    #[must_use]
-    pub const fn target_selector(&self) -> &SyncMutex<GoalSelector> {
-        &self.target_selector
-    }
-
-    #[must_use]
-    pub(crate) const fn sensing(&self) -> &SyncMutex<Sensing> {
-        &self.sensing
-    }
-
-    #[must_use]
-    pub fn target(&self, is_valid: impl Fn(&dyn LivingEntity) -> bool) -> Option<SharedEntity> {
-        let mut target = self.target.lock();
-        let Some(upgraded) = target.as_ref().and_then(WeakEntity::upgrade) else {
-            *target = None;
+    pub fn target(&mut self, is_valid: impl Fn(&dyn LivingEntity) -> bool) -> Option<SharedEntity> {
+        let Some(upgraded) = self.target.as_ref().and_then(WeakEntity::upgrade) else {
+            self.target = None;
             return None;
         };
 
@@ -431,12 +414,12 @@ impl MobBase {
     }
 
     pub fn set_target(
-        &self,
+        &mut self,
         target: Option<&SharedEntity>,
         is_valid: impl Fn(&dyn LivingEntity) -> bool,
     ) -> bool {
         let Some(target) = target else {
-            *self.target.lock() = None;
+            self.target = None;
             return true;
         };
         let Some(valid) = target.with_living(|living_target| is_valid(living_target)) else {
@@ -444,81 +427,18 @@ impl MobBase {
             return false;
         };
         if !valid {
-            *self.target.lock() = None;
+            self.target = None;
             return false;
         }
 
-        *self.target.lock() = Some(Arc::downgrade(target));
+        self.target = Some(Arc::downgrade(target));
         true
     }
 
-    #[must_use]
-    pub const fn controls(&self) -> &SyncMutex<MobControls> {
-        &self.controls
-    }
-
-    #[must_use]
-    pub const fn navigation(&self) -> &SyncMutex<PathNavigation> {
-        &self.navigation
-    }
-
-    #[must_use]
-    pub const fn pathfinding_malus(&self) -> &SyncMutex<PathfindingMalus> {
-        &self.pathfinding_malus
-    }
-
-    #[must_use]
-    pub const fn persistence_required(&self) -> &SyncMutex<bool> {
-        &self.persistence_required
-    }
-
-    pub const fn can_pick_up_loot(&self) -> &SyncMutex<bool> {
-        &self.can_pick_up_loot
-    }
-
-    const fn drop_chances(&self) -> &SyncMutex<DropChances> {
-        &self.drop_chances
-    }
-
-    const fn home_restriction(&self) -> &SyncMutex<MobHomeRestriction> {
-        &self.home_restriction
-    }
-
-    const fn death_loot_table(&self) -> &SyncMutex<Option<Identifier>> {
-        &self.death_loot_table
-    }
-
-    const fn death_loot_table_seed(&self) -> &SyncMutex<i64> {
-        &self.death_loot_table_seed
-    }
-
-    const fn leash_data(&self) -> &SyncMutex<Option<LeashData>> {
-        &self.leash_data
-    }
-
-    #[must_use]
-    pub fn ambient_sound_time(&self) -> i32 {
-        *self.ambient_sound_time.lock()
-    }
-
-    pub fn set_ambient_sound_time(&self, ambient_sound_time: i32) {
-        *self.ambient_sound_time.lock() = ambient_sound_time;
-    }
-
-    fn get_and_increment_ambient_sound_time(&self) -> i32 {
-        let mut ambient_sound_time = self.ambient_sound_time.lock();
-        let previous = *ambient_sound_time;
-        *ambient_sound_time += 1;
+    fn get_and_increment_ambient_sound_time(&mut self) -> i32 {
+        let previous = self.ambient_sound_time;
+        self.ambient_sound_time += 1;
         previous
-    }
-
-    #[must_use]
-    pub fn xp_reward(&self) -> i32 {
-        *self.xp_reward.lock()
-    }
-
-    pub fn set_xp_reward(&self, xp_reward: i32) {
-        *self.xp_reward.lock() = xp_reward;
     }
 }
 
@@ -529,36 +449,61 @@ impl Default for MobBase {
 }
 
 pub trait Mob: LivingEntity {
-    fn mob_base(&self) -> &MobBase;
+    fn mob_base(&mut self) -> &mut MobBase;
+    fn mob_base_ref(&self) -> &MobBase;
 
     fn mob_flags(&self) -> i8;
 
     fn set_mob_flags(&mut self, flags: i8);
 
-    fn custom_server_ai_step(&self) {}
+    fn custom_server_ai_step(&mut self) {}
 
     fn tick_goal_selectors(&mut self) {}
 
-    fn xp_reward(&self) -> i32 {
-        self.mob_base().xp_reward()
+    fn xp_reward(&mut self) -> i32 {
+        self.mob_base().xp_reward
     }
 
-    fn set_xp_reward(&self, xp_reward: i32) {
-        self.mob_base().set_xp_reward(xp_reward);
+    fn set_xp_reward(&mut self, xp_reward: i32) {
+        self.mob_base().xp_reward = xp_reward;
     }
 
     /// Returns vanilla `Mob.getTarget`.
-    fn target(&self) -> Option<SharedEntity> {
-        self.mob_base()
-            .target(|target| self.is_valid_target(target))
+    fn target(&mut self) -> Option<SharedEntity> {
+        let Some(upgraded) = self
+            .mob_base()
+            .target
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+        else {
+            self.mob_base().target = None;
+            return None;
+        };
+
+        let valid = {
+            let locked = upgraded.lock_entity();
+            match locked.get().as_living_entity() {
+                Some(living_target) => self.is_valid_target(living_target),
+                None => false,
+            }
+        };
+
+        valid.then_some(upgraded)
     }
 
     /// Sets vanilla `Mob.target`.
     ///
     /// Returns `false` when the supplied entity is not a living entity.
-    fn set_target(&self, target: Option<&SharedEntity>) -> bool {
-        self.mob_base()
-            .set_target(target, |target| self.is_valid_target(target))
+    fn set_target(&mut self, target: Option<&SharedEntity>) -> bool {
+        let valid = match target {
+            None => true,
+            Some(entity) => match entity.with_living(|living| self.is_valid_target(living)) {
+                Some(valid) => valid,
+                None => return false, // not a living entity
+            },
+        };
+
+        self.mob_base().set_target(target, |_| valid)
     }
 
     fn is_valid_target(&self, target: &dyn LivingEntity) -> bool {
@@ -572,7 +517,7 @@ pub trait Mob: LivingEntity {
         self.can_attack(target)
     }
 
-    fn base_experience_reward_mob(&self) -> i32 {
+    fn base_experience_reward_mob(&mut self) -> i32 {
         let xp_reward = self.xp_reward();
         if xp_reward <= 0 {
             return xp_reward;
@@ -611,12 +556,11 @@ pub trait Mob: LivingEntity {
         self.make_sound(self.ambient_sound());
     }
 
-    fn reset_ambient_sound_time(&self) {
-        self.mob_base()
-            .set_ambient_sound_time(-self.ambient_sound_interval());
+    fn reset_ambient_sound_time(&mut self) {
+        self.mob_base().ambient_sound_time = -self.ambient_sound_interval();
     }
 
-    fn mob_base_tick(&self) {
+    fn mob_base_tick(&mut self) {
         if !LivingEntity::is_alive(self) {
             return;
         }
@@ -726,35 +670,32 @@ pub trait Mob: LivingEntity {
     }
 
     fn is_persistence_required(&self) -> bool {
-        *self.mob_base().persistence_required().lock()
+        self.mob_base_ref().persistence_required
     }
 
-    fn set_persistence_required(&self) {
-        *self.mob_base().persistence_required().lock() = true;
+    fn set_persistence_required(&mut self) {
+        self.mob_base().persistence_required = true;
     }
 
     /// Returns vanilla `Mob.canPickUpLoot`.
     fn can_pick_up_loot(&self) -> bool {
-        *self.mob_base().can_pick_up_loot().lock()
+        self.mob_base_ref().can_pick_up_loot
     }
 
-    fn set_can_pick_up_loot(&self, can_pick_up_loot: bool) {
-        *self.mob_base().can_pick_up_loot().lock() = can_pick_up_loot;
+    fn set_can_pick_up_loot(&mut self, can_pick_up_loot: bool) {
+        self.mob_base().can_pick_up_loot = can_pick_up_loot;
     }
 
     fn equipment_drop_chance(&self, slot: EquipmentSlot) -> f32 {
-        self.mob_base().drop_chances().lock().by_equipment(slot)
+        self.mob_base_ref().drop_chances.by_equipment(slot)
     }
 
     fn is_equipment_drop_preserved(&self, slot: EquipmentSlot) -> bool {
-        self.mob_base().drop_chances().lock().is_preserved(slot)
+        self.mob_base_ref().drop_chances.is_preserved(slot)
     }
 
-    fn set_guaranteed_drop(&self, slot: EquipmentSlot) {
-        self.mob_base()
-            .drop_chances()
-            .lock()
-            .set_guaranteed_drop(slot);
+    fn set_guaranteed_drop(&mut self, slot: EquipmentSlot) {
+        self.mob_base().drop_chances.set_guaranteed_drop(slot);
     }
 
     fn drop_custom_death_loot_mob(&self, _source: &DamageSource, killed_by_player: bool) {
@@ -820,13 +761,13 @@ pub trait Mob: LivingEntity {
             "PersistenceRequired",
             i8::from(self.is_persistence_required()),
         );
-        self.mob_base().drop_chances().lock().save(nbt);
-        if let Some(leash_data) = self.mob_base().leash_data().lock().as_ref() {
+        self.mob_base_ref().drop_chances.save(nbt);
+        if let Some(leash_data) = self.mob_base_ref().leash_data.as_ref() {
             leash_data.save(nbt);
         }
 
         if self.has_home() {
-            let home = *self.mob_base().home_restriction().lock();
+            let home = self.mob_base_ref().home_restriction;
             nbt.insert("home_radius", home.radius);
             nbt.insert(
                 "home_pos",
@@ -839,10 +780,10 @@ pub trait Mob: LivingEntity {
         }
 
         nbt.insert("LeftHanded", i8::from(self.is_left_handed()));
-        if let Some(loot_table) = self.mob_base().death_loot_table().lock().as_ref() {
+        if let Some(loot_table) = self.mob_base_ref().death_loot_table.as_ref() {
             nbt.insert("DeathLootTable", loot_table.to_string());
         }
-        let loot_table_seed = *self.mob_base().death_loot_table_seed().lock();
+        let loot_table_seed = self.mob_base_ref().death_loot_table_seed;
         if loot_table_seed != 0 {
             nbt.insert("DeathLootTableSeed", loot_table_seed);
         }
@@ -853,11 +794,11 @@ pub trait Mob: LivingEntity {
 
     fn load_mob(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         self.set_can_pick_up_loot(nbt.byte("CanPickUpLoot").is_some_and(|value| value != 0));
-        *self.mob_base().persistence_required().lock() = nbt
+        self.mob_base().persistence_required = nbt
             .byte("PersistenceRequired")
             .is_some_and(|value| value != 0);
-        *self.mob_base().drop_chances().lock() = DropChances::load(nbt);
-        *self.mob_base().leash_data().lock() = LeashData::load(nbt);
+        self.mob_base().drop_chances = DropChances::load(nbt);
+        self.mob_base().leash_data = LeashData::load(nbt);
         let home_radius = nbt.int("home_radius").unwrap_or(-1);
         if home_radius >= 0 {
             let home_position = nbt
@@ -875,38 +816,36 @@ pub trait Mob: LivingEntity {
         let death_loot_table = nbt
             .string("DeathLootTable")
             .and_then(|loot_table| loot_table.to_str().as_ref().parse().ok());
-        *self.mob_base().death_loot_table().lock() = death_loot_table;
-        *self.mob_base().death_loot_table_seed().lock() =
-            nbt.long("DeathLootTableSeed").unwrap_or(0);
+        self.mob_base().death_loot_table = death_loot_table;
+        self.mob_base().death_loot_table_seed = nbt.long("DeathLootTableSeed").unwrap_or(0);
         self.set_no_ai(nbt.byte("NoAI").is_some_and(|value| value != 0));
     }
 
-    fn set_death_loot_table(&self, loot_table: Option<Identifier>) {
-        *self.mob_base().death_loot_table().lock() = loot_table;
+    fn set_death_loot_table(&mut self, loot_table: Option<Identifier>) {
+        self.mob_base().death_loot_table = loot_table;
     }
 
-    fn set_death_loot_table_seed(&self, seed: i64) {
-        *self.mob_base().death_loot_table_seed().lock() = seed;
+    fn set_death_loot_table_seed(&mut self, seed: i64) {
+        self.mob_base().death_loot_table_seed = seed;
     }
 
     fn custom_death_loot_table(&self) -> Option<LootTableRef> {
-        self.mob_base()
-            .death_loot_table()
-            .lock()
+        self.mob_base_ref()
+            .death_loot_table
             .as_ref()
             .and_then(|key| REGISTRY.loot_tables.by_key(key))
     }
 
     fn has_custom_death_loot_table(&self) -> bool {
-        self.mob_base().death_loot_table().lock().is_some()
+        self.mob_base_ref().death_loot_table.is_some()
     }
 
     fn death_loot_table_seed(&self) -> i64 {
-        *self.mob_base().death_loot_table_seed().lock()
+        self.mob_base_ref().death_loot_table_seed
     }
 
-    fn clear_custom_death_loot_table(&self) {
-        *self.mob_base().death_loot_table().lock() = None;
+    fn clear_custom_death_loot_table(&mut self) {
+        self.mob_base().death_loot_table = None;
     }
 
     fn is_leashed(&self) -> bool {
@@ -914,27 +853,25 @@ pub trait Mob: LivingEntity {
     }
 
     fn may_be_leashed(&self) -> bool {
-        self.mob_base().leash_data().lock().is_some()
+        self.mob_base_ref().leash_data.is_some()
     }
 
     fn leash_holder(&self) -> Option<SharedEntity> {
-        self.mob_base()
-            .leash_data()
-            .lock()
+        self.mob_base_ref()
+            .leash_data
             .as_ref()
             .and_then(LeashData::holder)
     }
 
     fn leash_attachment(&self) -> Option<LeashAttachment> {
-        self.mob_base()
-            .leash_data()
-            .lock()
+        self.mob_base_ref()
+            .leash_data
             .as_ref()
             .map(LeashData::saved_attachment)
     }
 
-    fn set_delayed_leash_attachment(&self, attachment: LeashAttachment) {
-        *self.mob_base().leash_data().lock() = Some(LeashData::from_delayed_attachment(attachment));
+    fn set_delayed_leash_attachment(&mut self, attachment: LeashAttachment) {
+        self.mob_base().leash_data = Some(LeashData::from_delayed_attachment(attachment));
     }
 
     fn can_be_leashed(&self) -> bool {
@@ -959,7 +896,7 @@ pub trait Mob: LivingEntity {
         holder.notify_leash_holder(self.as_entity_event_source());
     }
 
-    fn leash_too_far_behaviour(&self) {
+    fn leash_too_far_behaviour(&mut self) {
         self.drop_leash();
     }
 
@@ -969,7 +906,7 @@ pub trait Mob: LivingEntity {
 
     fn close_range_leash_behaviour(&self, _holder: &dyn Entity) {}
 
-    fn check_elastic_interactions(&self, holder: &dyn Entity) -> bool {
+    fn check_elastic_interactions(&mut self, holder: &dyn Entity) -> bool {
         let Some(wrench) = compute_elastic_interaction(
             self.as_entity_event_source(),
             holder,
@@ -979,8 +916,7 @@ pub trait Mob: LivingEntity {
         };
 
         {
-            let mut leash_data = self.mob_base().leash_data().lock();
-            let Some(leash_data) = leash_data.as_mut() else {
+            let Some(leash_data) = self.mob_base().leash_data.as_mut() else {
                 return false;
             };
             leash_data.angular_momentum += LEASH_TORSIONAL_ELASTICITY * wrench.torque;
@@ -995,11 +931,10 @@ pub trait Mob: LivingEntity {
         true
     }
 
-    fn apply_leash_angular_momentum(&self) -> bool {
+    fn apply_leash_angular_momentum(&mut self) -> bool {
         let angular_friction = self.leash_angular_friction();
         let angular_momentum = {
-            let mut leash_data = self.mob_base().leash_data().lock();
-            let Some(leash_data) = leash_data.as_mut() else {
+            let Some(leash_data) = self.mob_base().leash_data.as_mut() else {
                 return false;
             };
             let angular_momentum = leash_data.angular_momentum;
@@ -1016,9 +951,8 @@ pub trait Mob: LivingEntity {
     }
 
     fn leash_angular_momentum(&self) -> Option<f64> {
-        self.mob_base()
-            .leash_data()
-            .lock()
+        self.mob_base_ref()
+            .leash_data
             .as_ref()
             .map(|leash_data| leash_data.angular_momentum)
     }
@@ -1047,14 +981,14 @@ pub trait Mob: LivingEntity {
             && self.can_be_leashed()
     }
 
-    fn set_leashed_to(&self, holder: &SharedEntity) -> bool {
+    fn set_leashed_to(&mut self, holder: &SharedEntity) -> bool {
         if self.id() == holder.id() {
             return false;
         }
 
         let old_holder = self.leash_holder();
         {
-            let mut leash_data = self.mob_base().leash_data().lock();
+            let leash_data = &mut self.mob_base().leash_data;
             if let Some(leash_data) = leash_data.as_mut() {
                 leash_data.set_holder(holder);
             } else {
@@ -1073,7 +1007,7 @@ pub trait Mob: LivingEntity {
         true
     }
 
-    fn tick_leash(&self) {
+    fn tick_leash(&mut self) {
         if let Some(holder) = self.leash_holder() {
             if !self.can_interact_with_level() || !holder.can_interact_with_level() {
                 if let Some(world) = self.level()
@@ -1153,7 +1087,7 @@ pub trait Mob: LivingEntity {
         }
     }
 
-    fn drop_leash(&self) {
+    fn drop_leash(&mut self) {
         if self.leash_holder().is_none() {
             return;
         }
@@ -1165,7 +1099,7 @@ pub trait Mob: LivingEntity {
         }
     }
 
-    fn remove_leash(&self) {
+    fn remove_leash(&mut self) {
         if self.leash_holder().is_some() {
             if let Some(holder) = self.remove_leash_state() {
                 holder.with_entity(|e| e.notify_leashee_removed(self.as_entity_event_source()));
@@ -1173,10 +1107,9 @@ pub trait Mob: LivingEntity {
         }
     }
 
-    fn remove_leash_state(&self) -> Option<SharedEntity> {
+    fn remove_leash_state(&mut self) -> Option<SharedEntity> {
         self.mob_base()
-            .leash_data()
-            .lock()
+            .leash_data
             .take()
             .and_then(|leash_data| leash_data.holder())
     }
@@ -1186,31 +1119,31 @@ pub trait Mob: LivingEntity {
     }
 
     fn is_within_home_pos(&self, pos: BlockPos) -> bool {
-        let home = *self.mob_base().home_restriction().lock();
+        let home = self.mob_base_ref().home_restriction;
         home.radius == -1
             || block_pos_distance_sqr(home.position, pos) < home_radius_sqr(home.radius)
     }
 
     fn is_within_home_vec(&self, pos: DVec3) -> bool {
-        let home = *self.mob_base().home_restriction().lock();
+        let home = &self.mob_base_ref().home_restriction;
         home.radius == -1
             || block_center_distance_sqr(home.position, pos) < home_radius_sqr(home.radius)
     }
 
-    fn set_home_to(&self, position: BlockPos, radius: i32) {
-        *self.mob_base().home_restriction().lock() = MobHomeRestriction { position, radius };
+    fn set_home_to(&mut self, position: BlockPos, radius: i32) {
+        self.mob_base().home_restriction = MobHomeRestriction { position, radius };
     }
 
     fn home_position(&self) -> BlockPos {
-        self.mob_base().home_restriction().lock().position
+        self.mob_base_ref().home_restriction.position
     }
 
     fn home_radius(&self) -> i32 {
-        self.mob_base().home_restriction().lock().radius
+        self.mob_base_ref().home_restriction.radius
     }
 
-    fn clear_home(&self) {
-        self.mob_base().home_restriction().lock().radius = -1;
+    fn clear_home(&mut self) {
+        self.mob_base().home_restriction.radius = -1;
     }
 
     fn has_home(&self) -> bool {
@@ -1281,7 +1214,7 @@ pub trait Mob: LivingEntity {
     }
 
     fn get_pathfinding_malus(&self, path_type: PathType) -> f32 {
-        self.mob_base().pathfinding_malus().lock().get(path_type)
+        self.mob_base_ref().pathfinding_malus.get(path_type)
     }
 
     /// Vanilla `Entity.getMaxFallDistance` baseline.
@@ -1289,11 +1222,8 @@ pub trait Mob: LivingEntity {
         3
     }
 
-    fn set_pathfinding_malus(&self, path_type: PathType, malus: f32) {
-        self.mob_base()
-            .pathfinding_malus()
-            .lock()
-            .set(path_type, malus);
+    fn set_pathfinding_malus(&mut self, path_type: PathType, malus: f32) {
+        self.mob_base().pathfinding_malus.set(path_type, malus);
     }
 
     fn is_no_ai(&self) -> bool {
@@ -1499,24 +1429,23 @@ pub trait Mob: LivingEntity {
         Some(vehicle)
     }
 
-    fn set_wanted_position(&self, position: DVec3, speed_modifier: f64) {
+    fn set_wanted_position(&mut self, position: DVec3, speed_modifier: f64) {
         if let Some(vehicle) = self.controlled_mob_vehicle()
             && vehicle
-                .with_mob(|mob| mob.set_wanted_position(position, speed_modifier))
+                .with_mob_mut(|mob| mob.set_wanted_position(position, speed_modifier))
                 .is_some()
         {
             return;
         }
 
         self.mob_base()
-            .controls()
-            .lock()
+            .controls
             .move_control
             .set_wanted_position(position, speed_modifier);
     }
 
-    fn jump_control_jump(&self) {
-        self.mob_base().controls().lock().jump_control.jump();
+    fn jump_control_jump(&mut self) {
+        self.mob_base().controls.jump_control.jump();
     }
 
     /// Mirrors vanilla `Mob.setSpeed`: update cached speed and forward AI input.
@@ -1532,7 +1461,7 @@ pub trait Mob: LivingEntity {
 
     fn mob_server_ai_step(&mut self) {
         self.increment_no_action_time();
-        self.mob_base().sensing().lock().tick();
+        self.mob_base().sensing.tick();
         if self.tick_count() % 5 == 0 {
             self.update_control_flags();
         }
@@ -1544,18 +1473,18 @@ pub trait Mob: LivingEntity {
         self.tick_jump_control();
     }
 
-    fn tick_path_navigation(&self) {
+    fn tick_path_navigation(&mut self) {
         let Some(world) = self.level() else {
             return;
         };
         let game_time = world.game_time();
-        self.mob_base().navigation().lock().tick();
+        self.mob_base().navigation.tick();
         tick_path_navigation_target(self, &world, game_time, true);
     }
 
-    fn tick_move_control(&self) {
+    fn tick_move_control(&mut self) {
         let move_control = {
-            let mut controls = self.mob_base().controls().lock();
+            let controls = &mut self.mob_base().controls;
             let move_control = controls.move_control;
             if matches!(move_control.operation(), MoveControlOperation::MoveTo) {
                 controls.move_control.set_wait();
@@ -1588,7 +1517,7 @@ pub trait Mob: LivingEntity {
         }
     }
 
-    fn tick_move_to_control(&self, wanted_position: DVec3, speed_modifier: f64) {
+    fn tick_move_to_control(&mut self, wanted_position: DVec3, speed_modifier: f64) {
         let position = self.position();
         let xd = wanted_position.x - position.x;
         let yd = wanted_position.y - position.y;
@@ -1618,11 +1547,11 @@ pub trait Mob: LivingEntity {
 
         if should_jump_to_wanted_position(self, xd, yd, zd) {
             self.jump_control_jump();
-            self.mob_base().controls().lock().move_control.set_jumping();
+            self.mob_base().controls.move_control.set_jumping();
         }
     }
 
-    fn tick_strafe_control(&self, forward: f32, right: f32) {
+    fn tick_strafe_control(&mut self, forward: f32, right: f32) {
         let movement_speed = self
             .attributes()
             .lock()
@@ -1652,7 +1581,7 @@ pub trait Mob: LivingEntity {
 
         self.set_speed(speed);
         self.set_travel_input(LivingTravelInput::new(strafe_right, 0.0, strafe_forward));
-        self.mob_base().controls().lock().move_control.set_wait();
+        self.mob_base().controls.move_control.set_wait();
     }
 
     fn is_strafe_walkable(&self, dx: f32, dz: f32) -> bool {
@@ -1669,7 +1598,7 @@ pub trait Mob: LivingEntity {
         WalkPathEvaluator::path_type_static(&mut context, pos) == PathType::Walkable
     }
 
-    fn tick_jumping_control(&self, speed_modifier: f64) {
+    fn tick_jumping_control(&mut self, speed_modifier: f64) {
         let movement_speed = self
             .attributes()
             .lock()
@@ -1678,13 +1607,13 @@ pub trait Mob: LivingEntity {
         if self.on_ground()
             || (self.is_in_water() || self.is_in_lava()) && self.is_affected_by_fluids()
         {
-            self.mob_base().controls().lock().move_control.set_wait();
+            self.mob_base().controls.move_control.set_wait();
         }
     }
 
-    fn tick_look_control(&self) {
+    fn tick_look_control(&mut self) {
         let look_control = {
-            let mut controls = self.mob_base().controls().lock();
+            let mut controls = self.mob_base().controls;
             let look_control = controls.look_control;
             controls.look_control.tick_cooldown();
             look_control
@@ -1721,7 +1650,7 @@ pub trait Mob: LivingEntity {
     }
 
     fn clamp_head_rotation_to_body_when_pathing(&self) {
-        if self.mob_base().navigation().lock().is_done() {
+        if self.mob_base_ref().navigation.is_done() {
             return;
         }
 
@@ -1732,12 +1661,12 @@ pub trait Mob: LivingEntity {
         ));
     }
 
-    fn tick_jump_control(&self) {
-        let jumping = self.mob_base().controls().lock().jump_control.tick();
+    fn tick_jump_control(&mut self) {
+        let jumping = self.mob_base().controls.jump_control.tick();
         self.set_jumping(jumping);
     }
 
-    fn update_control_flags(&self) {
+    fn update_control_flags(&mut self) {
         let no_controller = self
             .controlling_passenger()
             .is_none_or(|passenger| !passenger.is_mob());
@@ -1745,13 +1674,13 @@ pub trait Mob: LivingEntity {
             .vehicle()
             .is_none_or(|vehicle| !vehicle.entity_type().is_abstract_boat);
 
-        let mut selector = self.mob_base().goal_selector().lock();
+        let selector = &mut self.mob_base().goal_selector;
         selector.set_control(GoalControl::Move, no_controller);
         selector.set_control(GoalControl::Jump, no_controller && not_in_boat);
         selector.set_control(GoalControl::Look, no_controller);
     }
 
-    fn tick_body_rotation_control(&self) {
+    fn tick_body_rotation_control(&mut self) {
         let moving = {
             let delta = self.position() - self.old_position();
             delta.x.mul_add(delta.x, delta.z * delta.z) > BODY_ROTATION_MOVING_DISTANCE_SQR
@@ -1767,12 +1696,7 @@ pub trait Mob: LivingEntity {
             self.y_head_rot(),
             self.max_head_y_rot(),
         );
-        let update = self
-            .mob_base()
-            .controls()
-            .lock()
-            .body_rotation_control
-            .tick(input);
+        let update = self.mob_base().controls.body_rotation_control.tick(input);
         self.set_y_body_rot(update.y_body_rot());
         self.set_y_head_rot(update.y_head_rot());
     }
@@ -1787,15 +1711,14 @@ fn default_attack_reach() -> f64 {
 }
 
 fn tick_path_navigation_target<M: Mob + ?Sized>(
-    mob: &M,
+    mob: &mut M,
     world: &Arc<World>,
     game_time: i64,
     can_update_path: bool,
 ) {
     let (target, speed_modifier) = {
-        let mut navigation = mob.mob_base().navigation().lock();
-        let mob_position =
-            ground_navigation_temp_mob_pos(mob, world.as_ref(), navigation.can_float());
+        let can_float = mob.mob_base_ref().navigation.can_float();
+        let mob_position = ground_navigation_temp_mob_pos(mob, world.as_ref(), can_float);
         let context = NavigationTickContext {
             mob_position,
             mob_bounding_box_width: mob.bounding_box().width(),
@@ -1803,9 +1726,12 @@ fn tick_path_navigation_target<M: Mob + ?Sized>(
             game_time,
         };
         let next_target = if can_update_path {
-            navigation.next_move_target(context)
+            mob.mob_base().navigation.next_move_target(context)
         } else {
-            navigation.next_move_target_without_path_update(context, mob.on_ground())
+            let on_ground = mob.on_ground();
+            mob.mob_base()
+                .navigation
+                .next_move_target_without_path_update(context, on_ground)
         };
         let Some(target) = next_target else {
             return;
@@ -1877,11 +1803,18 @@ pub trait PathfinderMob: Mob {
             .map_or(0.0, |animal| animal.animal_walk_target_value(pos))
     }
 
-    fn has_line_of_sight_cached(&self, target: &dyn Entity) -> bool {
+    fn has_line_of_sight_cached(&mut self, target: &dyn Entity) -> bool {
+        let id = target.id();
+        // Read the cache first, then run the (immutable-`self`) line-of-sight
+        // test outside the `&mut` base borrow, then record the result.
+        if let Some(cached) = self.mob_base_ref().sensing.cached_line_of_sight(id) {
+            return cached;
+        }
+        let has_line_of_sight = self.has_line_of_sight(target);
         self.mob_base()
-            .sensing()
-            .lock()
-            .has_line_of_sight(target.id(), || self.has_line_of_sight(target))
+            .sensing
+            .record_line_of_sight(id, has_line_of_sight);
+        has_line_of_sight
     }
 
     fn can_update_path(&self) -> bool {
@@ -1896,27 +1829,27 @@ pub trait PathfinderMob: Mob {
             return result;
         }
 
-        self.mob_base()
-            .navigation()
-            .lock()
+        self.mob_base_ref()
+            .navigation
             .can_path_to_targets_below_surface()
     }
 
-    fn can_reach_living_target(&self, target: &dyn LivingEntity) -> bool {
+    fn can_reach_living_target(&mut self, target: &dyn LivingEntity) -> bool {
         let target_pos = target.block_position();
         self.create_path_to(target_pos, 0)
             .is_some_and(|path| path_end_node_can_reach_target(&path, target_pos))
     }
 
-    fn tick_pathfinder_path_navigation(&self) {
+    fn tick_pathfinder_path_navigation(&mut self) {
         let Some(world) = self.level() else {
             return;
         };
         let game_time = world.game_time();
         let recompute_request = {
-            let mut navigation = self.mob_base().navigation().lock();
+            let can_update_path = self.can_update_path();
+            let navigation = &mut self.mob_base().navigation;
             navigation.tick();
-            navigation.take_delayed_recompute_request(game_time, self.can_update_path())
+            navigation.take_delayed_recompute_request(game_time, can_update_path)
         };
         if let Some(request) = recompute_request {
             self.recompute_path(request);
@@ -1932,8 +1865,8 @@ pub trait PathfinderMob: Mob {
         let id_based_tick_count = self.tick_count().wrapping_add(self.id());
         let running_goals_only = id_based_tick_count % 2 != 0 && self.tick_count() > 1;
 
-        self.tick_goal_selector(|m| m.mob_base().target_selector(), running_goals_only);
-        self.tick_goal_selector(|m| m.mob_base().goal_selector(), running_goals_only);
+        self.tick_goal_selector(|m| &mut m.mob_base().target_selector, running_goals_only);
+        self.tick_goal_selector(|m| &mut m.mob_base().goal_selector, running_goals_only);
     }
 
     /// Ticks one of this mob's goal selectors against the mob itself.
@@ -1959,17 +1892,17 @@ pub trait PathfinderMob: Mob {
     /// mutate the mob's goal selectors. Locking unrelated mob state is fine.
     fn tick_goal_selector(
         &mut self,
-        select: impl FnOnce(&Self) -> &SyncMutex<GoalSelector>,
+        select: impl FnOnce(&mut Self) -> &mut GoalSelector,
         running_goals_only: bool,
     ) where
         Self: Sized,
     {
-        let selector = select(self) as *const SyncMutex<GoalSelector>;
+        let selector = select(self) as *mut GoalSelector;
         // SAFETY: `selector` points into `self`, which is borrowed mutably for
         // the whole call and so stays alive and pinned. Going through the raw
         // pointer detaches the guard's lifetime from `self`, which is what lets
         // the guard and the `&mut self` passed to the goals coexist.
-        let mut guard = unsafe { (*selector).lock() };
+        let guard = unsafe { &mut *selector };
         if running_goals_only {
             guard.tick_running_goals(self, false);
         } else {
@@ -1982,7 +1915,7 @@ pub trait PathfinderMob: Mob {
             .is_some_and(|world| world.get_block_state(pos.below()).is_solid_render())
     }
 
-    fn create_path_to(&self, target: BlockPos, reach_range: i32) -> Option<Path> {
+    fn create_path_to(&mut self, target: BlockPos, reach_range: i32) -> Option<Path> {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
             && let Some(result) = vehicle
                 .with_pathfinder_mob(|pathfinder| pathfinder.create_path_to(target, reach_range))
@@ -2000,7 +1933,7 @@ pub trait PathfinderMob: Mob {
         self.create_path_to_targets(&world, &targets, reach_range)
     }
 
-    fn recompute_path(&self, request: NavigationRecomputeRequest) {
+    fn recompute_path(&mut self, request: NavigationRecomputeRequest) {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
             && vehicle
                 .with_pathfinder_mob(|pathfinder| pathfinder.recompute_path(request))
@@ -2011,16 +1944,20 @@ pub trait PathfinderMob: Mob {
 
         let path = self.create_path_to(request.target_pos, request.reach_range);
         self.mob_base()
-            .navigation()
-            .lock()
+            .navigation
             .complete_recompute_path(path, request.game_time);
     }
 
-    fn move_to_pos(&self, target: DVec3, speed_modifier: f64) -> bool {
+    fn move_to_pos(&mut self, target: DVec3, speed_modifier: f64) -> bool {
         self.move_to_pos_with_reach(target, 1, speed_modifier)
     }
 
-    fn move_to_pos_with_reach(&self, target: DVec3, reach_range: i32, speed_modifier: f64) -> bool {
+    fn move_to_pos_with_reach(
+        &mut self,
+        target: DVec3,
+        reach_range: i32,
+        speed_modifier: f64,
+    ) -> bool {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
             && let Some(result) = vehicle.with_pathfinder_mob(|pathfinder| {
                 pathfinder.move_to_pos_with_reach(target, reach_range, speed_modifier)
@@ -2031,27 +1968,24 @@ pub trait PathfinderMob: Mob {
 
         let target_pos = BlockPos::containing(target.x, target.y, target.z);
         let Some(world) = self.level() else {
-            self.mob_base().navigation().lock().stop();
+            self.mob_base().navigation.stop();
             return false;
         };
         if !world.has_full_chunk(ChunkPos::from_block_pos(target_pos)) {
-            self.mob_base().navigation().lock().stop();
+            self.mob_base().navigation.stop();
             return false;
         }
 
         let target_pos = path_target_for_mob(self, world.as_ref(), target_pos);
         let targets = [target_pos];
-        if self
-            .mob_base()
-            .navigation()
-            .lock()
-            .reuse_current_path_to_targets(
-                world.as_ref(),
-                &targets,
-                speed_modifier,
-                self.position(),
-            )
-        {
+
+        let mob_position = self.position();
+        if self.mob_base().navigation.reuse_current_path_to_targets(
+            world.as_ref(),
+            &targets,
+            speed_modifier,
+            mob_position,
+        ) {
             return true;
         }
 
@@ -2059,7 +1993,7 @@ pub trait PathfinderMob: Mob {
         self.move_to_path(path, speed_modifier)
     }
 
-    fn move_to_path(&self, path: Option<Path>, speed_modifier: f64) -> bool {
+    fn move_to_path(&mut self, path: Option<Path>, speed_modifier: f64) -> bool {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle() {
             // The closure consumes `path`; only enter it when there is a
             // pathfinder vehicle so we don't lose `path` on the fallthrough.
@@ -2072,16 +2006,18 @@ pub trait PathfinderMob: Mob {
         }
 
         let Some(world) = self.level() else {
-            self.mob_base().navigation().lock().stop();
+            self.mob_base().navigation.stop();
             return false;
         };
-        let mut navigation = self.mob_base().navigation().lock();
+
+        let position = self.position();
+        let navigation = &mut self.mob_base().navigation;
         let Some(path) = path else {
             navigation.stop();
             return false;
         };
 
-        navigation.move_to(world.as_ref(), path, speed_modifier, self.position())
+        navigation.move_to(world.as_ref(), path, speed_modifier, position)
     }
 
     fn is_path_finding(&self) -> bool {
@@ -2092,18 +2028,15 @@ pub trait PathfinderMob: Mob {
             return result;
         }
 
-        !self.mob_base().navigation().lock().is_done()
+        !self.mob_base_ref().navigation.is_done()
     }
 
     fn is_panicking(&self) -> bool {
-        self.mob_base()
-            .goal_selector()
-            .lock()
-            .has_running_panic_goal()
+        self.mob_base_ref().goal_selector.has_running_panic_goal()
     }
 
     fn create_path_to_targets(
-        &self,
+        &mut self,
         world: &Arc<World>,
         targets: &[BlockPos],
         reach_range: i32,
@@ -2128,7 +2061,7 @@ pub trait PathfinderMob: Mob {
             .lock()
             .required_value(vanilla_attributes::FOLLOW_RANGE);
         let max_path_length = {
-            let mut navigation = self.mob_base().navigation().lock();
+            let navigation = &mut self.mob_base().navigation;
             navigation.update_pathfinder_max_visited_nodes(follow_range);
             navigation.max_path_length(follow_range)
         };
@@ -2136,27 +2069,36 @@ pub trait PathfinderMob: Mob {
         let mob_position = self.block_position();
         let settings = MobPathSettings::from_mob(self);
         let mut evaluator = WalkNodeEvaluator::new(settings);
-        let collision_world =
-            WorldCollisionProvider::for_path_navigation(world, self.as_entity_event_source());
-        let mut collision = |aabb| {
-            collision_world.has_entity_context_collision(
-                aabb,
-                self.position().y,
-                self.is_descending(),
+
+        // Move the navigation out of the mob so it can be borrowed mutably while
+        // the collision closure borrows the rest of `self` immutably; restore it
+        // afterwards.
+        let mut navigation = std::mem::take(&mut self.mob_base().navigation);
+        let path = {
+            let collision_world =
+                WorldCollisionProvider::for_path_navigation(world, self.as_entity_event_source());
+            let mut collision = |aabb| {
+                collision_world.has_entity_context_collision(
+                    aabb,
+                    self.position().y,
+                    self.is_descending(),
+                )
+            };
+
+            navigation.create_path(
+                &mut evaluator,
+                world.as_ref(),
+                &mut collision,
+                NavigationPathRequest {
+                    mob_position,
+                    targets,
+                    max_path_length,
+                    reach_range,
+                },
             )
         };
-
-        self.mob_base().navigation().lock().create_path(
-            &mut evaluator,
-            world.as_ref(),
-            &mut collision,
-            NavigationPathRequest {
-                mob_position,
-                targets,
-                max_path_length,
-                reach_range,
-            },
-        )
+        self.mob_base().navigation = navigation;
+        path
     }
 }
 
@@ -2502,6 +2444,10 @@ mod tests {
             Some(self)
         }
 
+        fn as_mob_mut(&mut self) -> Option<&mut dyn Mob> {
+            Some(self)
+        }
+
         fn controlling_passenger(&self) -> Option<SharedEntity> {
             self.controlling_passenger.lock().clone()
         }
@@ -2584,7 +2530,11 @@ mod tests {
     }
 
     impl Mob for DespawnTestMob {
-        fn mob_base(&self) -> &MobBase {
+        fn mob_base(&mut self) -> &mut MobBase {
+            &mut self.mob_base
+        }
+
+        fn mob_base_ref(&self) -> &MobBase {
             &self.mob_base
         }
 
@@ -2637,7 +2587,7 @@ mod tests {
     #[test]
     fn mob_base_uses_vanilla_fire_path_malus_defaults() {
         let base = MobBase::new();
-        let malus = base.pathfinding_malus().lock();
+        let malus = &base.pathfinding_malus;
 
         assert_eq!(
             malus.get(PathType::FireInNeighbor).to_bits(),
@@ -2649,13 +2599,12 @@ mod tests {
 
     #[test]
     fn pathfinder_mob_reads_below_surface_capability_from_navigation() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
 
         assert!(!mob.can_path_to_targets_below_surface());
 
         mob.mob_base()
-            .navigation()
-            .lock()
+            .navigation
             .set_can_path_to_targets_below_surface(true);
 
         assert!(mob.can_path_to_targets_below_surface());
@@ -2673,9 +2622,9 @@ mod tests {
 
     #[test]
     fn mob_control_flags_enable_goals_without_controller_or_boat() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         {
-            let mut selector = mob.mob_base().goal_selector().lock();
+            let selector = &mut mob.mob_base().goal_selector;
             selector.disable_control(GoalControl::Move);
             selector.disable_control(GoalControl::Jump);
             selector.disable_control(GoalControl::Look);
@@ -2683,7 +2632,7 @@ mod tests {
 
         mob.update_control_flags();
 
-        let selector = mob.mob_base().goal_selector().lock();
+        let selector = &mut mob.mob_base().goal_selector;
         assert!(!selector.is_control_disabled(GoalControl::Move));
         assert!(!selector.is_control_disabled(GoalControl::Jump));
         assert!(!selector.is_control_disabled(GoalControl::Look));
@@ -2691,13 +2640,13 @@ mod tests {
 
     #[test]
     fn mob_control_flags_disable_goals_for_mob_controller() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let controller: SharedEntity = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
         mob.set_controlling_passenger(controller);
 
         mob.update_control_flags();
 
-        let selector = mob.mob_base().goal_selector().lock();
+        let selector = &mut mob.mob_base().goal_selector;
         assert!(selector.is_control_disabled(GoalControl::Move));
         assert!(selector.is_control_disabled(GoalControl::Jump));
         assert!(selector.is_control_disabled(GoalControl::Look));
@@ -2709,10 +2658,10 @@ mod tests {
         let boat: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
         EntityBase::restore_passenger_relationship(&boat, &mob_entity);
 
-        mob_entity.with_mob(|mob| {
+        mob_entity.with_mob_mut(|mob| {
             mob.update_control_flags();
 
-            let selector = mob.mob_base().goal_selector().lock();
+            let selector = &mut mob.mob_base().goal_selector;
             assert!(!selector.is_control_disabled(GoalControl::Move));
             assert!(selector.is_control_disabled(GoalControl::Jump));
             assert!(!selector.is_control_disabled(GoalControl::Look));
@@ -2721,7 +2670,7 @@ mod tests {
 
     #[test]
     fn mob_target_stores_living_target_weakly() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let target: SharedEntity = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
 
         assert!(mob.set_target(Some(&target)));
@@ -2732,7 +2681,7 @@ mod tests {
 
     #[test]
     fn mob_target_can_be_cleared() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let target: SharedEntity = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
         assert!(mob.set_target(Some(&target)));
 
@@ -2743,7 +2692,7 @@ mod tests {
 
     #[test]
     fn mob_target_expires_with_target_entity() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         {
             let target: SharedEntity = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
             assert!(mob.set_target(Some(&target)));
@@ -2754,7 +2703,7 @@ mod tests {
 
     #[test]
     fn mob_target_rejects_non_living_entities() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let target: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
 
         assert!(!mob.set_target(Some(&target)));
@@ -2764,7 +2713,7 @@ mod tests {
 
     #[test]
     fn mob_target_rejects_targets_it_cannot_attack() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let target = HiddenTarget::shared(2);
 
         assert!(!mob.set_target(Some(&target)));
@@ -2774,7 +2723,7 @@ mod tests {
 
     #[test]
     fn mob_target_filters_invalid_target_without_clearing_stored_target() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let target = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
 
         assert!(mob.mob_base().set_target(Some(&target), |_| true));
@@ -2790,7 +2739,7 @@ mod tests {
 
     #[test]
     fn mob_target_clears_previous_target_when_new_target_is_invalid() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let previous = DespawnTestMob::with_position(2, DVec3::ZERO, None, false);
         let invalid = HiddenTarget::shared(3);
 
@@ -2851,32 +2800,32 @@ mod tests {
 
     #[test]
     fn mob_base_tick_increments_ambient_sound_time_when_roll_fails() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
 
         mob.mob_base_tick();
 
-        assert_eq!(mob.mob_base().ambient_sound_time(), 1);
+        assert_eq!(mob.mob_base().ambient_sound_time, 1);
     }
 
     #[test]
     fn mob_base_tick_resets_ambient_sound_time_after_vanilla_roll() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
 
-        mob.mob_base().set_ambient_sound_time(1000);
+        mob.mob_base().ambient_sound_time = 1000;
         mob.mob_base_tick();
 
-        assert_eq!(mob.mob_base().ambient_sound_time(), -80);
+        assert_eq!(mob.mob_base().ambient_sound_time, -80);
     }
 
     #[test]
     fn mob_hurt_sound_resets_ambient_sound_time() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         let source = DamageSource::environment(&vanilla_damage_types::GENERIC);
 
-        mob.mob_base().set_ambient_sound_time(12);
-        LivingEntity::play_hurt_sound(&mob, &source);
+        mob.mob_base().ambient_sound_time = 12;
+        LivingEntity::play_hurt_sound(&mut mob, &source);
 
-        assert_eq!(mob.mob_base().ambient_sound_time(), -80);
+        assert_eq!(mob.mob_base().ambient_sound_time, -80);
     }
 
     #[test]
@@ -2939,18 +2888,19 @@ mod tests {
 
     #[test]
     fn mob_look_control_rotates_head_yaw_without_turning_body_yaw() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         mob.set_rotation((0.0, 0.0));
         mob.set_y_body_rot(0.0);
         mob.set_y_head_rot(0.0);
         let position = mob.position();
-        mob.mob_base().controls().lock().look_control.set_look_at(
-            DVec3::new(position.x + 1.0, mob.get_eye_y(), position.z),
+        let eye_y = mob.get_eye_y();
+        mob.mob_base().controls.look_control.set_look_at(
+            DVec3::new(position.x + 1.0, eye_y, position.z),
             DEFAULT_LOOK_Y_MAX_ROT_SPEED,
             DEFAULT_LOOK_X_MAX_ROT_ANGLE,
         );
 
-        Mob::tick_look_control(&mob);
+        Mob::tick_look_control(&mut mob);
 
         assert_eq!(mob.rotation(), (0.0, 0.0));
         assert_eq!(mob.y_body_rot(), 0.0);
@@ -2959,12 +2909,12 @@ mod tests {
 
     #[test]
     fn mob_look_control_returns_head_yaw_toward_body_when_idle() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         mob.set_rotation((0.0, 20.0));
         mob.set_y_body_rot(90.0);
         mob.set_y_head_rot(0.0);
 
-        Mob::tick_look_control(&mob);
+        Mob::tick_look_control(&mut mob);
 
         assert_eq!(mob.rotation(), (0.0, 0.0));
         assert_eq!(mob.y_body_rot(), 90.0);
@@ -2973,14 +2923,14 @@ mod tests {
 
     #[test]
     fn mob_body_rotation_control_uses_tick_position_delta() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
         mob.set_old_position(DVec3::ZERO);
         mob.entity().set_position_local(DVec3::new(1.0, 0.0, 0.0));
         mob.set_rotation((90.0, 0.0));
         mob.set_y_body_rot(0.0);
         mob.set_y_head_rot(200.0);
 
-        Mob::tick_body_rotation_control(&mob);
+        Mob::tick_body_rotation_control(&mut mob);
 
         assert_eq!(mob.y_body_rot(), 90.0);
         assert_eq!(mob.y_head_rot(), 165.0);
@@ -3027,7 +2977,7 @@ mod tests {
 
     #[test]
     fn mob_persistence_resets_no_action_time_and_blocks_removal() {
-        let mob = DespawnTestMob::new(Some(129.0 * 129.0), true);
+        let mut mob = DespawnTestMob::new(Some(129.0 * 129.0), true);
 
         mob.set_no_action_time(42);
         mob.set_persistence_required();
@@ -3039,7 +2989,7 @@ mod tests {
 
     #[test]
     fn mob_home_restriction_uses_vanilla_radius() {
-        let mob = DespawnTestMob::new(None, false);
+        let mut mob = DespawnTestMob::new(None, false);
 
         assert!(mob.is_within_home_pos(BlockPos::new(1000, 64, 1000)));
 

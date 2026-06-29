@@ -25,11 +25,11 @@ impl Goal for InteractGoal {
         self.look_at.controls()
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.look_at.can_use(mob)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.look_at.can_continue_to_use(mob)
     }
 

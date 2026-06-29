@@ -1511,7 +1511,7 @@ fn living_entity_from_weak(entity: &mut Option<WeakEntity>) -> Option<SharedEnti
 }
 
 fn living_is_dead(entity: &SharedEntity) -> bool {
-    !entity
+    entity
         .with_living(|living| !LivingEntity::is_alive(living))
         .unwrap_or(false)
 }

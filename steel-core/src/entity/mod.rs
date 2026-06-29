@@ -153,7 +153,7 @@ fn transfer_leashables_to_holder(leashables: Vec<SharedEntity>, new_holder: &Sha
     let mut transferred = false;
     for leashable in leashables {
         let accepted = leashable
-            .with_mob(|mob| {
+            .with_mob_mut(|mob| {
                 let can_attach =
                     new_holder.with_entity(|holder| mob.can_have_a_leash_attached_to(holder));
                 if can_attach {
@@ -867,7 +867,7 @@ pub enum AcceptedClientMovementOutcome {
 }
 
 /// Object-safe access to an entity trait object from default `Entity` methods.
-pub trait EntityEventSource {
+pub trait EntityEventSource: Send {
     /// Returns this entity as a game-event source.
     fn as_entity_event_source(&self) -> &dyn Entity;
     /// Todo
@@ -900,7 +900,7 @@ impl<T: Entity> EntityEventSource for T {
 ///     // All other common methods use defaults via self.base()!
 /// }
 /// ```
-pub trait Entity: EntityEventSource + Send + Sync {
+pub trait Entity: EntityEventSource {
     /// Returns the weak back-reference to the containing `EntityBase`.
     fn base_weak(&self) -> &Weak<EntityBase>;
 
@@ -1489,7 +1489,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         self.check_below_world();
         self.sync_base_fire_freeze_entity_data();
         // Vanilla checks `this instanceof Leashable` inside `Entity.baseTick`.
-        if let Some(mob) = self.as_mob() {
+        if let Some(mob) = self.as_mob_mut() {
             mob.tick_leash();
         }
         // TODO: Add remaining vanilla baseTick pieces: portal and sprint particles.
@@ -1678,11 +1678,11 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Drops this entity's leash and all leashables attached to it.
-    fn drop_all_leash_connections(&self, player: Option<&Player>) -> bool {
+    fn drop_all_leash_connections(&mut self, player: Option<&Player>) -> bool {
         let leashables = self.leashables_leashed_to();
         let mut dropped = !leashables.is_empty();
 
-        if let Some(mob) = self.as_mob()
+        if let Some(mob) = self.as_mob_mut()
             && mob.is_leashed()
         {
             mob.drop_leash();
@@ -1690,7 +1690,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         }
 
         for leashable in leashables {
-            leashable.with_mob(|mob| mob.drop_leash());
+            leashable.with_mob_mut(|mob| mob.drop_leash());
         }
 
         if !dropped {
@@ -1709,7 +1709,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Shears off all leash connections reachable from this entity.
-    fn shear_off_all_leash_connections(&self, player: Option<&Player>) -> bool {
+    fn shear_off_all_leash_connections(&mut self, player: Option<&Player>) -> bool {
         if !self.drop_all_leash_connections(player) {
             return false;
         }
@@ -1730,8 +1730,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
     }
 
     /// Runs vanilla `Entity.attemptToShearEquipment`.
-    fn attempt_to_shear_equipment(&self, player: &Player, hand: InteractionHand) -> bool {
-        let Some(mob) = self.as_mob() else {
+    fn attempt_to_shear_equipment(&mut self, player: &Player, hand: InteractionHand) -> bool {
+        let Some(mob) = self.as_mob_mut() else {
             return false;
         };
         if !mob.can_shear_equipment(player) || player.is_secondary_use_active() {
@@ -1805,12 +1805,12 @@ pub trait Entity: EntityEventSource + Send + Sync {
 
     /// Handles shared vanilla `Entity.interact` behavior.
     fn interact_entity(
-        &self,
+        &mut self,
         player: &Player,
         hand: InteractionHand,
         _location: DVec3,
     ) -> InteractionResult {
-        let Some(mob) = self.as_mob() else {
+        if !self.is_mob() {
             return InteractionResult::Pass;
         };
         let is_alive = self
@@ -1821,7 +1821,7 @@ pub trait Entity: EntityEventSource + Send + Sync {
         }
 
         if player.is_secondary_use_active()
-            && mob.can_be_leashed()
+            && self.as_mob().unwrap().can_be_leashed()
             && self
                 .as_living_entity()
                 .is_none_or(|living| !LivingEntity::is_baby(living))
@@ -1855,6 +1855,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
         if holding_shears && self.attempt_to_shear_equipment(player, hand) {
             return InteractionResult::Success;
         }
+
+        let mob = self.as_animal_mut().unwrap();
 
         if let Some(holder) = mob.leash_holder() {
             if holder.id() == player.id() {
@@ -1896,6 +1898,8 @@ pub trait Entity: EntityEventSource + Send + Sync {
         let Some(player_entity) = world.get_entity_by_id(player.id()) else {
             return InteractionResult::Pass;
         };
+
+        let mob = self.as_animal_mut().unwrap();
 
         if mob.is_leashed() {
             mob.drop_leash();
@@ -2408,6 +2412,28 @@ pub trait Entity: EntityEventSource + Send + Sync {
     /// Returns extra ticks added by fire-block ignition before 8-second ignition.
     fn fire_ignite_extra_ticks(&self) -> i32 {
         0
+    }
+
+    /// Captures this entity's loot-context snapshot for use as a damage causer.
+    ///
+    /// Call this where the entity is already locked/accessible (e.g. while
+    /// building a `DamageSource` for an attack the entity is performing). The
+    /// death-loot path then builds the causer's loot `EntityRef` from this
+    /// snapshot instead of re-resolving and re-locking the entity, which would
+    /// deadlock if the causer is a player whose behavior mutex the tick loop
+    /// already holds. Mirrors the flags read by `entity_loot_ref`.
+    fn causing_entity_loot(&self) -> crate::entity::damage::CausingEntityLoot {
+        let living = self.as_living_entity();
+        crate::entity::damage::CausingEntityLoot {
+            entity_type: self.entity_type(),
+            flags: EntityRefFlags {
+                is_on_fire: self.is_on_fire(),
+                is_sneaking: self.is_crouching(),
+                is_sprinting: living.is_some_and(LivingEntity::is_sprinting),
+                is_swimming: self.is_swimming(),
+                is_baby: living.is_some_and(LivingEntity::is_baby),
+            },
+        }
     }
 
     /// Returns whether the entity is on fire on the server.
@@ -4074,8 +4100,8 @@ pub trait LivingEntity: Entity {
     }
 
     /// Runs vanilla `LivingEntity.playHurtSound`.
-    fn play_hurt_sound(&self, source: &DamageSource) {
-        if let Some(mob) = self.as_mob() {
+    fn play_hurt_sound(&mut self, source: &DamageSource) {
+        if let Some(mob) = self.as_mob_mut() {
             mob.reset_ambient_sound_time();
         }
         self.make_sound(self.hurt_sound(source));
@@ -4413,7 +4439,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Hook before applying damage after vanilla reductions.
-    fn before_actually_hurt(&self, _source: &DamageSource, _amount: f32) {}
+    fn before_actually_hurt(&mut self, _source: &DamageSource, _amount: f32) {}
 
     /// Applies damage after vanilla reductions.
     fn actually_hurt(&mut self, _source: &DamageSource, amount: f32) {
@@ -4570,23 +4596,23 @@ pub trait LivingEntity: Entity {
     }
 
     /// Returns vanilla `LivingEntity.getBaseExperienceReward`.
-    fn base_experience_reward(&self) -> i32 {
+    fn base_experience_reward(&mut self) -> i32 {
         if let Some(animal) = self.as_animal() {
             return animal.base_experience_reward_animal();
         }
 
-        self.as_mob().map_or(0, Mob::base_experience_reward_mob)
+        self.as_mob_mut().map_or(0, Mob::base_experience_reward_mob)
     }
 
     /// Returns vanilla `LivingEntity.getExperienceReward`.
-    fn experience_reward(&self, _world: &World, _killer_entity_id: Option<i32>) -> i32 {
+    fn experience_reward(&mut self, _world: &World, _killer_entity_id: Option<i32>) -> i32 {
         // TODO: Apply EnchantmentHelper.processMobExperience once enchantment
         // value-effect hooks can receive the killer/living-entity context.
         self.base_experience_reward()
     }
 
     /// Runs the currently implemented subset of vanilla `LivingEntity.dropAllDeathLoot`.
-    fn drop_all_death_loot(&self, source: &DamageSource) {
+    fn drop_all_death_loot(&mut self, source: &DamageSource) {
         let Some(world) = self.level() else {
             return;
         };
@@ -4603,7 +4629,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Runs vanilla `LivingEntity.dropExperience`.
-    fn drop_experience(&self, world: &Arc<World>, killer_entity_id: Option<i32>) {
+    fn drop_experience(&mut self, world: &Arc<World>, killer_entity_id: Option<i32>) {
         if self.was_experience_consumed() {
             return;
         }
@@ -4641,14 +4667,14 @@ pub trait LivingEntity: Entity {
     }
 
     /// Runs vanilla `LivingEntity.dropFromLootTable`.
-    fn drop_from_loot_table(&self, source: &DamageSource, killed_by_player: bool) {
+    fn drop_from_loot_table(&mut self, source: &DamageSource, killed_by_player: bool) {
         let Some(world) = self.level() else {
             return;
         };
         let has_custom_death_loot_table =
             self.as_mob().is_some_and(Mob::has_custom_death_loot_table);
         let Some(loot_table) = self.death_loot_table() else {
-            if has_custom_death_loot_table && let Some(mob) = self.as_mob() {
+            if has_custom_death_loot_table && let Some(mob) = self.as_mob_mut() {
                 mob.clear_custom_death_loot_table();
             }
             return;
@@ -4677,7 +4703,7 @@ pub trait LivingEntity: Entity {
             )
         };
 
-        if has_custom_death_loot_table && let Some(mob) = self.as_mob() {
+        if has_custom_death_loot_table && let Some(mob) = self.as_mob_mut() {
             mob.clear_custom_death_loot_table();
         }
 
@@ -5148,7 +5174,7 @@ pub trait LivingEntity: Entity {
 
     /// Runs vanilla's equippable `ItemStack.interactLivingEntity` branch.
     fn interact_living_entity_with_equippable(
-        &self,
+        &mut self,
         player: &Player,
         hand: InteractionHand,
     ) -> InteractionResult {
@@ -5193,7 +5219,7 @@ pub trait LivingEntity: Entity {
         if let Some(sound) = self.equip_sound(slot, &equipped) {
             self.play_sound(sound, 1.0, 1.0);
         }
-        if let Some(mob) = self.as_mob() {
+        if let Some(mob) = self.as_mob_mut() {
             mob.set_guaranteed_drop(slot);
         }
         // TODO: Emit EQUIP game event once game-event dispatch is implemented.
@@ -5328,7 +5354,7 @@ pub trait LivingEntity: Entity {
 
     /// Ticks living-entity counters after movement.
     fn tick_living_state(&mut self) {
-        if let Some(mob) = self.as_mob() {
+        if let Some(mob) = self.as_mob_mut() {
             mob.tick_body_rotation_control();
         }
         self.living_base()
@@ -5646,7 +5672,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.tickRidden()`.
-    fn tick_ridden(&self, _controller: &Player, _ridden_input: DVec3) {}
+    fn tick_ridden(&mut self, _controller: &Player, _ridden_input: DVec3) {}
 
     /// Mirrors vanilla `LivingEntity.getRiddenInput()`.
     fn ridden_input(&self, _controller: &Player, self_input: DVec3) -> DVec3 {
@@ -5654,7 +5680,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.getRiddenSpeed()`.
-    fn ridden_speed(&self, _controller: &Player) -> f32 {
+    fn ridden_speed(&mut self, _controller: &Player) -> f32 {
         self.get_speed()
     }
 
@@ -5663,7 +5689,8 @@ pub trait LivingEntity: Entity {
         let ridden_input = self.ridden_input(controller, self_input);
         self.tick_ridden(controller, ridden_input);
         if self.can_simulate_movement() {
-            self.set_speed(self.ridden_speed(controller));
+            let speed = self.ridden_speed(controller);
+            self.set_speed(speed);
             return self.travel(ridden_input);
         }
 
@@ -6374,9 +6401,15 @@ fn death_loot_items_with_rng<R: rand::Rng, E: LivingEntity + ?Sized>(
 
     let position = entity.position();
     let this_entity = living_entity_loot_ref(entity);
-    let causing_entity = causing_entity.as_deref().map(entity_loot_ref);
-    let direct_entity = direct_entity.as_deref().map(entity_loot_ref);
-    let last_damage_player = last_damage_player.as_deref().map(entity_loot_ref);
+    let causing_entity = causing_entity
+        .as_deref()
+        .map(|e| resolved_causing_loot_ref(source, e));
+    let direct_entity = direct_entity
+        .as_deref()
+        .map(|e| resolved_causing_loot_ref(source, e));
+    let last_damage_player = last_damage_player
+        .as_deref()
+        .map(|e| resolved_causing_loot_ref(source, e));
     let damage_source = DamageSourceInfo {
         damage_type: Some(&source.damage_type.key),
         tags: &[],
@@ -6416,6 +6449,27 @@ fn living_entity_loot_ref<E: LivingEntity + ?Sized>(entity: &E) -> EntityRef<'_>
         equipment: None,
         custom_name: None,
     }
+}
+
+/// Builds the loot `EntityRef` for an entity referenced by a damage source.
+///
+/// When `entity` is the damage's causing entity and the source carries a
+/// captured loot snapshot, the snapshot is used instead of re-locking the entity
+/// through [`entity_loot_ref`]. This is the lock-free path that avoids
+/// deadlocking on a causer (typically the attacking player) whose behavior mutex
+/// is already held by the current tick. See `Entity::causing_entity_loot`.
+fn resolved_causing_loot_ref<'a>(source: &DamageSource, entity: &'a EntityBase) -> EntityRef<'a> {
+    if Some(entity.id()) == source.causing_entity_id
+        && let Some(snapshot) = source.causing_entity_loot
+    {
+        return EntityRef {
+            entity_type: Some(&snapshot.entity_type.key),
+            flags: snapshot.flags,
+            equipment: None,
+            custom_name: None,
+        };
+    }
+    entity_loot_ref(entity)
 }
 
 fn entity_loot_ref(entity: &EntityBase) -> EntityRef<'_> {
@@ -6998,7 +7052,7 @@ mod tests {
     fn living_death_loot_table_uses_default_and_custom_mob_tables() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let Some(default_table) = pig.death_loot_table() else {
             panic!("pig should resolve its default entity loot table");
         };
@@ -7956,7 +8010,7 @@ mod tests {
         );
         assert!(
             leashable
-                .with_mob(|mob| mob.set_leashed_to(&old_holder))
+                .with_mob_mut(|mob| mob.set_leashed_to(&old_holder))
                 .unwrap()
         );
 
@@ -7987,7 +8041,7 @@ mod tests {
         );
         assert!(
             leashable
-                .with_mob(|mob| mob.set_leashed_to(&old_holder))
+                .with_mob_mut(|mob| mob.set_leashed_to(&old_holder))
                 .unwrap()
         );
 
@@ -8013,7 +8067,7 @@ mod tests {
         let leashable: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
-        leashable.with_mob(|mob| {
+        leashable.with_mob_mut(|mob| {
             assert!(mob.set_leashed_to(&old_holder));
             assert!(mob.set_leashed_to(&new_holder));
         });
@@ -8032,7 +8086,7 @@ mod tests {
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
-            .with_mob(|mob| {
+            .with_mob_mut(|mob| {
                 assert!(mob.set_leashed_to(&holder));
                 mob.tick_leash();
                 mob.is_leashed()
@@ -8054,7 +8108,7 @@ mod tests {
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
-            .with_mob(|mob| {
+            .with_mob_mut(|mob| {
                 assert!(mob.set_leashed_to(&holder));
                 mob.tick_leash();
                 mob.is_leashed()

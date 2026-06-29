@@ -83,10 +83,7 @@ impl World {
         player.set_level_callback(Arc::new(NullEntityCallback));
     }
 
-    pub(crate) fn register_respawned_player_entity(
-        self: &Arc<Self>,
-        player: &Arc<ServerPlayer>,
-    ) {
+    pub(crate) fn register_respawned_player_entity(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
         let mut player = player.entity().lock();
         self.register_player_entity(&mut player);
         self.chunk_map.update_player_status(&player);

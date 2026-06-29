@@ -46,11 +46,10 @@ impl MobPathSettings {
             malus[path_type.index()] = mob.get_pathfinding_malus(path_type);
         }
 
-        let navigation = mob.mob_base().navigation().lock();
+        let navigation = &mob.mob_base_ref().navigation;
         let can_float = navigation.can_float();
         let can_open_doors = navigation.can_open_doors();
         let can_walk_over_fences = navigation.can_walk_over_fences();
-        drop(navigation);
 
         Self {
             entity_width: floor(bounding_box.width() + 1.0),
@@ -1230,8 +1229,8 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_open_doors_from_navigation() {
         init_test_registry();
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        pig.mob_base().navigation().lock().set_can_open_doors(true);
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        pig.mob_base().navigation.set_can_open_doors(true);
 
         let settings = MobPathSettings::from_mob(&pig);
 
@@ -1241,11 +1240,8 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_walk_over_fences_from_navigation() {
         init_test_registry();
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        pig.mob_base()
-            .navigation()
-            .lock()
-            .set_can_walk_over_fences(true);
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        pig.mob_base().navigation.set_can_walk_over_fences(true);
 
         let settings = MobPathSettings::from_mob(&pig);
 

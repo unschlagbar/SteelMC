@@ -70,10 +70,13 @@ impl TargetingConditions {
     pub(crate) fn test(
         &self,
         world: &World,
-        targeter: Option<&dyn LivingEntity>,
+        targeter: Option<&mut dyn LivingEntity>,
         target: &dyn LivingEntity,
     ) -> bool {
-        if targeter.is_some_and(|targeter| targeter.uuid() == target.uuid()) {
+        if targeter
+            .as_ref()
+            .is_some_and(|targeter| targeter.uuid() == target.uuid())
+        {
             return false;
         }
         if !target.can_be_seen_by_anyone() {
@@ -110,7 +113,7 @@ impl TargetingConditions {
         }
 
         if self.check_line_of_sight
-            && let Some(pathfinder) = targeter.as_pathfinder_mob()
+            && let Some(pathfinder) = targeter.as_pathfinder_mob_mut()
             && !pathfinder.has_line_of_sight_cached(target)
         {
             return false;

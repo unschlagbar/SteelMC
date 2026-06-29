@@ -3,7 +3,7 @@ use glam::DVec3;
 use super::reduced_tick_delay;
 use super::selector::{Goal, GoalControls};
 use crate::entity::ai::targeting::TargetingConditions;
-use crate::entity::{Animal, PathfinderMob, SharedEntity};
+use crate::entity::{PathfinderMob, SharedEntity};
 
 const PARTNER_SEARCH_RANGE: f64 = 8.0;
 const BREED_DISTANCE_SQR: f64 = 9.0;
@@ -25,7 +25,7 @@ impl BreedGoal {
         }
     }
 
-    fn get_free_partner(mob: &dyn PathfinderMob, animal: &dyn Animal) -> Option<SharedEntity> {
+    fn get_free_partner(mob: &mut dyn PathfinderMob) -> Option<SharedEntity> {
         let world = mob.level()?;
         let search_box = mob.bounding_box().inflate(PARTNER_SEARCH_RANGE);
         let partner_targeting = TargetingConditions::for_non_combat()
@@ -39,7 +39,7 @@ impl BreedGoal {
             if !partner_targeting.test(world.as_ref(), Some(mob), candidate) {
                 return false;
             }
-            if !animal.can_mate(candidate) {
+            if !mob.as_animal().unwrap().can_mate(candidate) {
                 return false;
             }
 
@@ -55,7 +55,7 @@ impl Goal for BreedGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(animal) = mob.as_animal() else {
             return false;
         };
@@ -63,11 +63,11 @@ impl Goal for BreedGoal {
             return false;
         }
 
-        self.partner = Self::get_free_partner(mob, animal);
+        self.partner = Self::get_free_partner(mob);
         self.partner.is_some()
     }
 
-    fn can_continue_to_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
         let Some(partner) = &self.partner else {
             return false;
         };
@@ -106,10 +106,11 @@ impl Goal for BreedGoal {
         }
 
         let partner_position = partner.position();
-        mob.mob_base().controls().lock().look_control.set_look_at(
+        let max_head_x_rot = mob.max_head_x_rot();
+        mob.mob_base().controls.look_control.set_look_at(
             DVec3::new(partner_position.x, partner.get_eye_y(), partner_position.z),
             10.0,
-            mob.max_head_x_rot(),
+            max_head_x_rot,
         );
         mob.move_to_pos(partner_position, self.speed_modifier);
 
@@ -151,9 +152,9 @@ mod tests {
     #[test]
     fn breed_goal_requires_love_mode() {
         init_test_registry();
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let mut goal = BreedGoal::new(1.0);
 
-        assert!(!goal.can_use(&pig));
+        assert!(!goal.can_use(&mut pig));
     }
 }

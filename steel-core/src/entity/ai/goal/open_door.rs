@@ -26,11 +26,11 @@ impl Goal for OpenDoorGoal {
         GoalControls::EMPTY
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.door_interact.can_use(mob)
     }
 
-    fn can_continue_to_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
         self.close_door && self.forget_time > 0 && self.door_interact.can_continue_to_use()
     }
 
@@ -81,7 +81,7 @@ mod tests {
         let mut goal = OpenDoorGoal::new(false);
         goal.forget_time = 1;
 
-        assert!(!goal.can_continue_to_use(&pig()));
+        assert!(!goal.can_continue_to_use(&mut pig()));
     }
 
     #[test]
@@ -93,7 +93,7 @@ mod tests {
         goal.start(&mut mob);
 
         assert_eq!(goal.forget_time, FORGET_TICKS);
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
 
         goal.tick(&mut mob);
 

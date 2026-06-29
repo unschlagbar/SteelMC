@@ -30,7 +30,7 @@ impl Goal for FollowParentGoal {
         GoalControls::EMPTY
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(animal) = mob.as_animal() else {
             return false;
         };
@@ -64,7 +64,7 @@ impl Goal for FollowParentGoal {
         true
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(animal) = mob.as_animal() else {
             return false;
         };

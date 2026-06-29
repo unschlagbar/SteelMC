@@ -86,18 +86,23 @@ impl ExperienceOrbEntity {
         value: i32,
         world: Weak<World>,
     ) -> SharedEntity {
-        EntityBase::pack_with(
+        let entity = EntityBase::pack_with(
             next_entity_id(),
             position,
             entity_type.dimensions,
             world,
-            |base| {
-                let mut entity = Self::build(base, entity_type);
-                entity.set_value(value);
-                entity.initialize_spawn_movement();
-                entity
-            },
-        )
+            |base| Self::build(base, entity_type),
+        );
+
+        {
+            let mut entity = entity.lock_entity();
+            let exp_orb: &mut Self = entity.downcast().unwrap();
+
+            exp_orb.set_value(value);
+            exp_orb.initialize_spawn_movement();
+        }
+
+        entity
     }
 
     /// Creates an experience orb from saved base data.
@@ -195,6 +200,13 @@ impl ExperienceOrbEntity {
         );
         let merge_id = world.random().lock().next_i32_bounded(ORB_GROUPS_PER_AREA);
         for entity in world.get_entities_in_aabb(&search_box) {
+            // Filter by type lock-free before locking: `with_entity_as` locks the
+            // entity's behavior mutex, and the AABB includes the dying entity whose
+            // death triggered this award (already locked) — locking it again would
+            // deadlock. Only actual orbs need locking.
+            if entity.entity_type() != &vanilla_entities::EXPERIENCE_ORB {
+                continue;
+            }
             let merged = entity
                 .with_entity_as::<Self, _>(|orb| {
                     if !orb.can_merge_id(merge_id, value) {
@@ -216,6 +228,10 @@ impl ExperienceOrbEntity {
         let search_box = self.bounding_box().inflate(ORB_MERGE_DISTANCE);
         for entity in world.get_entities_in_aabb(&search_box) {
             if entity.id() == self.id() {
+                continue;
+            }
+            // Skip non-orbs lock-free; see `try_merge_to_existing`.
+            if entity.entity_type() != &vanilla_entities::EXPERIENCE_ORB {
                 continue;
             }
             entity.with_entity_as::<Self, _>(|orb| {

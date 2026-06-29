@@ -50,11 +50,10 @@ impl FollowMobGoal {
         }
 
         following_mob
-            .with_mob(|following_mob| {
+            .with_mob_mut(|following_mob| {
                 following_mob
                     .mob_base()
-                    .controls()
-                    .lock()
+                    .controls
                     .look_control
                     .wanted_position()
                     == mob_position
@@ -68,7 +67,7 @@ impl Goal for FollowMobGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(world) = mob.level() else {
             return false;
         };
@@ -93,12 +92,12 @@ impl Goal for FollowMobGoal {
         true
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(following_mob) = &self.following_mob else {
             return false;
         };
 
-        !mob.mob_base().navigation().lock().is_done()
+        !mob.mob_base().navigation.is_done()
             && mob.position().distance_squared(following_mob.position()) > self.stop_distance_sqr()
     }
 
@@ -110,7 +109,7 @@ impl Goal for FollowMobGoal {
 
     fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         self.following_mob = None;
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
         mob.set_pathfinding_malus(PathType::Water, self.old_water_cost);
     }
 
@@ -123,14 +122,15 @@ impl Goal for FollowMobGoal {
         }
 
         let following_position = following_mob.position();
-        mob.mob_base().controls().lock().look_control.set_look_at(
+        let max_head_x_rot = mob.max_head_x_rot();
+        mob.mob_base().controls.look_control.set_look_at(
             DVec3::new(
                 following_position.x,
                 following_mob.get_eye_y(),
                 following_position.z,
             ),
             10.0,
-            mob.max_head_x_rot(),
+            max_head_x_rot,
         );
 
         self.time_to_recalc_path -= 1;
@@ -147,7 +147,7 @@ impl Goal for FollowMobGoal {
             return;
         }
 
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
         if self.should_back_away(mob, following_mob) {
             mob.move_to_pos(
                 DVec3::new(
@@ -182,9 +182,9 @@ mod tests {
     fn follow_mob_goal_requires_world() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
     fn follow_mob_goal_stops_when_no_navigation_is_running() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         goal.following_mob = Some(PigEntity::new(
             &vanilla_entities::PIG,
             2,
@@ -221,7 +221,7 @@ mod tests {
             Weak::new(),
         ));
 
-        assert!(!goal.can_continue_to_use(&mob));
+        assert!(!goal.can_continue_to_use(&mut mob));
     }
 
     #[test]
@@ -239,12 +239,7 @@ mod tests {
 
         goal.tick(&mut mob);
 
-        let wanted_position = mob
-            .mob_base()
-            .controls()
-            .lock()
-            .look_control
-            .wanted_position();
+        let wanted_position = mob.mob_base().controls.look_control.wanted_position();
         assert_eq!(wanted_position.x.to_bits(), 4.0_f64.to_bits());
         assert_eq!(
             wanted_position.y.to_bits(),

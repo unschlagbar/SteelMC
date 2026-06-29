@@ -3,8 +3,25 @@
 use glam::DVec3;
 use steel_registry::{
     REGISTRY, TaggedRegistryExt, damage_type::DamageScaling, damage_type::DamageType,
-    vanilla_damage_type_tags,
+    entity_type::EntityTypeRef, loot_table::EntityRefFlags, vanilla_damage_type_tags,
 };
+
+/// Loot-context snapshot of the entity that caused this damage, captured at
+/// damage time.
+///
+/// The death-loot path needs the causing entity's type and live flags to build
+/// its loot `EntityRef`. Resolving that entity by id and locking it again would
+/// deadlock when the causer is a player whose behavior mutex is already held by
+/// the tick loop (the attacker, mid packet-handling). Capturing the snapshot
+/// here — while the caller already holds that entity locked — lets the loot path
+/// build the `EntityRef` without re-locking. See `entity_loot_ref`.
+#[derive(Debug, Clone, Copy)]
+pub struct CausingEntityLoot {
+    /// The causing entity's type.
+    pub entity_type: EntityTypeRef,
+    /// The causing entity's live loot-predicate flags.
+    pub flags: EntityRefFlags,
+}
 
 /// Describes how an entity was damaged.
 #[derive(Debug, Clone)]
@@ -17,6 +34,9 @@ pub struct DamageSource {
     pub direct_entity_id: Option<i32>,
     /// Source position (for explosions, etc.).
     pub source_position: Option<DVec3>,
+    /// Loot snapshot of the causing entity, threaded so the death-loot path can
+    /// build its `EntityRef` without re-locking a possibly-already-locked causer.
+    pub causing_entity_loot: Option<CausingEntityLoot>,
 }
 
 impl DamageSource {
@@ -28,6 +48,7 @@ impl DamageSource {
             causing_entity_id: None,
             direct_entity_id: None,
             source_position: None,
+            causing_entity_loot: None,
         }
     }
 
@@ -49,6 +70,16 @@ impl DamageSource {
     #[must_use]
     pub const fn with_source_position(mut self, source_position: DVec3) -> Self {
         self.source_position = Some(source_position);
+        self
+    }
+
+    /// Attaches the causing entity's loot snapshot (see [`CausingEntityLoot`]).
+    ///
+    /// Capture this at damage-creation time, where the caller already holds the
+    /// causing entity locked, so the death-loot path never re-locks it.
+    #[must_use]
+    pub const fn with_causing_entity_loot(mut self, loot: CausingEntityLoot) -> Self {
+        self.causing_entity_loot = Some(loot);
         self
     }
 

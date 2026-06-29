@@ -33,13 +33,13 @@ impl Goal for WaterAvoidingRandomStrollGoal {
         self.stroll.controls()
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let probability = self.probability;
         self.stroll
             .can_use_with_position(mob, |mob| random_stroll_pos(mob, probability))
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.stroll.can_continue_to_use(mob)
     }
 

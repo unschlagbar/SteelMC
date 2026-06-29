@@ -26,7 +26,7 @@ impl Goal for MoveTowardsRestrictionGoal {
         GoalControls::MOVE
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if mob.is_within_home() {
             return false;
         }
@@ -41,8 +41,8 @@ impl Goal for MoveTowardsRestrictionGoal {
         true
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
-        !mob.mob_base().navigation().lock().is_done()
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
+        !mob.mob_base().navigation.is_done()
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
@@ -73,9 +73,9 @@ mod tests {
     fn move_towards_restriction_goal_requires_outside_home() {
         init_test_registry();
         let mut goal = MoveTowardsRestrictionGoal::new(1.0);
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_home_to(BlockPos::ZERO, 4);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 }

@@ -31,11 +31,11 @@ impl Goal for BreathAirGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         mob.air_supply() < BREATH_AIR_THRESHOLD
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.can_use(mob)
     }
 
@@ -45,7 +45,7 @@ impl Goal for BreathAirGoal {
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
         find_air_position(mob);
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
     }
 
     fn tick(&mut self, mob: &mut dyn PathfinderMob) {
@@ -63,7 +63,7 @@ impl Goal for BreathAirGoal {
     }
 }
 
-fn find_air_position(mob: &dyn PathfinderMob) {
+fn find_air_position(mob: &mut dyn PathfinderMob) {
     let position = mob.position();
     let destination_pos = mob
         .level()
@@ -150,11 +150,11 @@ mod tests {
         let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         mob.set_air_supply(BREATH_AIR_THRESHOLD);
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
 
         mob.set_air_supply(BREATH_AIR_THRESHOLD - 1);
-        assert!(goal.can_use(&mob));
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_use(&mut mob));
+        assert!(goal.can_continue_to_use(&mut mob));
     }
 
     #[test]

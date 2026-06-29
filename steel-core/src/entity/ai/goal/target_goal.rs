@@ -46,7 +46,7 @@ impl TargetGoalBase {
         self.target_mob = target_mob;
     }
 
-    pub(super) fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    pub(super) fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(target) = mob.target().or_else(|| self.target_mob.clone()) else {
             return false;
         };
@@ -81,14 +81,14 @@ impl TargetGoalBase {
         self.unseen_ticks = 0;
     }
 
-    pub(super) fn stop(&mut self, mob: &dyn PathfinderMob) {
+    pub(super) fn stop(&mut self, mob: &mut dyn PathfinderMob) {
         mob.set_target(None);
         self.target_mob = None;
     }
 
     pub(super) fn can_attack(
         &mut self,
-        mob: &dyn PathfinderMob,
+        mob: &mut dyn PathfinderMob,
         target: Option<&dyn LivingEntity>,
         target_conditions: &TargetingConditions,
     ) -> bool {
@@ -113,7 +113,11 @@ impl TargetGoalBase {
         true
     }
 
-    fn update_unseen_ticks(&mut self, mob: &dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
+    fn update_unseen_ticks(
+        &mut self,
+        mob: &mut dyn PathfinderMob,
+        target: &dyn LivingEntity,
+    ) -> bool {
         if mob.has_line_of_sight_cached(target) {
             self.unseen_ticks = 0;
             return true;
@@ -123,7 +127,7 @@ impl TargetGoalBase {
         self.unseen_ticks <= reduced_tick_delay(self.unseen_memory_ticks)
     }
 
-    fn can_reach(&mut self, mob: &dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
+    fn can_reach(&mut self, mob: &mut dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
         self.reach_cache_time -= 1;
         if self.reach_cache_time <= 0 {
             self.reach_cache = ReachCache::Empty;
@@ -140,7 +144,7 @@ impl TargetGoalBase {
         self.reach_cache == ReachCache::CanReach
     }
 
-    fn check_reach(&mut self, mob: &dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
+    fn check_reach(&mut self, mob: &mut dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
         self.reach_cache_time =
             reduced_tick_delay(10 + mob.base().random().lock().next_i32_bounded(5));
         mob.can_reach_living_target(target)
@@ -175,14 +179,14 @@ mod tests {
     #[test]
     fn target_goal_base_continues_with_existing_mob_target() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(false, false);
 
         goal.start();
 
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
         let Some(stored_target) = mob.target() else {
             panic!("target should remain set");
         };
@@ -192,13 +196,13 @@ mod tests {
     #[test]
     fn target_goal_base_restores_stored_target_while_continuing() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, false);
         goal.set_target_mob(Some(target.clone()));
 
         assert!(mob.target().is_none());
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
 
         let Some(stored_target) = mob.target() else {
             panic!("stored target should be copied onto the mob");
@@ -209,27 +213,27 @@ mod tests {
     #[test]
     fn target_goal_base_forgets_unseen_target_after_memory_ticks() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(true, false);
         goal.set_unseen_memory_ticks(2);
         goal.start();
 
-        assert!(goal.can_continue_to_use(&mob));
-        assert!(!goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
+        assert!(!goal.can_continue_to_use(&mut mob));
     }
 
     #[test]
     fn target_goal_base_stop_clears_mob_and_stored_target() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
         let mut goal = TargetGoalBase::new(false, false);
         goal.set_target_mob(Some(target));
 
-        goal.stop(&mob);
+        goal.stop(&mut mob);
 
         assert!(mob.target().is_none());
         assert!(goal.target_mob.is_none());
@@ -238,13 +242,13 @@ mod tests {
     #[test]
     fn target_goal_base_can_attack_requires_world() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, false);
         let target_conditions = TargetingConditions::for_combat().ignore_line_of_sight();
 
         let can_attack = target
-            .with_living(|living| goal.can_attack(&mob, Some(living), &target_conditions))
+            .with_living(|living| goal.can_attack(&mut mob, Some(living), &target_conditions))
             .unwrap();
         assert!(!can_attack);
     }
@@ -252,13 +256,13 @@ mod tests {
     #[test]
     fn target_goal_base_caches_unreachable_targets() {
         init_test_registry();
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target: SharedEntity = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
         let mut goal = TargetGoalBase::new(false, true);
 
         assert!(
             !target
-                .with_living(|living| goal.can_reach(&mob, living))
+                .with_living(|living| goal.can_reach(&mut mob, living))
                 .unwrap()
         );
         assert_eq!(goal.reach_cache, ReachCache::CantReach);
@@ -266,7 +270,7 @@ mod tests {
 
         assert!(
             !target
-                .with_living(|living| goal.can_reach(&mob, living))
+                .with_living(|living| goal.can_reach(&mut mob, living))
                 .unwrap()
         );
         assert_eq!(goal.reach_cache, ReachCache::CantReach);

@@ -77,9 +77,9 @@ impl BitOr for GoalControls {
 pub trait Goal: Send {
     fn controls(&self) -> GoalControls;
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool;
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool;
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.can_use(mob)
     }
 
@@ -129,11 +129,11 @@ impl WrappedGoal {
         self.goal.is_interruptable() && candidate_priority < self.priority
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.goal.can_use(mob)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.goal.can_continue_to_use(mob)
     }
 
@@ -180,10 +180,7 @@ impl GoalSelector {
         }
     }
 
-    pub fn add_goal<G>(&mut self, priority: i32, goal: G)
-    where
-        G: Goal + 'static,
-    {
+    pub fn add_goal<G: Goal + 'static>(&mut self, priority: i32, goal: G) {
         self.available_goals
             .push(WrappedGoal::new(priority, Box::new(goal)));
     }
@@ -406,7 +403,11 @@ mod tests {
     }
 
     impl Mob for TestPathfinderMob {
-        fn mob_base(&self) -> &MobBase {
+        fn mob_base(&mut self) -> &mut MobBase {
+            &mut self.mob_base
+        }
+
+        fn mob_base_ref(&self) -> &MobBase {
             &self.mob_base
         }
 
@@ -482,7 +483,7 @@ mod tests {
             self.controls
         }
 
-        fn can_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+        fn can_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
             if self.can_use_once {
                 if !self.can_use {
                     return false;
@@ -493,7 +494,7 @@ mod tests {
             self.can_use
         }
 
-        fn can_continue_to_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+        fn can_continue_to_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
             self.can_continue
         }
 
@@ -598,20 +599,14 @@ mod tests {
     fn running_panic_goal_is_visible_to_pathfinder_mob() {
         let mut mob = TestPathfinderMob::new();
         mob.mob_base()
-            .goal_selector()
-            .lock()
+            .goal_selector
             .add_goal(1, StaticGoal::new(GoalControls::MOVE).as_panic_goal());
 
         assert!(!mob.is_panicking());
 
-        mob.tick_goal_selector(|m| m.mob_base().goal_selector(), false);
+        mob.tick_goal_selector(|m| &mut m.mob_base().goal_selector, false);
 
-        assert!(
-            mob.mob_base()
-                .goal_selector()
-                .lock()
-                .has_running_panic_goal()
-        );
+        assert!(mob.mob_base().goal_selector.has_running_panic_goal());
         assert!(mob.is_panicking());
     }
 }

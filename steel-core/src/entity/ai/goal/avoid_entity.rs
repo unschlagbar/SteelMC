@@ -52,7 +52,7 @@ impl Goal for AvoidEntityGoal {
         GoalControls::MOVE
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(world) = mob.level() else {
             return false;
         };
@@ -90,8 +90,8 @@ impl Goal for AvoidEntityGoal {
         true
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
-        !mob.mob_base().navigation().lock().is_done()
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
+        !mob.mob_base().navigation.is_done()
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
@@ -113,10 +113,7 @@ impl Goal for AvoidEntityGoal {
         } else {
             self.walk_speed_modifier
         };
-        mob.mob_base()
-            .navigation()
-            .lock()
-            .set_speed_modifier(speed_modifier);
+        mob.mob_base().navigation.set_speed_modifier(speed_modifier);
     }
 }
 
@@ -155,9 +152,9 @@ mod tests {
     fn avoid_entity_goal_requires_world() {
         init_test_registry();
         let mut goal = AvoidEntityGoal::new(8.0, 1.0, 1.2);
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -175,11 +172,7 @@ mod tests {
         goal.tick(&mut mob);
 
         assert_eq!(
-            mob.mob_base()
-                .navigation()
-                .lock()
-                .speed_modifier()
-                .to_bits(),
+            mob.mob_base().navigation.speed_modifier().to_bits(),
             1.2_f64.to_bits()
         );
     }
@@ -199,11 +192,7 @@ mod tests {
         goal.tick(&mut mob);
 
         assert_eq!(
-            mob.mob_base()
-                .navigation()
-                .lock()
-                .speed_modifier()
-                .to_bits(),
+            mob.mob_base().navigation.speed_modifier().to_bits(),
             1.0_f64.to_bits()
         );
     }

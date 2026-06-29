@@ -56,7 +56,7 @@ impl Goal for PanicGoal {
         true
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if !self.should_panic(mob) {
             return false;
         }
@@ -71,8 +71,8 @@ impl Goal for PanicGoal {
         self.find_random_position(mob)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
-        !mob.mob_base().navigation().lock().is_done()
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
+        !mob.mob_base().navigation.is_done()
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {

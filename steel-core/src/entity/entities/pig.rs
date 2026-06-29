@@ -23,7 +23,6 @@ use steel_registry::{
     vanilla_damage_types, vanilla_items, vanilla_particle_types, vanilla_pig_sound_variants,
     vanilla_pig_variants,
 };
-use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random as _;
 use steel_utils::types::InteractionHand;
 use steel_utils::{BlockPos, BlockStateId, Identifier};
@@ -54,7 +53,7 @@ pub struct PigEntity {
     mob_base: MobBase,
     ageable_base: AgeableMobBase,
     animal_base: AnimalBase,
-    steering: SyncMutex<ItemBasedSteering>,
+    steering: ItemBasedSteering,
     entity_data: PigEntityData,
 }
 
@@ -102,26 +101,19 @@ impl PigEntity {
 
     fn build(base: Weak<EntityBase>, entity_type: EntityTypeRef) -> Self {
         let living_base = LivingEntityBase::new(entity_type);
-        let mob_base = MobBase::new();
+        let mut mob_base = MobBase::new();
         let ageable_base = AgeableMobBase::new();
         let animal_base = AnimalBase::new();
-        AnimalBase::initialize_pathfinding_malus(&mob_base);
-        let steering = SyncMutex::new(ItemBasedSteering::new());
+        AnimalBase::initialize_pathfinding_malus(&mut mob_base);
+        let steering = ItemBasedSteering::new();
         let mut entity_data = PigEntityData::new();
         living_base.initialize_synced_data(&mut entity_data);
-        mob_base
-            .goal_selector()
-            .lock()
-            .add_goal(0, FloatGoal::new(&mob_base));
-        mob_base
-            .goal_selector()
-            .lock()
-            .add_goal(1, PanicGoal::new(1.25));
-        mob_base
-            .goal_selector()
-            .lock()
-            .add_goal(3, BreedGoal::new(1.0));
-        mob_base.goal_selector().lock().add_goal(
+
+        let float_goal = FloatGoal::new(&mut mob_base);
+        mob_base.goal_selector.add_goal(0, float_goal);
+        mob_base.goal_selector.add_goal(1, PanicGoal::new(1.25));
+        mob_base.goal_selector.add_goal(3, BreedGoal::new(1.0));
+        mob_base.goal_selector.add_goal(
             4,
             TemptGoal::new(
                 1.2,
@@ -129,7 +121,7 @@ impl PigEntity {
                 false,
             ),
         );
-        mob_base.goal_selector().lock().add_goal(
+        mob_base.goal_selector.add_goal(
             4,
             TemptGoal::new(
                 1.2,
@@ -142,20 +134,16 @@ impl PigEntity {
             ),
         );
         mob_base
-            .goal_selector()
-            .lock()
+            .goal_selector
             .add_goal(5, FollowParentGoal::new(1.1));
         mob_base
-            .goal_selector()
-            .lock()
+            .goal_selector
             .add_goal(6, WaterAvoidingRandomStrollGoal::new(1.0));
         mob_base
-            .goal_selector()
-            .lock()
+            .goal_selector
             .add_goal(7, LookAtPlayerGoal::new(6.0));
         mob_base
-            .goal_selector()
-            .lock()
+            .goal_selector
             .add_goal(8, RandomLookAroundGoal::new());
 
         Self {
@@ -172,7 +160,7 @@ impl PigEntity {
 
     /// Returns the vanilla age counter. Negative values are babies.
     #[must_use]
-    pub fn get_age(&self) -> i32 {
+    pub fn get_age(&mut self) -> i32 {
         AgeableMob::get_age(self)
     }
 
@@ -194,7 +182,7 @@ impl PigEntity {
 
     /// Returns vanilla `AgeableMob.forcedAge`.
     #[must_use]
-    pub fn forced_age(&self) -> i32 {
+    pub fn forced_age(&mut self) -> i32 {
         AgeableMob::forced_age(self)
     }
 
@@ -330,23 +318,23 @@ impl PigEntity {
     /// Returns whether item-based steering is currently boosting.
     #[must_use]
     pub fn is_boosting(&self) -> bool {
-        self.steering.lock().is_boosting()
+        self.steering.is_boosting()
     }
 
     /// Returns the current elapsed boost time.
     #[must_use]
     pub fn elapsed_boost_time(&self) -> i32 {
-        self.steering.lock().boost_time()
+        self.steering.boost_time()
     }
 
     /// Advances the active item-based steering boost.
-    pub fn tick_boost(&self) {
+    pub fn tick_boost(&mut self) {
         ItemSteerable::tick_boost(self);
     }
 
     /// Returns vanilla pig ridden speed.
     #[must_use]
-    pub fn ridden_speed(&self) -> f32 {
+    pub fn ridden_speed(&mut self) -> f32 {
         let movement_speed = self
             .attributes()
             .lock()
@@ -721,7 +709,7 @@ impl LivingEntity for PigEntity {
         Mob::mob_server_ai_step(self);
     }
 
-    fn tick_ridden(&self, controller: &Player, _ridden_input: DVec3) {
+    fn tick_ridden(&mut self, controller: &Player, _ridden_input: DVec3) {
         let (yaw, pitch) = controller.rotation();
         self.set_ridden_rotation(yaw, pitch);
         self.tick_boost();
@@ -731,11 +719,11 @@ impl LivingEntity for PigEntity {
         DVec3::new(0.0, 0.0, 1.0)
     }
 
-    fn ridden_speed(&self, _controller: &Player) -> f32 {
+    fn ridden_speed(&mut self, _controller: &Player) -> f32 {
         PigEntity::ridden_speed(self)
     }
 
-    fn before_actually_hurt(&self, _source: &DamageSource, _amount: f32) {
+    fn before_actually_hurt(&mut self, _source: &DamageSource, _amount: f32) {
         Animal::reset_love(self);
     }
 
@@ -758,7 +746,11 @@ impl LivingEntity for PigEntity {
 }
 
 impl AgeableMob for PigEntity {
-    fn ageable_base(&self) -> &AgeableMobBase {
+    fn ageable_base(&mut self) -> &mut AgeableMobBase {
+        &mut self.ageable_base
+    }
+
+    fn ageable_base_ref(&self) -> &AgeableMobBase {
         &self.ageable_base
     }
 
@@ -783,7 +775,11 @@ impl AgeableMob for PigEntity {
 }
 
 impl Animal for PigEntity {
-    fn animal_base(&self) -> &AnimalBase {
+    fn animal_base(&mut self) -> &mut AnimalBase {
+        &mut self.animal_base
+    }
+
+    fn animal_base_ref(&self) -> &AnimalBase {
         &self.animal_base
     }
 
@@ -824,8 +820,8 @@ impl Animal for PigEntity {
 }
 
 impl ItemSteerable for PigEntity {
-    fn item_based_steering(&self) -> &SyncMutex<ItemBasedSteering> {
-        &self.steering
+    fn item_based_steering(&mut self) -> &mut ItemBasedSteering {
+        &mut self.steering
     }
 
     fn boost_time_total(&self) -> i32 {
@@ -838,7 +834,11 @@ impl ItemSteerable for PigEntity {
 }
 
 impl Mob for PigEntity {
-    fn mob_base(&self) -> &MobBase {
+    fn mob_base(&mut self) -> &mut MobBase {
+        &mut self.mob_base
+    }
+
+    fn mob_base_ref(&self) -> &MobBase {
         &self.mob_base
     }
 
@@ -846,11 +846,11 @@ impl Mob for PigEntity {
         PathfinderMob::tick_pathfinder_goal_selectors(self);
     }
 
-    fn tick_path_navigation(&self) {
+    fn tick_path_navigation(&mut self) {
         PathfinderMob::tick_pathfinder_path_navigation(self);
     }
 
-    fn custom_server_ai_step(&self) {
+    fn custom_server_ai_step(&mut self) {
         Animal::custom_server_ai_step_animal(self);
     }
 
@@ -1069,11 +1069,11 @@ mod tests {
     fn pig_exposes_animal_behavior_without_downcasting() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let entity = &pig as &dyn Entity;
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let entity = &mut pig as &mut dyn Entity;
 
         assert!(entity.is_animal());
-        let Some(animal) = entity.as_animal() else {
+        let Some(animal) = entity.as_animal_mut() else {
             panic!("pig should expose animal behavior");
         };
         animal.set_in_love_time(5);
@@ -1144,8 +1144,8 @@ mod tests {
     fn pig_can_mate_with_same_type_when_both_in_love() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let partner = PigEntity::create(
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut partner = PigEntity::create(
             &vanilla_entities::PIG,
             2,
             DVec3::new(1.0, 0.0, 0.0),
@@ -1165,7 +1165,7 @@ mod tests {
     fn pig_uses_default_animal_love_mode() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(pig.can_fall_in_love());
 
@@ -1335,10 +1335,10 @@ mod tests {
     fn pig_uses_vanilla_animal_experience_reward() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         for _ in 0..16 {
-            let reward = LivingEntity::base_experience_reward(&pig);
+            let reward = LivingEntity::base_experience_reward(&mut pig);
             assert!((1..=3).contains(&reward));
         }
     }
@@ -1365,7 +1365,7 @@ mod tests {
     fn mob_guaranteed_drop_marks_slot_preserved() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert_eq!(
             pig.equipment_drop_chance(EquipmentSlot::Saddle).to_bits(),
@@ -1390,7 +1390,7 @@ mod tests {
     fn mob_death_loot_without_world_keeps_preserved_equipment() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.living_base
             .equipment()
             .lock()
@@ -1476,36 +1476,38 @@ mod tests {
 
         let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        let selector = pig.mob_base().goal_selector().lock();
+        let selector = &pig.mob_base_ref().goal_selector;
         assert_eq!(selector.available_goal_count(), 9);
         assert_eq!(
             selector.available_goal_priorities(),
             vec![0, 1, 3, 4, 4, 5, 6, 7, 8]
         );
-        drop(selector);
-        assert!(pig.mob_base().navigation().lock().can_float());
+        assert!(pig.mob_base_ref().navigation.can_float());
     }
 
     #[test]
     fn pig_path_target_feeds_move_control_forward_input() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let path = Path::new(vec![Node::new(1, 0, 0)], BlockPos::new(1, 0, 0), true);
 
         let level = EmptyNavigationLevel::new();
+        let position = pig.position();
         assert!(
             pig.mob_base()
-                .navigation()
-                .lock()
-                .move_to(&level, path, 1.0, pig.position())
+                .navigation
+                .move_to(&level, path, 1.0, position)
         );
         let target = {
-            let mut navigation = pig.mob_base().navigation().lock();
+            let position = pig.position();
+            let mob_bounding_box_width = pig.bounding_box().width();
+            let speed = pig.get_speed();
+            let navigation = &mut pig.mob_base().navigation;
             navigation.next_move_target(NavigationTickContext {
-                mob_position: pig.position(),
-                mob_bounding_box_width: pig.bounding_box().width(),
-                mob_speed: pig.get_speed(),
+                mob_position: position,
+                mob_bounding_box_width,
+                mob_speed: speed,
                 game_time: 0,
             })
         };
@@ -1514,7 +1516,7 @@ mod tests {
         };
 
         pig.set_wanted_position(target, speed_modifier);
-        Mob::tick_move_control(&pig);
+        Mob::tick_move_control(&mut pig);
 
         assert_eq!(pig.get_speed().to_bits(), 0.25_f32.to_bits());
         assert_eq!(pig.travel_input().forward().to_bits(), 0.25_f32.to_bits());
@@ -1732,7 +1734,7 @@ mod tests {
     fn pig_saves_delayed_fence_knot_leash_as_vanilla_block_pos_int_array() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.set_delayed_leash_attachment(LeashAttachment::FenceKnot(BlockPos::new(4, 65, -9)));
 
         let mut nbt = NbtCompound::new();
@@ -1748,7 +1750,7 @@ mod tests {
     fn pig_saves_live_fence_knot_leash_as_vanilla_block_pos_int_array() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let knot: SharedEntity = LeashFenceKnotEntity::new_attached(
             &vanilla_entities::LEASH_KNOT,
             BlockPos::new(4, 65, -9),
@@ -1791,7 +1793,7 @@ mod tests {
     fn pig_drop_leash_clears_live_leash_state() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
         assert!(pig.set_leashed_to(&holder));
@@ -1806,7 +1808,7 @@ mod tests {
     fn pig_remove_leash_clears_live_leash_state() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
         assert!(pig.set_leashed_to(&holder));
@@ -1821,7 +1823,7 @@ mod tests {
     fn pig_drop_all_leash_connections_clears_own_live_leash() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
         assert!(pig.set_leashed_to(&holder));
@@ -1879,8 +1881,8 @@ mod tests {
             Some(passenger.id())
         );
 
-        passenger.with_mob(|mob| mob.set_wanted_position(DVec3::new(1.0, 0.0, 0.0), 1.0));
-        vehicle.with_mob(|mob| mob.tick_move_control());
+        passenger.with_mob_mut(|mob| mob.set_wanted_position(DVec3::new(1.0, 0.0, 0.0), 1.0));
+        vehicle.with_mob_mut(|mob| mob.tick_move_control());
 
         assert_eq!(
             vehicle.with_living(|e| e.get_speed()).unwrap().to_bits(),
@@ -1893,7 +1895,7 @@ mod tests {
                 .to_bits(),
             0.25_f32.to_bits()
         );
-        passenger.with_mob(|mob| mob.tick_move_control());
+        passenger.with_mob_mut(|mob| mob.tick_move_control());
         assert_eq!(
             passenger
                 .with_living(|e| e.travel_input().forward())
@@ -1917,7 +1919,7 @@ mod tests {
     fn pig_saves_vanilla_animal_love_data() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let love_cause = Uuid::from_u128(42);
         pig.set_in_love_time(123);
         pig.set_love_cause_uuid(Some(love_cause));
@@ -1962,12 +1964,12 @@ mod tests {
 
         let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.set_in_love_time(2);
-        Animal::tick_animal_love(&pig);
+        Animal::tick_animal_love(&mut pig);
         assert_eq!(pig.in_love_time(), 1);
 
         pig.set_age(-1);
         pig.set_in_love_time(20);
-        Animal::tick_animal_love(&pig);
+        Animal::tick_animal_love(&mut pig);
         assert_eq!(pig.in_love_time(), 0);
     }
 

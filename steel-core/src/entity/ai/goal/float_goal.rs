@@ -9,8 +9,8 @@ pub struct FloatGoal;
 
 impl FloatGoal {
     #[must_use]
-    pub(crate) fn new(mob_base: &MobBase) -> Self {
-        mob_base.navigation().lock().set_can_float(true);
+    pub(crate) fn new(mob_base: &mut MobBase) -> Self {
+        mob_base.navigation.set_can_float(true);
         Self
     }
 }
@@ -20,7 +20,7 @@ impl Goal for FloatGoal {
         GoalControls::JUMP
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         mob.is_in_water() && mob.fluid_contact().water_height() > mob.get_fluid_jump_threshold()
             || mob.is_in_lava()
     }
@@ -31,7 +31,7 @@ impl Goal for FloatGoal {
 
     fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         if mob.base().random().lock().next_f32() < FLOAT_JUMP_CHANCE {
-            mob.mob_base().controls().lock().jump_control.jump();
+            mob.mob_base().controls.jump_control.jump();
         }
     }
 }
@@ -111,7 +111,11 @@ mod tests {
     }
 
     impl Mob for TestPathfinderMob {
-        fn mob_base(&self) -> &MobBase {
+        fn mob_base(&mut self) -> &mut MobBase {
+            &mut self.mob_base
+        }
+
+        fn mob_base_ref(&self) -> &MobBase {
             &self.mob_base
         }
 
@@ -128,24 +132,24 @@ mod tests {
 
     #[test]
     fn float_goal_sets_navigation_can_float() {
-        let mob = TestPathfinderMob::new(0.0, 0.0);
+        let mut mob = TestPathfinderMob::new(0.0, 0.0);
 
-        assert!(!mob.mob_base.navigation().lock().can_float());
+        assert!(!mob.mob_base.navigation.can_float());
 
-        let _goal = FloatGoal::new(&mob.mob_base);
+        let _goal = FloatGoal::new(&mut mob.mob_base);
 
-        assert!(mob.mob_base.navigation().lock().can_float());
+        assert!(mob.mob_base.navigation.can_float());
     }
 
     #[test]
     fn float_goal_uses_water_threshold_or_lava() {
-        let shallow_water_mob = TestPathfinderMob::new(0.3, 0.0);
-        let deep_water_mob = TestPathfinderMob::new(0.5, 0.0);
-        let lava_mob = TestPathfinderMob::new(0.0, 0.1);
+        let mut shallow_water_mob = TestPathfinderMob::new(0.3, 0.0);
+        let mut deep_water_mob = TestPathfinderMob::new(0.5, 0.0);
+        let mut lava_mob = TestPathfinderMob::new(0.0, 0.1);
         let mut goal = FloatGoal;
 
-        assert!(!goal.can_use(&shallow_water_mob));
-        assert!(goal.can_use(&deep_water_mob));
-        assert!(goal.can_use(&lava_mob));
+        assert!(!goal.can_use(&mut shallow_water_mob));
+        assert!(goal.can_use(&mut deep_water_mob));
+        assert!(goal.can_use(&mut lava_mob));
     }
 }

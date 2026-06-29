@@ -335,6 +335,10 @@ impl Player {
             .with_causing_entity(self.id())
             .with_direct_entity(self.id())
             .with_source_position(self.position())
+            // Capture the attacker's loot snapshot now, while we hold our own lock,
+            // so the victim's death-loot path never re-locks us. See deadlock notes
+            // on `Entity::causing_entity_loot`.
+            .with_causing_entity_loot(self.causing_entity_loot())
     }
 
     fn attack_damage_source(&self, attacking_item: &ItemStack) -> DamageSource {
@@ -834,7 +838,7 @@ impl Player {
         if inventory_access.with_item(|item| item.is_empty()) {
             return InteractionResult::Pass;
         }
-        let Some(living_entity) = entity.get().as_living_entity() else {
+        let Some(living_entity) = entity.get_mut().as_living_entity_mut() else {
             return InteractionResult::Pass;
         };
         let result = living_entity.interact_living_entity_with_equippable(self, hand);

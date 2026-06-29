@@ -25,7 +25,7 @@ impl Goal for TryFindWaterGoal {
         GoalControls::EMPTY
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if !mob.on_ground() {
             return false;
         }
@@ -51,18 +51,14 @@ impl Goal for TryFindWaterGoal {
             return;
         };
 
-        mob.mob_base()
-            .controls()
-            .lock()
-            .move_control
-            .set_wanted_position(
-                DVec3::new(
-                    f64::from(water_pos.x()),
-                    f64::from(water_pos.y()),
-                    f64::from(water_pos.z()),
-                ),
-                WATER_MOVE_SPEED_MODIFIER,
-            );
+        mob.mob_base().controls.move_control.set_wanted_position(
+            DVec3::new(
+                f64::from(water_pos.x()),
+                f64::from(water_pos.y()),
+                f64::from(water_pos.z()),
+            ),
+            WATER_MOVE_SPEED_MODIFIER,
+        );
     }
 }
 
@@ -121,19 +117,19 @@ mod tests {
     fn try_find_water_goal_requires_on_ground() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
     fn try_find_water_goal_requires_world_after_on_ground_check() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_on_ground(true);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]

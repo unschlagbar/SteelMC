@@ -997,6 +997,26 @@ pub struct EntityBase {
     /// reference. Kept separate from the `entity` slot only because the player is
     /// owned by `ServerPlayer`
     player: Weak<SyncMutex<Player>>,
+    /// Lock-free snapshot of the entity's constant, type-derived properties.
+    ///
+    /// Captured once (at `attach_entity` for mobs/items, at `attach_player` for
+    /// players) and read without locking. Reading these lock-free is essential:
+    /// cross-entity code routinely inspects another entity's type while that
+    /// entity — often a player whose non-reentrant behavior mutex is already held
+    /// by the tick loop — is locked (e.g. damage resolution during
+    /// `Player::attack`, or player registration during join). Going through
+    /// `with_entity` there would re-lock the held `Player` mutex and deadlock.
+    static_info: OnceLock<StaticEntityInfo>,
+}
+
+/// Constant, type-derived entity properties cached on [`EntityBase`] for
+/// lock-free access. None of these change for the life of an entity.
+#[derive(Clone, Copy)]
+struct StaticEntityInfo {
+    entity_type: steel_registry::entity_type::EntityTypeRef,
+    always_ticking: bool,
+    is_living_entity: bool,
+    is_mob: bool,
 }
 
 impl EntityBase {
@@ -1128,6 +1148,7 @@ impl EntityBase {
             level_callback: SyncMutex::new(Arc::new(NullEntityCallback)),
             entity: entity.map_or_else(OnceLock::new, |entity| OnceLock::from(entity)),
             player: Weak::new(),
+            static_info: OnceLock::new(),
         }
     }
 
@@ -1155,6 +1176,18 @@ impl EntityBase {
     /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
     /// already attached (double-init is a programming error).
     pub fn attach_entity(&self, entity: Box<SyncMutex<dyn Entity>>) {
+        // Snapshot the constant type-derived properties while the mutex is still
+        // uncontended (called once during `Arc::new_cyclic`), so later reads stay
+        // lock-free. See `static_info` docs.
+        {
+            let guard = entity.lock();
+            let _ = self.static_info.set(StaticEntityInfo {
+                entity_type: guard.entity_type(),
+                always_ticking: guard.is_always_ticking(),
+                is_living_entity: guard.is_living_entity(),
+                is_mob: guard.is_mob(),
+            });
+        }
         assert!(
             self.entity.set(entity).is_ok(),
             "attach_entity called twice on the same EntityBase"
@@ -1172,6 +1205,16 @@ impl EntityBase {
             "attach_player called on an EntityBase that already has an attachment"
         );
         self.player = player;
+        // Players never call `attach_entity`; seed the lock-free snapshot here so
+        // cross-entity reads of a locked player's static properties don't re-lock
+        // it. These mirror `Player`'s `Entity` impl (a player is a living entity,
+        // not a mob, never always-ticking, type `PLAYER`).
+        let _ = self.static_info.set(StaticEntityInfo {
+            entity_type: &vanilla_entities::PLAYER,
+            always_ticking: false,
+            is_living_entity: true,
+            is_mob: false,
+        });
     }
 
     /// Returns the player behind this base, if this is a player base.
@@ -1248,14 +1291,6 @@ impl EntityBase {
     /// Runs a closure with the attached entity as a [`PathfinderMob`], if it is one.
     pub(crate) fn with_pathfinder_mob<R>(
         &self,
-        f: impl FnOnce(&dyn crate::entity::PathfinderMob) -> R,
-    ) -> Option<R> {
-        self.with_entity(|e| e.as_pathfinder_mob().map(f))
-    }
-
-    /// Runs a closure with the attached entity as a mutable [`PathfinderMob`], if it is one.
-    pub fn with_pathfinder_mob_mut<R>(
-        &self,
         f: impl FnOnce(&mut dyn crate::entity::PathfinderMob) -> R,
     ) -> Option<R> {
         self.with_entity(|e| e.as_pathfinder_mob_mut().map(f))
@@ -1290,16 +1325,27 @@ impl EntityBase {
     // entity's behavior lock — use `self` directly there. Prefer direct base
     // methods for lock-free state access.
 
-    /// Returns the entity type for this entity.
-    pub fn entity_type(&self) -> steel_registry::entity_type::EntityTypeRef {
-        self.with_entity(|e| e.entity_type())
+    /// Lock-free access to the constant type-derived properties snapshot.
+    ///
+    /// Must be used for any property read by cross-entity code that may run while
+    /// this entity (notably a player) is already locked — going through
+    /// `with_entity` there would re-lock the held `Player` mutex and deadlock.
+    fn static_info(&self) -> &StaticEntityInfo {
+        self.static_info
+            .get()
+            .expect("static entity info read before attach_entity/attach_player")
     }
 
-    /// Returns whether this entity ignores chunk ticking visibility.
+    /// Returns the entity type for this entity. Lock-free.
+    pub fn entity_type(&self) -> steel_registry::entity_type::EntityTypeRef {
+        self.static_info().entity_type
+    }
+
+    /// Returns whether this entity ignores chunk ticking visibility. Lock-free.
     ///
     /// Mirrors vanilla `Entity.isAlwaysTicking`.
     pub fn is_always_ticking(&self) -> bool {
-        self.with_entity(|e| e.is_always_ticking())
+        self.static_info().always_ticking
     }
 
     /// Returns `true` if the entity can be targeted and damaged.
@@ -1477,14 +1523,14 @@ impl EntityBase {
         BlockPos::from(self.position())
     }
 
-    /// Todo
+    /// Returns `true` if this entity implements living-entity behavior. Lock-free.
     pub fn is_living_entity(&self) -> bool {
-        self.with_entity(|e| e.is_living_entity())
+        self.static_info().is_living_entity
     }
 
-    /// Todo
+    /// Returns `true` if this entity implements mob behavior. Lock-free.
     pub fn is_mob(&self) -> bool {
-        self.with_entity(|e| e.is_mob())
+        self.static_info().is_mob
     }
 
     /// Todo

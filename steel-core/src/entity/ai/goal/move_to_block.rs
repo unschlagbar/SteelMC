@@ -113,7 +113,7 @@ impl MoveToBlockGoal {
         reduced_tick_delay(INTERVAL_TICKS + mob.base().random().lock().next_i32_bounded(200))
     }
 
-    fn move_mob_to_block(&self, mob: &dyn PathfinderMob) {
+    fn move_mob_to_block(&self, mob: &mut dyn PathfinderMob) {
         mob.move_to_pos(
             block_center_with_y(self.block_pos, self.block_pos.y() + 1),
             self.speed_modifier,
@@ -153,7 +153,7 @@ impl Goal for MoveToBlockGoal {
         true
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if self.next_start_tick > 0 {
             self.next_start_tick -= 1;
             return false;
@@ -166,7 +166,7 @@ impl Goal for MoveToBlockGoal {
         self.find_nearest_block(mob, world.as_ref())
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(world) = mob.level() else {
             return false;
         };
@@ -274,9 +274,9 @@ mod tests {
     fn move_to_block_goal_requires_world_after_start_delay() {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -284,9 +284,9 @@ mod tests {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
         goal.next_start_tick = 2;
-        let mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
 
         assert_eq!(goal.next_start_tick, 1);
     }

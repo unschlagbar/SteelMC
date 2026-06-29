@@ -10,7 +10,6 @@ use steel_registry::vanilla_block_tags::BlockTag;
 use steel_registry::vanilla_blocks;
 use steel_registry::vanilla_game_rules::MOB_DROPS;
 use steel_utils::entity_events::EntityStatus;
-use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random as _;
 use steel_utils::types::InteractionHand;
 use steel_utils::{BlockPos, Identifier, UuidExt};
@@ -29,25 +28,11 @@ use crate::world::{LevelReader, World};
 const PARENT_AGE_AFTER_BREEDING: i32 = 6000;
 const IN_LOVE_TIME: i32 = 600;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AnimalState {
-    in_love: i32,
-    love_cause: Option<Uuid>,
-}
-
-impl AnimalState {
-    const fn new() -> Self {
-        Self {
-            in_love: 0,
-            love_cause: None,
-        }
-    }
-}
-
 /// Runtime fields shared by vanilla animals.
 #[derive(Debug)]
 pub struct AnimalBase {
-    state: SyncMutex<AnimalState>,
+    pub in_love: i32,
+    pub love_cause: Option<Uuid>,
 }
 
 impl AnimalBase {
@@ -55,44 +40,22 @@ impl AnimalBase {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            state: SyncMutex::new(AnimalState::new()),
+            in_love: 0,
+            love_cause: None,
         }
     }
 
-    pub fn initialize_pathfinding_malus(mob_base: &MobBase) {
-        let mut malus = mob_base.pathfinding_malus().lock();
+    pub fn initialize_pathfinding_malus(mob_base: &mut MobBase) {
+        let malus = &mut mob_base.pathfinding_malus;
         malus.set(PathType::FireInNeighbor, 16.0);
         malus.set(PathType::Fire, -1.0);
     }
 
-    /// Returns vanilla `Animal.inLove`.
-    #[must_use]
-    pub fn in_love_time(&self) -> i32 {
-        self.state.lock().in_love
-    }
-
-    /// Sets vanilla `Animal.inLove`.
-    pub fn set_in_love_time(&self, in_love: i32) {
-        self.state.lock().in_love = in_love;
-    }
-
     /// Decrements vanilla `Animal.inLove` when it is active.
-    pub fn tick_in_love_time(&self) {
-        let mut state = self.state.lock();
-        if state.in_love > 0 {
-            state.in_love -= 1;
+    pub fn tick_in_love_time(&mut self) {
+        if self.in_love > 0 {
+            self.in_love -= 1;
         }
-    }
-
-    /// Returns vanilla `Animal.loveCause` as a persisted UUID.
-    #[must_use]
-    pub fn love_cause_uuid(&self) -> Option<Uuid> {
-        self.state.lock().love_cause
-    }
-
-    /// Sets vanilla `Animal.loveCause` as a persisted UUID.
-    pub fn set_love_cause_uuid(&self, love_cause: Option<Uuid>) {
-        self.state.lock().love_cause = love_cause;
     }
 }
 
@@ -104,27 +67,30 @@ impl Default for AnimalBase {
 
 /// Vanilla-shaped behavior shared by entities that extend `Animal`.
 pub trait Animal: AgeableMob {
-    /// Returns shared animal runtime state.
-    fn animal_base(&self) -> &AnimalBase;
+    /// Returns animal runtime state.
+    fn animal_base(&mut self) -> &mut AnimalBase;
+
+    /// Returns animal runtime state.
+    fn animal_base_ref(&self) -> &AnimalBase;
 
     /// Returns vanilla `Animal.inLove`.
     fn in_love_time(&self) -> i32 {
-        self.animal_base().in_love_time()
+        self.animal_base_ref().in_love
     }
 
     /// Sets vanilla `Animal.inLove`.
-    fn set_in_love_time(&self, in_love: i32) {
-        self.animal_base().set_in_love_time(in_love);
+    fn set_in_love_time(&mut self, in_love: i32) {
+        self.animal_base().in_love = in_love;
     }
 
     /// Returns vanilla `Animal.loveCause` as a persisted UUID.
     fn love_cause_uuid(&self) -> Option<Uuid> {
-        self.animal_base().love_cause_uuid()
+        self.animal_base_ref().love_cause
     }
 
     /// Sets vanilla `Animal.loveCause` as a persisted UUID.
-    fn set_love_cause_uuid(&self, love_cause: Option<Uuid>) {
-        self.animal_base().set_love_cause_uuid(love_cause);
+    fn set_love_cause_uuid(&mut self, love_cause: Option<Uuid>) {
+        self.animal_base().love_cause = love_cause;
     }
 
     /// Returns vanilla `Animal.isInLove`.
@@ -138,7 +104,7 @@ pub trait Animal: AgeableMob {
     }
 
     /// Sets vanilla love mode and records the player that caused it.
-    fn set_in_love(&self, player: Option<&Player>) {
+    fn set_in_love(&mut self, player: Option<&Player>) {
         self.set_in_love_time(IN_LOVE_TIME);
         if let Some(player) = player {
             self.set_love_cause_uuid(Some(player.gameprofile.id));
@@ -148,7 +114,7 @@ pub trait Animal: AgeableMob {
     }
 
     /// Resets vanilla love mode without clearing the stored love cause.
-    fn reset_love(&self) {
+    fn reset_love(&mut self) {
         self.set_in_love_time(0);
     }
 
@@ -371,7 +337,7 @@ pub trait Animal: AgeableMob {
     }
 
     /// Ticks vanilla animal love state.
-    fn tick_animal_love(&self) {
+    fn tick_animal_love(&mut self) {
         if self.get_age() != 0 {
             self.reset_love();
             return;
@@ -382,7 +348,7 @@ pub trait Animal: AgeableMob {
     }
 
     /// Runs vanilla `Animal.customServerAiStep`.
-    fn custom_server_ai_step_animal(&self) {
+    fn custom_server_ai_step_animal(&mut self) {
         if self.get_age() != 0 {
             self.reset_love();
         }
@@ -405,7 +371,7 @@ pub trait Animal: AgeableMob {
     }
 
     /// Loads vanilla animal fields.
-    fn load_animal(&self, nbt: BorrowedNbtCompoundView<'_, '_>) {
+    fn load_animal(&mut self, nbt: BorrowedNbtCompoundView<'_, '_>) {
         self.set_in_love_time(nbt.int("InLove").unwrap_or(0));
         if let Some(love_cause) = nbt.int_array("LoveCause")
             && let Some(uuid) = Uuid::from_int_array(&love_cause)

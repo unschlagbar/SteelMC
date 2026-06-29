@@ -113,7 +113,7 @@ impl Goal for LookAtPlayerGoal {
         self.controls
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if mob.base().random().lock().next_f32() >= self.probability {
             return false;
         }
@@ -147,7 +147,7 @@ impl Goal for LookAtPlayerGoal {
         self.look_at.is_some()
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(look_at) = &self.look_at else {
             return false;
         };
@@ -185,7 +185,7 @@ impl Goal for LookAtPlayerGoal {
         } else {
             look_at.get_eye_y()
         };
-        mob.mob_base().controls().lock().look_control.set_look_at(
+        mob.mob_base().controls.look_control.set_look_at(
             DVec3::new(position.x, target_y, position.z),
             DEFAULT_LOOK_Y_MAX_ROT_SPEED,
             DEFAULT_LOOK_X_MAX_ROT_ANGLE,

@@ -1152,7 +1152,7 @@ impl World {
                 }
 
                 let should_recompute = {
-                    let navigation = pathfinder.mob_base().navigation().lock();
+                    let navigation = &pathfinder.mob_base_ref().navigation;
                     navigation.should_recompute_path(pos, pathfinder.position())
                 };
                 if !should_recompute {
@@ -1160,8 +1160,9 @@ impl World {
                 }
 
                 let request = {
-                    let mut navigation = pathfinder.mob_base().navigation().lock();
-                    navigation.request_recompute_path(game_time, pathfinder.can_update_path())
+                    let can_update_path = pathfinder.can_update_path();
+                    let navigation = &mut pathfinder.mob_base().navigation;
+                    navigation.request_recompute_path(game_time, can_update_path)
                 };
                 if let Some(request) = request {
                     pathfinder.recompute_path(request);
@@ -1173,7 +1174,7 @@ impl World {
             };
             entity.with_pathfinder_mob(|pathfinder| {
                 {
-                    let mut navigation = pathfinder.mob_base().navigation().lock();
+                    let navigation = &mut pathfinder.mob_base().navigation;
                     navigation.invalidate_path_type(pos);
                 }
                 if !collision_shape_changed {
@@ -1184,7 +1185,7 @@ impl World {
                 }
 
                 let should_recompute = {
-                    let navigation = pathfinder.mob_base().navigation().lock();
+                    let navigation = &pathfinder.mob_base_ref().navigation;
                     navigation.should_recompute_path(pos, pathfinder.position())
                 };
                 if !should_recompute {
@@ -1192,8 +1193,9 @@ impl World {
                 }
 
                 let request = {
-                    let mut navigation = pathfinder.mob_base().navigation().lock();
-                    navigation.request_recompute_path(game_time, pathfinder.can_update_path())
+                    let can_update_path = pathfinder.can_update_path();
+                    let navigation = &mut pathfinder.mob_base().navigation;
+                    navigation.request_recompute_path(game_time, can_update_path)
                 };
                 if let Some(request) = request {
                     pathfinder.recompute_path(request);

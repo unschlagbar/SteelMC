@@ -86,7 +86,7 @@ impl DoorInteractGoal {
             return false;
         };
 
-        let navigation = mob.mob_base().navigation().lock();
+        let navigation = &mob.mob_base_ref().navigation;
         let Some(path) = navigation.path() else {
             return false;
         };
@@ -160,11 +160,11 @@ impl Goal for DoorInteractGoal {
         GoalControls::EMPTY
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         Self::can_use(self, mob)
     }
 
-    fn can_continue_to_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
         Self::can_continue_to_use(self)
     }
 

@@ -26,7 +26,7 @@ impl Goal for ClimbOnTopOfPowderSnowGoal {
         GoalControls::JUMP
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let in_powder_snow = mob.was_in_powder_snow() || mob.is_in_powder_snow();
         if !in_powder_snow || !Self::is_powder_snow_walkable_entity(mob) {
             return false;
@@ -58,7 +58,7 @@ impl Goal for ClimbOnTopOfPowderSnowGoal {
     }
 
     fn tick(&mut self, mob: &mut dyn PathfinderMob) {
-        mob.mob_base().controls().lock().jump_control.jump();
+        mob.mob_base().controls.jump_control.jump();
     }
 }
 
@@ -89,9 +89,9 @@ mod tests {
     fn climb_on_top_of_powder_snow_goal_requires_powder_snow_contact() {
         init_test_registry();
         let mut goal = ClimbOnTopOfPowderSnowGoal::new();
-        let mob = pig();
+        let mut mob = pig();
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -101,7 +101,7 @@ mod tests {
         let mut mob = pig();
         mob.apply_inside_block_effect(InsideBlockEffectType::Freeze);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -111,7 +111,7 @@ mod tests {
         let mut mob = PigEntity::create(&vanilla_entities::RABBIT, 1, DVec3::ZERO, Weak::new());
         mob.apply_inside_block_effect(InsideBlockEffectType::Freeze);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -122,6 +122,6 @@ mod tests {
 
         goal.tick(&mut mob);
 
-        assert!(mob.mob_base().controls().lock().jump_control.tick());
+        assert!(mob.mob_base().controls.jump_control.tick());
     }
 }

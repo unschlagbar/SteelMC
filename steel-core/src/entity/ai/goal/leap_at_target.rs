@@ -29,7 +29,7 @@ impl Goal for LeapAtTargetGoal {
         GoalControls::JUMP | GoalControls::MOVE
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if mob.has_controlling_passenger() {
             return false;
         }
@@ -61,7 +61,7 @@ impl Goal for LeapAtTargetGoal {
         true
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         !mob.on_ground()
     }
 
@@ -103,7 +103,7 @@ mod tests {
         PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
-    fn set_target(mob: &PigEntity, target: &SharedEntity) {
+    fn set_target(mob: &mut PigEntity, target: &SharedEntity) {
         assert!(mob.set_target(Some(target)));
     }
 
@@ -125,37 +125,37 @@ mod tests {
     fn leap_at_target_goal_requires_target() {
         init_test_registry();
         let mut goal = LeapAtTargetGoal::new(0.4);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         mob.base().set_on_ground(true);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
     fn leap_at_target_goal_uses_vanilla_distance_window() {
         init_test_registry();
         let mut goal = LeapAtTargetGoal::new(0.4);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         mob.base().set_on_ground(true);
 
         let close_target = shared_pig(2, DVec3::new(1.0, 0.0, 0.0));
-        set_target(&mob, &close_target);
-        assert!(!goal.can_use(&mob));
+        set_target(&mut mob, &close_target);
+        assert!(!goal.can_use(&mut mob));
 
         let far_target = shared_pig(3, DVec3::new(5.0, 0.0, 0.0));
-        set_target(&mob, &far_target);
-        assert!(!goal.can_use(&mob));
+        set_target(&mut mob, &far_target);
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
     fn leap_at_target_goal_requires_ground() {
         init_test_registry();
         let mut goal = LeapAtTargetGoal::new(0.4);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target = shared_pig(2, DVec3::new(2.0, 0.0, 0.0));
-        set_target(&mob, &target);
+        set_target(&mut mob, &target);
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -167,9 +167,9 @@ mod tests {
         mob.base().random().lock().set_seed(0);
         mob.set_velocity(DVec3::new(1.0, 0.0, 0.0));
         let target = shared_pig(2, DVec3::new(4.0, 0.0, 0.0));
-        set_target(&mob, &target);
+        set_target(&mut mob, &target);
 
-        assert!(goal.can_use(&mob));
+        assert!(goal.can_use(&mut mob));
         goal.start(&mut mob);
 
         assert_vec3_close(mob.velocity(), DVec3::new(0.6, f64::from(0.42_f32), 0.0));
@@ -179,11 +179,11 @@ mod tests {
     fn leap_at_target_goal_continues_until_grounded() {
         init_test_registry();
         let mut goal = LeapAtTargetGoal::new(0.4);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
 
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
 
         mob.base().set_on_ground(true);
-        assert!(!goal.can_continue_to_use(&mob));
+        assert!(!goal.can_continue_to_use(&mut mob));
     }
 }

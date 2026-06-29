@@ -89,12 +89,12 @@ impl Goal for RandomStrollGoal {
         GoalControls::MOVE
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.can_use_with_position(mob, |mob| default_random_pos(mob, 10, 7))
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
-        !mob.mob_base().navigation().lock().is_done() && !mob.has_controlling_passenger()
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
+        !mob.mob_base().navigation.is_done() && !mob.has_controlling_passenger()
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
@@ -104,6 +104,6 @@ impl Goal for RandomStrollGoal {
     }
 
     fn stop(&mut self, mob: &mut dyn PathfinderMob) {
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
     }
 }

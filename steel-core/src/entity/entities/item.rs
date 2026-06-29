@@ -10,6 +10,7 @@ use glam::DVec3;
 use steel_macros::entity_behavior;
 use steel_registry::entity_type::EntityTypeRef;
 use steel_registry::item_stack::ItemStack;
+use steel_registry::vanilla_entities;
 use steel_registry::vanilla_entity_data::ItemEntityData;
 use steel_utils::UuidExt;
 use steel_utils::locks::SyncMutex;
@@ -409,6 +410,12 @@ impl ItemEntity {
         for entity in world.get_entities_in_aabb(&search_box) {
             // Skip self
             if entity.id() == self.id() {
+                continue;
+            }
+            // Filter by type lock-free before locking: `with_entity_as` locks the
+            // entity, so never lock a non-item (which may already be locked
+            // elsewhere). Only items merge with items.
+            if entity.entity_type() != &vanilla_entities::ITEM {
                 continue;
             }
 

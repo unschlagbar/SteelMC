@@ -16,7 +16,7 @@ impl Goal for RestrictSunGoal {
         GoalControls::EMPTY
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(world) = mob.level() else {
             return false;
         };
@@ -25,11 +25,11 @@ impl Goal for RestrictSunGoal {
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
-        mob.mob_base().navigation().lock().set_avoid_sun(true);
+        mob.mob_base().navigation.set_avoid_sun(true);
     }
 
     fn stop(&mut self, mob: &mut dyn PathfinderMob) {
-        mob.mob_base().navigation().lock().set_avoid_sun(false);
+        mob.mob_base().navigation.set_avoid_sun(false);
     }
 }
 
@@ -60,7 +60,7 @@ mod tests {
         init_test_registry();
         let mut goal = RestrictSunGoal::new();
 
-        assert!(!goal.can_use(&pig()));
+        assert!(!goal.can_use(&mut pig()));
     }
 
     #[test]
@@ -69,12 +69,12 @@ mod tests {
         let mut goal = RestrictSunGoal::new();
         let mut pig = pig();
 
-        assert!(!pig.mob_base().navigation().lock().avoid_sun());
+        assert!(!pig.mob_base().navigation.avoid_sun());
 
         goal.start(&mut pig);
-        assert!(pig.mob_base().navigation().lock().avoid_sun());
+        assert!(pig.mob_base().navigation.avoid_sun());
 
         goal.stop(&mut pig);
-        assert!(!pig.mob_base().navigation().lock().avoid_sun());
+        assert!(!pig.mob_base().navigation.avoid_sun());
     }
 }

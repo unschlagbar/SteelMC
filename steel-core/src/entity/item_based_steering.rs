@@ -2,7 +2,6 @@
 
 use std::f32::consts::PI;
 
-use steel_utils::locks::SyncMutex;
 use steel_utils::random::Random;
 
 use crate::entity::Entity;
@@ -84,7 +83,7 @@ impl ItemBasedSteering {
 /// Entity behavior for vanilla `ItemSteerable`.
 pub trait ItemSteerable: Entity {
     /// Returns the shared runtime steering state.
-    fn item_based_steering(&self) -> &SyncMutex<ItemBasedSteering>;
+    fn item_based_steering(&mut self) -> &mut ItemBasedSteering;
 
     /// Returns the synced vanilla `boostTimeTotal`.
     fn boost_time_total(&self) -> i32;
@@ -95,8 +94,8 @@ pub trait ItemSteerable: Entity {
     /// Attempts to start an item-steering boost.
     fn boost(&mut self) -> bool {
         let boost_time_total = {
-            let mut steering = self.item_based_steering().lock();
-            let self_base = self.base();
+            let self_base = self.base_weak().upgrade().unwrap();
+            let steering = self.item_based_steering();
             let mut random = self_base.random().lock();
             steering.boost(&mut *random)
         };
@@ -109,19 +108,15 @@ pub trait ItemSteerable: Entity {
     }
 
     /// Advances the active item-steering boost.
-    fn tick_boost(&self) {
+    fn tick_boost(&mut self) {
         let boost_time_total = self.boost_time_total();
-        self.item_based_steering()
-            .lock()
-            .tick_boost(boost_time_total);
+        self.item_based_steering().tick_boost(boost_time_total);
     }
 
     /// Returns vanilla `ItemBasedSteering.boostFactor`.
-    fn boost_factor(&self) -> f32 {
+    fn boost_factor(&mut self) -> f32 {
         let boost_time_total = self.boost_time_total();
-        self.item_based_steering()
-            .lock()
-            .boost_factor(boost_time_total)
+        self.item_based_steering().boost_factor(boost_time_total)
     }
 }
 

@@ -30,11 +30,11 @@ impl Goal for RandomSwimmingGoal {
         self.stroll.controls()
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.stroll.can_use_with_position(mob, random_swimmable_pos)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         self.stroll.can_continue_to_use(mob)
     }
 

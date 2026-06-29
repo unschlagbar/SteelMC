@@ -38,7 +38,7 @@ impl Goal for FleeSunGoal {
         GoalControls::MOVE
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         if mob.target().is_some() {
             return false;
         }
@@ -63,8 +63,8 @@ impl Goal for FleeSunGoal {
         self.set_wanted_pos(mob, &level)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
-        !mob.mob_base().navigation().lock().is_done()
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
+        !mob.mob_base().navigation.is_done()
     }
 
     fn start(&mut self, mob: &mut dyn PathfinderMob) {
@@ -136,7 +136,7 @@ mod tests {
         init_test_registry();
         let mut goal = FleeSunGoal::new(1.0);
 
-        assert!(!goal.can_use(&pig()));
+        assert!(!goal.can_use(&mut pig()));
     }
 
     #[test]

@@ -64,7 +64,7 @@ impl MeleeAttackGoal {
         self.ticks_until_next_attack <= 0
     }
 
-    fn can_perform_attack(&self, mob: &dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
+    fn can_perform_attack(&self, mob: &mut dyn PathfinderMob, target: &dyn LivingEntity) -> bool {
         self.is_time_to_attack()
             && mob.is_within_melee_attack_range(target)
             && mob.has_line_of_sight_cached(target)
@@ -82,7 +82,11 @@ impl MeleeAttackGoal {
         self.pathed_target.x == 0.0 && self.pathed_target.y == 0.0 && self.pathed_target.z == 0.0
     }
 
-    fn should_recalculate_path(&mut self, mob: &dyn PathfinderMob, target: &SharedEntity) -> bool {
+    fn should_recalculate_path(
+        &mut self,
+        mob: &mut dyn PathfinderMob,
+        target: &SharedEntity,
+    ) -> bool {
         let line_of_sight_ok = target
             .with_living(|target_living| {
                 self.following_target_even_if_not_seen
@@ -107,7 +111,7 @@ impl MeleeAttackGoal {
         mob.base().random().lock().next_f32() < RANDOM_PATH_RECALC_CHANCE
     }
 
-    fn recalculate_path(&mut self, mob: &dyn PathfinderMob, target: &SharedEntity) {
+    fn recalculate_path(&mut self, mob: &mut dyn PathfinderMob, target: &SharedEntity) {
         self.pathed_target = target.position();
         let random_delay = mob
             .base()
@@ -137,7 +141,7 @@ impl Goal for MeleeAttackGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(world) = mob.level() else {
             return false;
         };
@@ -164,7 +168,7 @@ impl Goal for MeleeAttackGoal {
                 .unwrap_or(false)
     }
 
-    fn can_continue_to_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         let Some(target) = mob.target() else {
             return false;
         };
@@ -172,7 +176,7 @@ impl Goal for MeleeAttackGoal {
             return false;
         }
         if !self.following_target_even_if_not_seen {
-            return !mob.mob_base().navigation().lock().is_done();
+            return !mob.mob_base().navigation.is_done();
         }
         if !mob.is_within_home_pos(target.block_position()) {
             return false;
@@ -185,7 +189,7 @@ impl Goal for MeleeAttackGoal {
         if let Some(path) = self.path.take() {
             mob.move_to_path(Some(path), self.speed_modifier);
         } else {
-            mob.mob_base().navigation().lock().stop();
+            mob.mob_base().navigation.stop();
         }
         mob.set_aggressive(true);
         self.ticks_until_next_path_recalculation = 0;
@@ -202,7 +206,7 @@ impl Goal for MeleeAttackGoal {
         }
 
         mob.set_aggressive(false);
-        mob.mob_base().navigation().lock().stop();
+        mob.mob_base().navigation.stop();
     }
 
     fn requires_update_every_tick(&self) -> bool {
@@ -215,7 +219,7 @@ impl Goal for MeleeAttackGoal {
         };
 
         let target_position = target.position();
-        mob.mob_base().controls().lock().look_control.set_look_at(
+        mob.mob_base().controls.look_control.set_look_at(
             DVec3::new(target_position.x, target.get_eye_y(), target_position.z),
             30.0,
             30.0,
@@ -269,11 +273,11 @@ mod tests {
     fn melee_attack_goal_requires_world_to_start() {
         init_test_registry();
         let mut goal = MeleeAttackGoal::new(1.0, true);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target = shared_pig(2, DVec3::new(1.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
 
-        assert!(!goal.can_use(&mob));
+        assert!(!goal.can_use(&mut mob));
     }
 
     #[test]
@@ -285,7 +289,7 @@ mod tests {
         goal.start(&mut mob);
 
         assert!(mob.is_aggressive());
-        assert!(mob.mob_base().navigation().lock().is_done());
+        assert!(mob.mob_base().navigation.is_done());
         assert_eq!(goal.ticks_until_next_path_recalculation, 0);
         assert_eq!(goal.get_ticks_until_next_attack(), 0);
     }
@@ -297,32 +301,30 @@ mod tests {
         let mut mob = pig(1, DVec3::ZERO);
         mob.set_aggressive(true);
         mob.mob_base()
-            .navigation()
-            .lock()
+            .navigation
             .set_direct_target(DVec3::new(4.0, 0.0, 0.0), 1.0);
 
         goal.stop(&mut mob);
 
         assert!(!mob.is_aggressive());
-        assert!(mob.mob_base().navigation().lock().is_done());
+        assert!(mob.mob_base().navigation.is_done());
     }
 
     #[test]
     fn melee_attack_goal_without_unseen_following_requires_active_navigation() {
         init_test_registry();
         let mut goal = MeleeAttackGoal::new(1.0, false);
-        let mob = pig(1, DVec3::ZERO);
+        let mut mob = pig(1, DVec3::ZERO);
         let target = shared_pig(2, DVec3::new(4.0, 0.0, 0.0));
         assert!(mob.set_target(Some(&target)));
 
-        assert!(!goal.can_continue_to_use(&mob));
+        assert!(!goal.can_continue_to_use(&mut mob));
 
         mob.mob_base()
-            .navigation()
-            .lock()
+            .navigation
             .set_direct_target(DVec3::new(4.0, 0.0, 0.0), 1.0);
 
-        assert!(goal.can_continue_to_use(&mob));
+        assert!(goal.can_continue_to_use(&mut mob));
     }
 
     #[test]
@@ -338,6 +340,6 @@ mod tests {
 
         assert_eq!(goal.pathed_target, target.position());
         assert!(goal.ticks_until_next_path_recalculation > 0);
-        assert!(mob.mob_base().navigation().lock().is_done());
+        assert!(mob.mob_base().navigation.is_done());
     }
 }

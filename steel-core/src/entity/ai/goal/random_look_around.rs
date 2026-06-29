@@ -37,11 +37,11 @@ impl Goal for RandomLookAroundGoal {
         GoalControls::MOVE | GoalControls::LOOK
     }
 
-    fn can_use(&mut self, mob: &dyn PathfinderMob) -> bool {
+    fn can_use(&mut self, mob: &mut dyn PathfinderMob) -> bool {
         mob.base().random().lock().next_f32() < RANDOM_LOOK_AROUND_CHANCE
     }
 
-    fn can_continue_to_use(&mut self, _mob: &dyn PathfinderMob) -> bool {
+    fn can_continue_to_use(&mut self, _mob: &mut dyn PathfinderMob) -> bool {
         self.look_time >= 0
     }
 
@@ -61,12 +61,9 @@ impl Goal for RandomLookAroundGoal {
     fn tick(&mut self, mob: &mut dyn PathfinderMob) {
         self.look_time -= 1;
         let position = mob.position();
-        mob.mob_base().controls().lock().look_control.set_look_at(
-            DVec3::new(
-                position.x + self.rel_x,
-                mob.get_eye_y(),
-                position.z + self.rel_z,
-            ),
+        let eye_y = mob.get_eye_y();
+        mob.mob_base().controls.look_control.set_look_at(
+            DVec3::new(position.x + self.rel_x, eye_y, position.z + self.rel_z),
             DEFAULT_LOOK_Y_MAX_ROT_SPEED,
             DEFAULT_LOOK_X_MAX_ROT_ANGLE,
         );
@@ -139,7 +136,11 @@ mod tests {
     }
 
     impl Mob for TestPathfinderMob {
-        fn mob_base(&self) -> &MobBase {
+        fn mob_base(&mut self) -> &mut MobBase {
+            &mut self.mob_base
+        }
+
+        fn mob_base_ref(&self) -> &MobBase {
             &self.mob_base
         }
 
@@ -162,7 +163,7 @@ mod tests {
         goal.start(&mut mob);
         goal.tick(&mut mob);
 
-        let look_control = mob.mob_base().controls().lock().look_control;
+        let look_control = mob.mob_base().controls.look_control;
         assert!(look_control.is_looking_at_target());
         assert_eq!(
             look_control.wanted_position().y.to_bits(),
