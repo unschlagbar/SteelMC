@@ -60,14 +60,17 @@ impl Goal for AvoidEntityGoal {
         let search_box =
             mob.bounding_box()
                 .inflate_xyz(f64::from(self.max_dist), 3.0, f64::from(self.max_dist));
-        let Some(to_avoid) =
-            world.nearest_entity_in_aabb_matching(&search_box, mob.position(), mob.id(), |entity| {
+        let Some(to_avoid) = world.nearest_entity_in_aabb_matching(
+            &search_box,
+            mob.position(),
+            mob.id(),
+            |entity| {
                 entity.as_living_entity().is_some_and(|living| {
                     self.avoid_entity_targeting
                         .test(world.as_ref(), Some(mob), living)
                 })
-            })
-        else {
+            },
+        ) else {
             return false;
         };
 
@@ -119,7 +122,7 @@ impl Goal for AvoidEntityGoal {
 
 fn no_creative_or_spectator(target: &dyn LivingEntity) -> bool {
     target
-        .as_player()
+        .as_player_ref()
         .is_none_or(|player| !target.is_spectator() && !player.has_infinite_materials())
 }
 

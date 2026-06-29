@@ -274,16 +274,15 @@ impl Player {
                     self.heal(1.0);
                 }
 
-                let mut food = self.food_data.lock();
+                let food = &mut self.food_data;
                 if food.saturation_level < food_constants::MAX_SATURATION {
                     food.saturation_level += 1.0;
                 }
             }
 
             if tick % 10 == 0 {
-                let mut food = self.food_data.lock();
-                if food.needs_food() {
-                    food.food_level += 1;
+                if self.food_data.needs_food() {
+                    self.food_data.food_level += 1;
                 }
             }
         }
@@ -291,19 +290,17 @@ impl Player {
         let current_health = self.get_health();
         let max_health = self.get_max_health();
 
-        let mut food = self.food_data.lock();
-        let result = food.tick(difficulty, natural_regen, current_health, max_health);
+        let result = self
+            .food_data
+            .tick(difficulty, natural_regen, current_health, max_health);
 
         match result {
             FoodTickResult::Heal { amount, exhaustion } => {
-                food.add_exhaustion(exhaustion);
+                self.food_data.add_exhaustion(exhaustion);
 
-                drop(food);
                 self.heal(amount);
             }
             FoodTickResult::Starve => {
-                drop(food);
-
                 self.hurt(
                     &DamageSource::environment(&vanilla_damage_types::STARVE),
                     1.0,
@@ -314,9 +311,9 @@ impl Player {
     }
 
     /// Adds food exhaustion, gated by invulnerability.
-    pub fn cause_food_exhaustion(&self, amount: f32) {
-        if !self.abilities.lock().invulnerable {
-            self.food_data.lock().add_exhaustion(amount);
+    pub fn cause_food_exhaustion(&mut self, amount: f32) {
+        if !self.abilities.invulnerable {
+            self.food_data.add_exhaustion(amount);
         }
     }
 

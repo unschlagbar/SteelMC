@@ -43,11 +43,10 @@ impl CakeBlock {
         world: &Arc<World>,
         pos: BlockPos,
         state: BlockStateId,
-        player: &Player,
+        player: &mut Player,
     ) -> InteractionResult {
         if player.can_eat(false) {
-            let mut food_data = player.food_data.lock();
-            food_data.eat(2, 0.1);
+            player.food_data.eat(2, 0.1);
             let bites = state.get_value(&BlockStateProperties::BITES);
             let new_state = if bites < 6 {
                 state.set_value(&BlockStateProperties::BITES, bites + 1)
@@ -105,7 +104,7 @@ impl BlockBehavior for CakeBlock {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        player: &Player,
+        player: &mut Player,
         _hit_result: &BlockHitResult,
         _inv: &mut InventoryAccess,
     ) -> InteractionResult {

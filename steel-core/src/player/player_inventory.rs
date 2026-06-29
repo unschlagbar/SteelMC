@@ -770,7 +770,7 @@ impl Player {
 
     /// Handles a container click packet (slot interaction).
     pub fn handle_container_click(&self, packet: SContainerClick) {
-        let mut open_menu_guard = self.open_menu.lock();
+        let mut open_menu_guard = self.open_menu.borrow_mut();
 
         if let Some(ref mut menu) = *open_menu_guard {
             if i32::from(menu.container_id()) != packet.container_id {
@@ -780,7 +780,7 @@ impl Player {
             self.process_container_click(menu.as_mut(), packet);
         } else {
             drop(open_menu_guard);
-            let mut menu = self.inventory_menu.lock();
+            let mut menu = self.inventory_menu.borrow_mut();
 
             if i32::from(menu.behavior().container_id) != packet.container_id {
                 return;
@@ -856,7 +856,7 @@ impl Player {
             packet.container_id
         );
 
-        let open_menu = self.open_menu.lock();
+        let open_menu = self.open_menu.borrow_mut();
         if let Some(ref menu) = *open_menu
             && i32::from(menu.container_id()) == packet.container_id
         {
@@ -867,7 +867,7 @@ impl Player {
         drop(open_menu);
 
         if packet.container_id == i32::from(InventoryMenu::CONTAINER_ID) {
-            let mut menu = self.inventory_menu.lock();
+            let mut menu = self.inventory_menu.borrow_mut();
             menu.removed(self);
         }
     }
@@ -898,7 +898,7 @@ impl Player {
         let valid_data = item_stack.is_empty() || item_stack.count <= item_stack.max_stack_size();
 
         if valid_slot && valid_data {
-            let mut menu = self.inventory_menu.lock();
+            let mut menu = self.inventory_menu.borrow_mut();
             let slot_index = packet.slot_num as usize;
 
             {
@@ -944,7 +944,7 @@ impl Player {
     /// This should be called when the player first joins.
     pub fn send_inventory_to_remote(&self) {
         self.inventory_menu
-            .lock()
+            .borrow_mut()
             .behavior_mut()
             .send_all_data_to_remote(&self.connection());
     }
@@ -952,8 +952,8 @@ impl Player {
     /// Generates the next container ID (1-100, wrapping around).
     ///
     /// Based on Java's `ServerPlayer::nextContainerCounter`.
-    fn next_container_counter(&self) -> u8 {
-        self.container_counter.lock().next()
+    fn next_container_counter(&mut self) -> u8 {
+        self.container_counter.next()
     }
 
     /// Opens a menu for this player.
@@ -962,7 +962,7 @@ impl Player {
     ///
     /// # Arguments
     /// * `provider` - The menu provider containing the title and factory
-    pub fn open_menu(&self, provider: &impl MenuProvider) {
+    pub fn open_menu(&mut self, provider: &impl MenuProvider) {
         self.do_close_container();
 
         let container_id = self.next_container_counter();
@@ -977,7 +977,7 @@ impl Player {
         menu.behavior_mut()
             .send_all_data_to_remote(&self.connection());
 
-        *self.open_menu.lock() = Some(menu);
+        *self.open_menu.borrow_mut() = Some(menu);
     }
 
     /// Closes the currently open container and returns to the inventory menu.
@@ -985,7 +985,7 @@ impl Player {
     /// Based on Java's `ServerPlayer::closeContainer`.
     /// This sends a close packet to the client.
     pub fn close_container(&self) {
-        let open_menu = self.open_menu.lock();
+        let open_menu = self.open_menu.borrow_mut();
         if let Some(menu) = &*open_menu {
             self.send_packet(CContainerClose {
                 container_id: i32::from(menu.container_id()),
@@ -1000,11 +1000,11 @@ impl Player {
     /// Based on Java's `ServerPlayer::doCloseContainer`.
     /// Called when the client sends a close packet or when opening a new menu.
     pub fn do_close_container(&self) {
-        let mut open_menu = self.open_menu.lock();
+        let mut open_menu = self.open_menu.borrow_mut();
         if let Some(ref mut menu) = *open_menu {
             menu.removed(self);
             self.inventory_menu
-                .lock()
+                .borrow_mut()
                 .behavior_mut()
                 .transfer_state(menu.behavior());
         }
@@ -1014,19 +1014,19 @@ impl Player {
     /// Returns true if the player has an external menu open (not the inventory).
     #[must_use]
     pub fn has_container_open(&self) -> bool {
-        self.open_menu.lock().is_some()
+        self.open_menu.borrow_mut().is_some()
     }
 
     /// Broadcasts inventory changes to the client (incremental sync).
     /// This is called every tick to sync only changed slots.
     pub fn broadcast_inventory_changes(&self) {
-        let mut open_menu = self.open_menu.lock();
+        let mut open_menu = self.open_menu.borrow_mut();
         if let Some(ref mut menu) = *open_menu {
             menu.behavior_mut().broadcast_changes(&self.connection());
         } else {
             drop(open_menu);
             self.inventory_menu
-                .lock()
+                .borrow_mut()
                 .behavior_mut()
                 .broadcast_changes(&self.connection());
         }

@@ -58,6 +58,7 @@ use block_breaking::BlockBreakingManager;
 use enum_dispatch::enum_dispatch;
 use game_mode_state::PlayerGameModeState;
 pub use game_profile::{GameProfile, GameProfileAction};
+use std::cell::RefCell;
 use std::sync::{Arc, Weak};
 use steel_protocol::packets::game::{
     AttributeSnapshot, CEntityEvent, CPlayerCombatKill, CRespawn, CSetHealth, CSetHeldSlot,
@@ -201,51 +202,51 @@ pub struct Player {
     base_weak: Weak<EntityBase>,
 
     /// Movement tracking state
-    pub(crate) movement: SyncMutex<MovementState>,
+    pub(crate) movement: MovementState,
 
     /// Synchronized entity data (health, pose, flags, etc.) for network sync.
-    entity_data: SyncMutex<PlayerEntityData>,
+    entity_data: PlayerEntityData,
 
     /// Current and previous game mode.
-    game_modes: SyncMutex<PlayerGameModeState>,
+    game_modes: PlayerGameModeState,
 
     /// The player's inventory container (shared with `inventory_menu`).
     pub inventory: SyncPlayerInv,
 
     /// Last main-hand stack used for vanilla attack-strength reset checks.
-    last_item_in_main_hand: SyncMutex<ItemStack>,
+    last_item_in_main_hand: ItemStack,
 
     /// The player's inventory menu (always open, even when `container_id` is 0).
-    inventory_menu: SyncMutex<InventoryMenu>,
+    inventory_menu: RefCell<InventoryMenu>,
 
     /// The currently open menu (None if player inventory is open).
     /// This is separate from `inventory_menu` which is always present.
-    open_menu: SyncMutex<Option<Box<dyn MenuInstance>>>,
+    open_menu: RefCell<Option<Box<dyn MenuInstance>>>,
 
     /// Counter for generating container IDs (1-100, wraps around).
-    container_counter: SyncMutex<ContainerCounter>,
+    container_counter: ContainerCounter,
 
     /// Player abilities (flight, invulnerability, build permissions, speeds, etc.)
-    pub abilities: SyncMutex<Abilities>,
+    pub abilities: Abilities,
 
     /// Block breaking state machine.
-    pub block_breaking: SyncMutex<BlockBreakingManager>,
+    pub block_breaking: BlockBreakingManager,
 
     /// Shared living-entity runtime fields (attributes, speed, damage/death state).
     /// Vanilla: `LivingEntity` (L230-232) + `Entity.invulnerableTime` (L256).
     living_base: LivingEntityBase,
 
     /// Player food/hunger state (food level, saturation, exhaustion).
-    pub food_data: SyncMutex<FoodData>,
+    pub food_data: FoodData,
 
     /// Delta-tracking state for `CSetHealth` deduplication.
-    health_sync: SyncMutex<HealthSyncState>,
+    health_sync: HealthSyncState,
 
     /// The Player's Experience
-    pub experience: SyncMutex<Experience>,
+    pub experience: Experience,
 
     /// Persisted `RootVehicle` payload awaiting live entity restoration.
-    pending_root_vehicle: SyncMutex<Option<PendingRootVehicleRestore>>,
+    pending_root_vehicle: Option<PendingRootVehicleRestore>,
 }
 
 #[derive(Clone)]
@@ -282,23 +283,23 @@ impl Player {
     /// Returns the player's current game mode.
     #[must_use]
     pub fn game_mode(&self) -> GameType {
-        self.game_modes.lock().current()
+        self.game_modes.current()
     }
 
     /// Returns the player's previous game mode.
     #[must_use]
     pub fn previous_game_mode(&self) -> Option<GameType> {
-        self.game_modes.lock().previous()
+        self.game_modes.previous()
     }
 
     /// Restores current and previous game mode from persistent player data.
-    pub(crate) fn restore_game_modes(&self, current: GameType, previous: Option<GameType>) {
-        self.game_modes.lock().set_pair(current, previous);
+    pub(crate) fn restore_game_modes(&mut self, current: GameType, previous: Option<GameType>) {
+        self.game_modes.set_pair(current, previous);
     }
 
     /// Changes the current game mode and records the old current mode as previous.
-    fn change_game_mode_state(&self, game_mode: GameType) -> bool {
-        self.game_modes.lock().change_current(game_mode)
+    fn change_game_mode_state(&mut self, game_mode: GameType) -> bool {
+        self.game_modes.change_current(game_mode)
     }
 
     /// Creates a new player entity.
@@ -342,25 +343,25 @@ impl Player {
             server_player,
             base,
             base_weak,
-            movement: SyncMutex::new(MovementState::new()),
-            entity_data: SyncMutex::new({
+            movement: MovementState::new(),
+            entity_data: {
                 let mut data = PlayerEntityData::new();
                 living_base.initialize_synced_data(&mut data);
                 data
-            }),
-            game_modes: SyncMutex::new(PlayerGameModeState::new(GameType::Survival)),
+            },
+            game_modes: PlayerGameModeState::new(GameType::Survival),
             inventory: inventory.clone(),
-            last_item_in_main_hand: SyncMutex::new(ItemStack::empty()),
-            inventory_menu: SyncMutex::new(InventoryMenu::new(inventory)),
-            open_menu: SyncMutex::new(None),
-            container_counter: SyncMutex::new(ContainerCounter::new()),
-            abilities: SyncMutex::new(Abilities::default()),
-            block_breaking: SyncMutex::new(BlockBreakingManager::new()),
+            last_item_in_main_hand: ItemStack::empty(),
+            inventory_menu: RefCell::new(InventoryMenu::new(inventory)),
+            open_menu: RefCell::new(None),
+            container_counter: ContainerCounter::new(),
+            abilities: Abilities::default(),
+            block_breaking: BlockBreakingManager::new(),
             living_base,
-            food_data: SyncMutex::new(FoodData::new()),
-            health_sync: SyncMutex::new(HealthSyncState::new()),
-            experience: SyncMutex::new(Experience::default()),
-            pending_root_vehicle: SyncMutex::new(None),
+            food_data: FoodData::new(),
+            health_sync: HealthSyncState::new(),
+            experience: Experience::default(),
+            pending_root_vehicle: None,
         }
     }
 
@@ -420,7 +421,7 @@ impl Player {
         let tick_position = self.position();
 
         // Vanilla: ServerGamePacketListenerImpl.resetPosition().
-        self.movement.lock().reset_for_tick(tick_position);
+        self.movement.reset_for_tick(tick_position);
         self.set_old_position_to_current();
         self.reset_vehicle_movement_for_tick();
 
@@ -455,7 +456,9 @@ impl Player {
             self.tick_death();
         } else {
             self.touch_nearby_items();
-            self.block_breaking.lock().tick(self, &world);
+            let mut block_breaking = std::mem::take(&mut self.block_breaking);
+            block_breaking.tick(self, &world);
+            self.block_breaking = block_breaking;
             self.apply_effects_from_blocks();
             self.push_entities(&world);
 
@@ -468,7 +471,7 @@ impl Player {
             self.living_base.refresh_speed_from_attributes();
             self.tick_regeneration();
 
-            if self.is_sprinting() && !self.food_data.lock().has_enough_food() {
+            if self.is_sprinting() && !self.food_data.has_enough_food() {
                 self.set_sprinting(false);
             }
         }
@@ -489,34 +492,29 @@ impl Player {
         {
             let health = self.get_health();
             let (food, saturation) = {
-                let food_data = self.food_data.lock();
+                let food_data = &self.food_data;
                 (food_data.food_level, food_data.saturation_level)
             };
 
             let saturation_zero = saturation == 0.0;
 
-            let mut sync = self.health_sync.lock();
-            if sync.needs_update(health, food, saturation_zero) {
+            if self.health_sync.needs_update(health, food, saturation_zero) {
                 self.send_packet(CSetHealth {
                     health,
                     food,
                     food_saturation: saturation,
                 });
-                sync.record_sent(health, food, saturation_zero);
+                self.health_sync.record_sent(health, food, saturation_zero);
             }
         }
 
-        {
-            let mut experience = self.experience.lock();
-
-            if experience.dirty {
-                self.send_packet(CSetExperience {
-                    progress: experience.progress() as f32,
-                    level: experience.level(),
-                    total_experience: experience.total_points(),
-                });
-                experience.dirty = false;
-            }
+        if self.experience.dirty {
+            self.send_packet(CSetExperience {
+                progress: self.experience.progress() as f32,
+                level: self.experience.level(),
+                total_experience: self.experience.total_points(),
+            });
+            self.experience.dirty = false;
         }
 
         self.connection().tick();
@@ -569,7 +567,7 @@ impl Player {
 
     /// Immediately flushes dirty player entity data to tracking players and self.
     fn sync_entity_data(&self) {
-        if let Some(dirty_values) = self.entity_data.lock().pack_dirty() {
+        if let Some(dirty_values) = self.entity_data.pack_dirty() {
             let packet = CSetEntityData::new(self.id(), dirty_values);
             self.get_world()
                 .broadcast_to_entity_trackers(self.id(), packet.clone(), None);
@@ -577,7 +575,7 @@ impl Player {
         }
     }
 
-    fn update_dirty_mob_effect_entity_data(&self) {
+    fn update_dirty_mob_effect_entity_data(&mut self) {
         if !self.living_base.take_effects_dirty() {
             return;
         }
@@ -593,17 +591,14 @@ impl Player {
         let display = self.living_base.mob_effect_display_state(particle_type_id);
 
         {
-            let mut entity_data = self.entity_data.lock();
+            let entity_data = &mut self.entity_data;
             let living = entity_data.living_entity_mut();
             living.effect_particles.set(display.particles);
             living.effect_ambience.set(display.ambient);
         }
 
+        self.entity_data.set_base_invisible_flag(display.invisible);
         self.entity_data
-            .lock()
-            .set_base_invisible_flag(display.invisible);
-        self.entity_data
-            .lock()
             .set_base_glowing_flag(self.has_glowing_tag() || display.glowing);
     }
 
@@ -614,8 +609,8 @@ impl Player {
     }
 
     /// Handles the end of a client tick.
-    pub fn handle_client_tick_end(&self) {
-        self.movement.lock().finish_client_tick();
+    pub fn handle_client_tick_end(&mut self) {
+        self.movement.finish_client_tick();
     }
 
     fn push_entities(&mut self, world: &Arc<World>) {
@@ -705,8 +700,7 @@ impl Player {
         }
 
         {
-            let abilities = self.abilities.lock();
-            if abilities.invulnerable && !source.bypasses_invulnerability() {
+            if self.abilities.invulnerable && !source.bypasses_invulnerability() {
                 return false;
             }
         }
@@ -767,9 +761,9 @@ impl Player {
         }
 
         {
-            let mut experience = self.experience.lock();
+            let experience = &mut self.experience;
 
-            experience.sync_score(&mut self.entity_data.lock());
+            experience.sync_score(&mut self.entity_data);
             experience.score = 0;
         }
 
@@ -895,14 +889,14 @@ impl Player {
         self.sync_base_entity_data();
         self.update_dirty_mob_effect_entity_data();
 
-        *self.food_data.lock() = FoodData::new();
-        *self.block_breaking.lock() = BlockBreakingManager::new();
+        self.food_data = FoodData::new();
+        self.block_breaking = BlockBreakingManager::new();
         *self.server_player().teleport_state.lock() = TeleportState::new();
         *self.server_player().tick_state.lock() = PlayerTickState::new();
-        *self.last_item_in_main_hand.lock() = ItemStack::empty();
-        self.health_sync.lock().reset_for_respawn();
+        self.last_item_in_main_hand = ItemStack::empty();
+        self.health_sync.reset_for_respawn();
         self.clear_pending_root_vehicle();
-        self.movement.lock().reset_last_known_client_movement();
+        self.movement.reset_last_known_client_movement();
     }
 
     fn detach_relationships_for_respawn(&self) {
@@ -932,8 +926,8 @@ impl Player {
 
     /// Returns whether the Player can eat
     pub fn can_eat(&self, can_always_eat: bool) -> bool {
-        let invulnerable = { self.abilities.lock().invulnerable };
-        let needs_foods = { self.food_data.lock().needs_food() };
+        let invulnerable = self.abilities.invulnerable;
+        let needs_foods = self.food_data.needs_food();
         invulnerable || can_always_eat || needs_foods
     }
 
@@ -1032,36 +1026,35 @@ impl Player {
     }
 
     pub(crate) fn set_pending_root_vehicle(
-        &self,
+        &mut self,
         world: &World,
         root_vehicle: PersistentRootVehicle,
     ) {
-        *self.pending_root_vehicle.lock() = Some(PendingRootVehicleRestore {
+        self.pending_root_vehicle = Some(PendingRootVehicleRestore {
             world: world.key.clone(),
             root_vehicle,
         });
     }
 
-    pub(crate) fn clear_pending_root_vehicle(&self) {
-        *self.pending_root_vehicle.lock() = None;
+    pub(crate) fn clear_pending_root_vehicle(&mut self) {
+        self.pending_root_vehicle = None;
     }
 
     pub(crate) fn pending_root_vehicle_for_current_world(&self) -> Option<PersistentRootVehicle> {
         let world_key = self.get_world().key.clone();
         self.pending_root_vehicle
-            .lock()
             .as_ref()
             .filter(|pending| pending.world == world_key)
             .map(|pending| pending.root_vehicle.clone())
     }
 
     pub(crate) fn take_matching_pending_root_vehicle(
-        &self,
+        &mut self,
         world: &World,
         attach: [u8; 16],
         root_uuid: [u8; 16],
     ) -> Option<PersistentRootVehicle> {
-        let mut pending = self.pending_root_vehicle.lock();
+        let pending = &mut self.pending_root_vehicle;
         let matches = pending.as_ref().is_some_and(|pending| {
             pending.world == world.key
                 && pending.root_vehicle.attach == attach
@@ -1095,8 +1088,8 @@ impl Player {
     }
 
     /// Gives raw experience points to this player.
-    pub(crate) fn give_experience_points(&self, points: i32) {
-        self.experience.lock().add_points(points);
+    pub(crate) fn give_experience_points(&mut self, points: i32) {
+        self.experience.add_points(points);
     }
 
     /// Advances this player's local server tick count.
@@ -1252,10 +1245,10 @@ impl ServerPlayer {
             let mut player = this.entity().lock();
             player.set_client_loaded(false);
             player.set_velocity(DVec3::ZERO);
-            player.movement.lock().reset_last_known_client_movement();
+            player.movement.reset_last_known_client_movement();
             player.set_on_ground(false);
             player.reset_entity_state();
-            *player.block_breaking.lock() = BlockBreakingManager::new();
+            player.block_breaking = BlockBreakingManager::new();
         }
 
         // Reset chunk tracking — bump generation counter so the chunk sending tick
@@ -1323,7 +1316,7 @@ impl ServerPlayer {
             player.base.set_position_local(position);
             player.set_rotation(rotation);
             player.set_old_position_to_current();
-            player.movement.lock().reset_for_position_sync(position);
+            player.movement.reset_for_position_sync(position);
 
             // Teleport sync (sends CPlayerPosition, sets awaiting_teleport for ack)
             if let Err(error) =
@@ -1433,19 +1426,18 @@ impl ServerPlayer {
         );
 
         {
-            let player = this.entity().lock();
+            let mut player = this.entity().lock();
             player.send_difficulty();
 
             // Handle XP loss on death
-            let mut experience = player.experience.lock();
             if world.get_game_rule(&KEEP_INVENTORY) != GameRuleValue::Bool(true)
                 && player.game_mode() != GameType::Spectator
             {
                 // TODO: drop XP orbs (min(level * 7, 100))
-                experience.set_total_points(0);
+                player.experience.set_total_points(0);
             }
             // Re-send XP to client after respawn regardless of keepInventory
-            experience.dirty = true;
+            player.experience.dirty = true;
         }
 
         // Shared spawn (teleport, abilities, weather, time, chunk tracking reset)
@@ -1567,7 +1559,7 @@ impl Entity for Player {
         Some(self)
     }
 
-    fn as_player(&self) -> Option<&Player> {
+    fn as_player(&mut self) -> Option<&mut Player> {
         Some(self)
     }
 
@@ -1604,7 +1596,7 @@ impl Entity for Player {
     }
 
     fn remaining_fire_ticks_cap(&self) -> Option<i32> {
-        self.abilities.lock().invulnerable.then_some(1)
+        self.abilities.invulnerable.then_some(1)
     }
 
     fn get_default_gravity(&self) -> f64 {
@@ -1660,7 +1652,7 @@ impl Entity for Player {
             return vehicle.known_movement();
         }
 
-        self.movement.lock().last_known_client_movement()
+        self.movement.last_known_client_movement()
     }
 
     fn known_speed(&self) -> DVec3 {
@@ -1672,7 +1664,7 @@ impl Entity for Player {
             return vehicle.known_speed();
         }
 
-        self.movement.lock().last_known_client_movement()
+        self.movement.last_known_client_movement()
     }
 
     fn is_suppressing_bounce(&self) -> bool {
@@ -1685,7 +1677,7 @@ impl Entity for Player {
         damage_modifier: f32,
         source: &DamageSource,
     ) -> bool {
-        if self.abilities.lock().may_fly {
+        if self.abilities.may_fly {
             return false;
         }
 
@@ -1855,17 +1847,13 @@ impl Entity for Player {
 
 impl LivingEntity for Player {
     fn get_health(&self) -> f32 {
-        *self.entity_data.lock().living_entity().health.get()
+        *self.entity_data.living_entity().health.get()
     }
 
     fn set_health(&mut self, health: f32) {
         let max_health = self.get_max_health();
         let clamped = health.clamp(0.0, max_health);
-        self.entity_data
-            .lock()
-            .living_entity_mut()
-            .health
-            .set(clamped);
+        self.entity_data.living_entity_mut().health.set(clamped);
     }
 
     fn living_base(&self) -> &LivingEntityBase {
@@ -1873,9 +1861,7 @@ impl LivingEntity for Player {
     }
 
     fn can_be_seen_as_enemy(&self) -> bool {
-        !self.abilities.lock().invulnerable
-            && !self.is_invulnerable()
-            && self.can_be_seen_by_anyone()
+        !self.abilities.invulnerable && !self.is_invulnerable() && self.can_be_seen_by_anyone()
     }
 
     fn is_invulnerable_to(&self, source: &DamageSource) -> bool {
@@ -1928,14 +1914,11 @@ impl LivingEntity for Player {
     }
 
     fn get_absorption_amount(&self) -> f32 {
-        *self.entity_data.lock().player_absorption.get()
+        *self.entity_data.player_absorption.get()
     }
 
-    fn set_absorption_amount(&self, amount: f32) {
-        self.entity_data
-            .lock()
-            .player_absorption
-            .set(amount.max(0.0));
+    fn set_absorption_amount(&mut self, amount: f32) {
+        self.entity_data.player_absorption.set(amount.max(0.0));
     }
 
     fn is_affected_by_fluids(&self) -> bool {
@@ -1950,7 +1933,7 @@ impl LivingEntity for Player {
         self.default_is_immobile() || self.is_sleeping()
     }
 
-    fn jump_from_ground(&self) {
+    fn jump_from_ground(&mut self) {
         self.default_jump_from_ground();
         // TODO: Award Stats.JUMP once player statistics exist.
         if self.is_sprinting() {
@@ -2006,7 +1989,7 @@ impl LivingEntity for Player {
 
     fn get_flying_speed(&self) -> f32 {
         if self.is_flying() && !self.is_passenger() {
-            let flying_speed = self.abilities.lock().flying_speed;
+            let flying_speed = self.abilities.flying_speed;
             if self.is_sprinting() {
                 flying_speed * 2.0
             } else {

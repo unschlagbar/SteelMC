@@ -328,7 +328,9 @@ impl JavaConnection {
 
         match packet.id {
             play::S_ACCEPT_TELEPORTATION => {
-                player.lock().handle_accept_teleportation(SAcceptTeleportation::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_accept_teleportation(SAcceptTeleportation::read_packet(data)?);
             }
             play::S_ATTACK => {
                 player.lock().handle_attack(SAttack::read_packet(data)?);
@@ -337,19 +339,25 @@ impl JavaConnection {
                 player.lock().handle_interact(SInteract::read_packet(data)?);
             }
             play::S_CUSTOM_PAYLOAD => {
-                player.lock().handle_custom_payload(SCustomPayload::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_custom_payload(SCustomPayload::read_packet(data)?);
             }
             play::S_CHAT => {
                 Player::handle_chat(player, SChat::read_packet(data)?);
             }
             play::S_CHAT_SESSION_UPDATE => {
-                player.lock().handle_chat_session_update(SChatSessionUpdate::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_chat_session_update(SChatSessionUpdate::read_packet(data)?);
             }
             play::S_CHAT_ACK => {
                 player.lock().handle_chat_ack(SChatAck::read_packet(data)?);
             }
             play::S_CLIENT_INFORMATION => {
-                player.lock().handle_client_information(SClientInformation::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_client_information(SClientInformation::read_packet(data)?);
             }
             play::S_CLIENT_TICK_END => {
                 let _ = SClientTickEnd::read_packet(data)?;
@@ -364,19 +372,29 @@ impl JavaConnection {
                     .on_chunk_batch_received_by_client(packet.desired_chunks_per_tick);
             }
             play::S_MOVE_PLAYER_POS => {
-                player.lock().handle_move_player(SMovePlayerPos::read_packet(data)?.into());
+                player
+                    .lock()
+                    .handle_move_player(SMovePlayerPos::read_packet(data)?.into());
             }
             play::S_MOVE_PLAYER_POS_ROT => {
-                player.lock().handle_move_player(SMovePlayerPosRot::read_packet(data)?.into());
+                player
+                    .lock()
+                    .handle_move_player(SMovePlayerPosRot::read_packet(data)?.into());
             }
             play::S_MOVE_PLAYER_ROT => {
-                player.lock().handle_move_player(SMovePlayerRot::read_packet(data)?.into());
+                player
+                    .lock()
+                    .handle_move_player(SMovePlayerRot::read_packet(data)?.into());
             }
             play::S_MOVE_PLAYER_STATUS_ONLY => {
-                player.lock().handle_move_player(SMovePlayerStatusOnly::read_packet(data)?.into());
+                player
+                    .lock()
+                    .handle_move_player(SMovePlayerStatusOnly::read_packet(data)?.into());
             }
             play::S_MOVE_VEHICLE => {
-                player.lock().handle_move_vehicle(SMoveVehicle::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_move_vehicle(SMoveVehicle::read_packet(data)?);
             }
             play::S_PLAYER_LOADED => {
                 let _ = SPlayerLoad::read_packet(data)?;
@@ -402,13 +420,19 @@ impl JavaConnection {
                 );
             }
             play::S_CONTAINER_BUTTON_CLICK => {
-                player.lock().handle_container_button_click(SContainerButtonClick::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_container_button_click(SContainerButtonClick::read_packet(data)?);
             }
             play::S_CONTAINER_CLICK => {
-                player.lock().handle_container_click(SContainerClick::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_container_click(SContainerClick::read_packet(data)?);
             }
             play::S_CONTAINER_CLOSE => {
-                player.lock().handle_container_close(SContainerClose::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_container_close(SContainerClose::read_packet(data)?);
             }
             play::S_CONTAINER_SLOT_STATE_CHANGED => {
                 player.lock().handle_container_slot_state_changed(
@@ -416,25 +440,37 @@ impl JavaConnection {
                 );
             }
             play::S_SET_CREATIVE_MODE_SLOT => {
-                player.lock().handle_set_creative_mode_slot(SSetCreativeModeSlot::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_set_creative_mode_slot(SSetCreativeModeSlot::read_packet(data)?);
             }
             play::S_PLAYER_INPUT => {
-                player.lock().handle_player_input(SPlayerInput::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_player_input(SPlayerInput::read_packet(data)?);
             }
             play::S_PLAYER_COMMAND => {
-                player.lock().handle_player_command(SPlayerCommand::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_player_command(SPlayerCommand::read_packet(data)?);
             }
             play::S_PLAYER_ABILITIES => {
-                player.lock().handle_player_abilities(SPlayerAbilities::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_player_abilities(SPlayerAbilities::read_packet(data)?);
             }
             play::S_USE_ITEM_ON => {
-                player.lock().handle_use_item_on(SUseItemOn::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_use_item_on(SUseItemOn::read_packet(data)?);
             }
             play::S_USE_ITEM => {
                 player.lock().handle_use_item(SUseItem::read_packet(data)?);
             }
             play::S_SET_CARRIED_ITEM => {
-                player.lock().handle_set_carried_item(SSetCarriedItem::read_packet(data)?);
+                player
+                    .lock()
+                    .handle_set_carried_item(SSetCarriedItem::read_packet(data)?);
             }
             play::S_SWING => {
                 let packet = SSwing::read_packet(data)?;

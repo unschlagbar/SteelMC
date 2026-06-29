@@ -158,7 +158,7 @@ impl BlockBehavior for ButtonBlock {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        player: &Player,
+        player: &mut Player,
         _hit_result: &BlockHitResult,
         _inv: &mut InventoryAccess,
     ) -> InteractionResult {

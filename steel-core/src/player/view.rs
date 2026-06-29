@@ -68,7 +68,9 @@ impl PlayerView {
     /// Bumps the chunk-send epoch, returning the new value (game tick only).
     pub fn bump_chunk_send_epoch(&self) -> u32 {
         // `fetch_add` wraps on overflow, matching the previous `wrapping_add`.
-        self.chunk_send_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+        self.chunk_send_epoch
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
     }
 }
 

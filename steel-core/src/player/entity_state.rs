@@ -219,7 +219,7 @@ impl Player {
     }
 
     /// Updates the player's pose in entity data based on current state.
-    pub(super) fn update_pose(&self) {
+    pub(super) fn update_pose(&mut self) {
         if !self.can_player_fit_within_blocks_and_entities_when(EntityPose::Swimming) {
             return;
         }
@@ -248,7 +248,7 @@ impl Player {
             actual_pose,
             <Self as Entity>::dimensions_for_pose(self, actual_pose),
         );
-        self.entity_data.lock().base_mut().set_pose(actual_pose);
+        self.entity_data.base_mut().set_pose(actual_pose);
     }
 }
 

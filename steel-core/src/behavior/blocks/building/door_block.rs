@@ -334,7 +334,7 @@ impl BlockBehavior for DoorBlock {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        player: &Player,
+        player: &mut Player,
         _hit_result: &BlockHitResult,
         _inv: &mut InventoryAccess,
     ) -> InteractionResult {
@@ -507,7 +507,7 @@ impl BlockBehavior for WeatheringCopperDoorBlock {
         state: BlockStateId,
         world: &Arc<World>,
         pos: BlockPos,
-        player: &Player,
+        player: &mut Player,
         hit_result: &BlockHitResult,
         inv: &mut InventoryAccess,
     ) -> InteractionResult {

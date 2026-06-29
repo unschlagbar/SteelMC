@@ -576,7 +576,7 @@ fn requirements_state(
 
 fn entity_requirements_match(
     requirements: Option<&'static EnchantmentEffectRequirements>,
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
 ) -> bool {
     let Some(requirements) = requirements else {
         return true;
@@ -587,7 +587,7 @@ fn entity_requirements_match(
 
 fn entity_requirements_state(
     requirements: &'static EnchantmentEffectRequirements,
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
 ) -> Option<bool> {
     match requirements {
         EnchantmentEffectRequirements::AllOf(terms) => {
@@ -663,7 +663,7 @@ fn entity_predicate_matches_type(
 
 fn entity_predicate_matches_entity(
     predicate: &EntityPredicate,
-    entity: &dyn Entity,
+    entity: &mut dyn Entity,
 ) -> Option<bool> {
     if predicate.unsupported {
         return None;
@@ -719,7 +719,7 @@ fn entity_predicate_matches_entity(
                 return Some(false);
             }
             if let Some(min_food_level) = player_predicate.food_level_min
-                && player.food_data.lock().food_level < min_food_level
+                && player.food_data.food_level < min_food_level
             {
                 return Some(false);
             }
@@ -840,7 +840,7 @@ mod tests {
             0.0
         }
 
-        fn set_absorption_amount(&self, _amount: f32) {}
+        fn set_absorption_amount(&mut self, _amount: f32) {}
     }
 
     fn enchanted_item(item: ItemRef, enchantment: Identifier, level: u32) -> ItemStack {
@@ -1084,10 +1084,13 @@ mod tests {
     fn lunge_post_piercing_requirements_and_effect_are_supported() {
         init_test_registry();
 
-        let user = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
+        let mut user = TestLivingEntity::new(&vanilla_entities::ZOMBIE);
         let effects = vanilla_enchantments::LUNGE.effects.post_piercing_attack;
         assert_eq!(effects.len(), 1);
-        assert!(entity_requirements_match(effects[0].requirements, &user));
+        assert!(entity_requirements_match(
+            effects[0].requirements,
+            &mut user
+        ));
         assert!(post_piercing_entity_effect_is_supported(&effects[0].effect));
     }
 

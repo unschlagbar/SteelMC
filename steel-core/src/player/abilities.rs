@@ -151,48 +151,45 @@ impl Player {
     /// Sends the player abilities packet to the client.
     /// This tells the client about flight, invulnerability, speeds, etc.
     pub fn send_abilities(&self) {
-        let packet = self.abilities.lock().to_packet();
+        let packet = self.abilities.to_packet();
         self.send_packet(packet);
     }
 
     /// Returns true if the player is flying (creative/spectator flight).
     #[must_use]
     pub fn is_flying(&self) -> bool {
-        self.abilities.lock().flying
+        self.abilities.flying
     }
 
     /// Sets the player's flying state.
-    pub fn set_flying(&self, flying: bool) {
-        self.abilities.lock().flying = flying;
+    pub fn set_flying(&mut self, flying: bool) {
+        self.abilities.flying = flying;
     }
 
     /// Returns the player's flying speed.
     #[must_use]
     pub fn get_flying_speed(&self) -> f32 {
-        self.abilities.lock().flying_speed
+        self.abilities.flying_speed
     }
 
     /// Sets the player's flying speed.
-    pub fn set_flying_speed(&self, speed: f32) {
-        self.abilities.lock().flying_speed = speed;
+    pub fn set_flying_speed(&mut self, speed: f32) {
+        self.abilities.flying_speed = speed;
     }
 
     /// Returns a copy of the player's abilities.
     #[must_use]
     pub fn get_abilities(&self) -> Abilities {
-        self.abilities.lock().clone()
+        self.abilities.clone()
     }
 
     /// Handles the player abilities packet from the client.
     /// This is sent when the player starts or stops flying.
-    pub fn handle_player_abilities(&self, packet: SPlayerAbilities) {
-        let mut abilities = self.abilities.lock();
-
-        if abilities.may_fly {
-            abilities.flying = packet.is_flying();
+    pub fn handle_player_abilities(&mut self, packet: SPlayerAbilities) {
+        if self.abilities.may_fly {
+            self.abilities.flying = packet.is_flying();
         } else if packet.is_flying() {
             // Client tried to fly but isn't allowed - resync abilities
-            drop(abilities);
             self.send_abilities();
         }
     }

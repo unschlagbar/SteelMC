@@ -773,7 +773,7 @@ impl EntityTracker {
         // entities need the observer's `Player` lock — and a player entity never has
         // itself as an observer (skipped below), so that lock can never be the
         // already-held one (the tick holds at most one player lock at a time).
-        let entity_is_player = entity.as_player().is_some();
+        let entity_is_player = entity.as_player_ref().is_some();
 
         for player_id in get_players_in_chunk(entity_chunk) {
             if player_id == entity_id {

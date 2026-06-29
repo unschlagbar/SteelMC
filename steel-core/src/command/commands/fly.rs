@@ -1,7 +1,7 @@
 //! Handler for the "flyspeed" command.
 use std::slice;
-use steel_utils::locks::SyncMutex;
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 
 use crate::command::arguments::bool::BoolArgument;
 use crate::command::arguments::float::FloatArgument;
@@ -51,7 +51,8 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             .then(
                 literal("speed")
                     .executes(
-                        |((), targets): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
+                        |((), targets): ((), Vec<Arc<SyncMutex<Player>>>),
+                         ctx: &mut CommandContext| {
                             query_flying_speed(&targets, &ctx.sender);
                             Ok(())
                         },
@@ -104,11 +105,11 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 fn toggle_fly(targets: &[Arc<SyncMutex<Player>>]) {
     for target in targets {
         {
-            let target_guard = target.lock();
-            let mut lock = target_guard.abilities.lock();
-            lock.may_fly = !lock.may_fly;
-            if !lock.may_fly {
-                lock.flying = false;
+            let mut target_guard = target.lock();
+            let abilities = &mut target_guard.abilities;
+            abilities.may_fly = !abilities.may_fly;
+            if !abilities.may_fly {
+                abilities.flying = false;
             }
         }
         target.lock().send_abilities();
@@ -118,11 +119,12 @@ fn toggle_fly(targets: &[Arc<SyncMutex<Player>>]) {
 fn set_fly(targets: &[Arc<SyncMutex<Player>>], value: bool) {
     for target in targets {
         {
-            let target_guard = target.lock();
-            let mut lock = target_guard.abilities.lock();
-            lock.may_fly = value;
+            let mut target_guard = target.lock();
+            let abilities = &mut target_guard.abilities;
+
+            abilities.may_fly = value;
             if !value {
-                lock.flying = false;
+                abilities.flying = false;
             }
         }
         target.lock().send_abilities();
@@ -133,7 +135,7 @@ fn set_flying_speed(targets: &[Arc<SyncMutex<Player>>], multiplier: f32, sender:
     let speed = multiplier * 0.05;
     for target in targets {
         {
-            let guard = target.lock();
+            let mut guard = target.lock();
             guard.set_flying_speed(speed);
             guard.send_abilities();
         }

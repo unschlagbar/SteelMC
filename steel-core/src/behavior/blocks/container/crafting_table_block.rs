@@ -42,7 +42,7 @@ impl BlockBehavior for CraftingTableBlock {
         _state: BlockStateId,
         _world: &Arc<World>,
         pos: BlockPos,
-        player: &Player,
+        player: &mut Player,
         _hit_result: &BlockHitResult,
         _inv: &mut InventoryAccess,
     ) -> InteractionResult {

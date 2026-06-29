@@ -63,7 +63,7 @@ const ENTITY_INTERACTION_RANGE_BUFFER: f64 = 3.0;
 /// 5. If item not empty: Call item behavior's `use_on` for placement
 /// 6. Handle creative mode infinite materials
 pub fn use_item_on(
-    player: &Player,
+    player: &mut Player,
     world: &Arc<World>,
     hand: InteractionHand,
     hit_result: &BlockHitResult,
@@ -355,7 +355,7 @@ impl Player {
     }
 
     /// Ticks vanilla attack-strength recovery and resets it on main-hand item changes.
-    pub(super) fn tick_attack_strength(&self) {
+    pub(super) fn tick_attack_strength(&mut self) {
         self.server_player()
             .tick_state
             .lock()
@@ -367,16 +367,16 @@ impl Player {
             stack.copy_with_count(stack.count())
         };
 
-        let mut last_item = self.last_item_in_main_hand.lock();
-        if ItemStack::matches(&last_item, &main_hand_item) {
+        let last_item = &mut self.last_item_in_main_hand;
+        if ItemStack::matches(last_item, &main_hand_item) {
             return;
         }
 
-        if !ItemStack::is_same_item(&last_item, &main_hand_item) {
+        if !ItemStack::is_same_item(last_item, &main_hand_item) {
             self.reset_attack_strength_ticker();
         }
 
-        *last_item = main_hand_item;
+        self.last_item_in_main_hand = main_hand_item;
     }
 
     fn reset_attack_strength_ticker(&self) {
@@ -989,13 +989,13 @@ impl Player {
     /// Sets the player's game mode and notifies the client.
     ///
     /// Returns `true` if the game mode was changed, `false` if the player was already in the requested game mode.
-    pub fn set_game_mode(&self, gamemode: GameType) -> bool {
+    pub fn set_game_mode(&mut self, gamemode: GameType) -> bool {
         if !self.change_game_mode_state(gamemode) {
             return false;
         }
 
         // Update abilities based on new game mode (mirrors vanilla GameType.updatePlayerAbilities)
-        self.abilities.lock().update_for_game_mode(gamemode);
+        self.abilities.update_for_game_mode(gamemode);
         self.send_abilities();
 
         self.send_packet(CGameEvent {
@@ -1197,7 +1197,7 @@ impl Player {
     /// Handles the use of an item on a block.
     ///
     /// Implements the logic from Java's `ServerGamePacketListenerImpl.handleUseItemOn()`.
-    pub fn handle_use_item_on(&self, packet: SUseItemOn) {
+    pub fn handle_use_item_on(&mut self, packet: SUseItemOn) {
         if !self.has_client_loaded() {
             return;
         }
@@ -1265,33 +1265,39 @@ impl Player {
         let world = self.get_world();
         match packet.action {
             PlayerAction::StartDestroyBlock => {
-                self.block_breaking.lock().handle_block_break_action(
+                let mut block_breaking = std::mem::take(&mut self.block_breaking);
+                block_breaking.handle_block_break_action(
                     self,
                     &world,
                     packet.pos,
                     BlockBreakAction::Start,
                     packet.direction,
                 );
+                self.block_breaking = block_breaking;
                 self.ack_block_changes_up_to(packet.sequence);
             }
             PlayerAction::StopDestroyBlock => {
-                self.block_breaking.lock().handle_block_break_action(
+                let mut block_breaking = std::mem::take(&mut self.block_breaking);
+                block_breaking.handle_block_break_action(
                     self,
                     &world,
                     packet.pos,
                     BlockBreakAction::Stop,
                     packet.direction,
                 );
+                self.block_breaking = block_breaking;
                 self.ack_block_changes_up_to(packet.sequence);
             }
             PlayerAction::AbortDestroyBlock => {
-                self.block_breaking.lock().handle_block_break_action(
+                let mut block_breaking = std::mem::take(&mut self.block_breaking);
+                block_breaking.handle_block_break_action(
                     self,
                     &world,
                     packet.pos,
                     BlockBreakAction::Abort,
                     packet.direction,
                 );
+                self.block_breaking = block_breaking;
                 self.ack_block_changes_up_to(packet.sequence);
             }
             PlayerAction::DropAllItems => {
@@ -1413,7 +1419,7 @@ impl Player {
 
         drop(inventory);
         self.inventory_menu
-            .lock()
+            .borrow_mut()
             .behavior_mut()
             .broadcast_changes(&self.connection());
     }

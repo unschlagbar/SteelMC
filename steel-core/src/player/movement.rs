@@ -143,9 +143,9 @@ impl Player {
     }
 
     /// Resets per-tick vanilla movement validation bases for the controlled root vehicle.
-    pub(super) fn reset_vehicle_movement_for_tick(&self) {
+    pub(super) fn reset_vehicle_movement_for_tick(&mut self) {
         let Some(vehicle) = self.root_vehicle() else {
-            self.movement.lock().clear_vehicle_for_tick();
+            self.movement.clear_vehicle_for_tick();
             return;
         };
 
@@ -153,12 +153,11 @@ impl Player {
             .controlling_passenger()
             .is_some_and(|controller| controller.id() == self.id());
         if !controlled_by_player {
-            self.movement.lock().clear_vehicle_for_tick();
+            self.movement.clear_vehicle_for_tick();
             return;
         }
 
         self.movement
-            .lock()
             .reset_vehicle_for_tick(vehicle.id(), vehicle.position());
     }
 
@@ -247,7 +246,7 @@ impl Player {
             return;
         }
 
-        let (first_good, last_good) = self.movement.lock().good_positions();
+        let (first_good, last_good) = self.movement.good_positions();
 
         if is_sleeping {
             let dx = target_pos.x - first_good.x;
@@ -279,10 +278,7 @@ impl Player {
         let moved_dist_sq = dx * dx + dy * dy + dz * dz;
 
         if tick_runs_normally {
-            let mut delta_packets = {
-                let mut mv = self.movement.lock();
-                mv.record_move_packet_delta()
-            };
+            let mut delta_packets = self.movement.record_move_packet_delta();
 
             if delta_packets > 5 {
                 delta_packets = 1;
@@ -442,13 +438,9 @@ impl Player {
                 is_fall_flying,
             );
         }
-        self.movement
-            .lock()
-            .mark_last_good_position(self.position());
+        self.movement.mark_last_good_position(self.position());
 
-        self.movement
-            .lock()
-            .set_last_known_client_movement(client_delta);
+        self.movement.set_last_known_client_movement(client_delta);
     }
 
     /// Handles a controlled-vehicle movement packet.
@@ -483,8 +475,7 @@ impl Player {
         if !controlled_by_player {
             return;
         }
-        let Some((first_good, last_good)) =
-            self.movement.lock().vehicle_good_positions(vehicle.id())
+        let Some((first_good, last_good)) = self.movement.vehicle_good_positions(vehicle.id())
         else {
             return;
         };
@@ -606,9 +597,7 @@ impl Player {
                 return;
             }
         }
-        self.movement
-            .lock()
-            .set_last_known_client_movement(client_delta);
+        self.movement.set_last_known_client_movement(client_delta);
         world.chunk_map.update_player_status(self);
         vehicle.with_entity(|v| {
             self.record_client_vehicle_floating(
@@ -619,12 +608,11 @@ impl Player {
             );
         });
         self.movement
-            .lock()
             .mark_vehicle_last_good_position(vehicle.id(), vehicle.position());
     }
 
     fn record_client_floating(
-        &self,
+        &mut self,
         world: &World,
         y_dist: f64,
         player_stands_on_something: bool,
@@ -637,20 +625,18 @@ impl Player {
             player_stands_on_something,
             is_spectator,
             server_allows_flight: self.config().allow_flight,
-            may_fly: self.abilities.lock().may_fly,
+            may_fly: self.abilities.may_fly,
             has_levitation: self.has_mob_effect(vanilla_mob_effects::LEVITATION),
             is_fall_flying,
         }
         .can_violate();
 
         let client_is_floating = can_violate_floating && Self::no_blocks_around_entity(world, self);
-        self.movement
-            .lock()
-            .record_client_floating(client_is_floating);
+        self.movement.record_client_floating(client_is_floating);
     }
 
     fn record_client_vehicle_floating(
-        &self,
+        &mut self,
         world: &World,
         vehicle: &dyn Entity,
         y_dist: f64,
@@ -663,7 +649,6 @@ impl Player {
             && !vehicle.is_no_gravity()
             && Self::no_blocks_around_entity(world, vehicle);
         self.movement
-            .lock()
             .record_vehicle_client_floating(vehicle.id(), client_is_floating);
     }
 
@@ -695,12 +680,11 @@ impl Player {
     }
 
     /// Advances vanilla's floating violation tracker and disconnects when exceeded.
-    pub(super) fn disconnect_if_floating_too_long(&self) -> bool {
+    pub(super) fn disconnect_if_floating_too_long(&mut self) -> bool {
         let should_count = !self.is_sleeping() && !self.is_passenger() && !self.is_dead_or_dying();
         let maximum_flying_ticks = self.maximum_flying_ticks();
         let should_disconnect = self
             .movement
-            .lock()
             .tick_client_floating(should_count, maximum_flying_ticks);
 
         if should_disconnect {
@@ -715,23 +699,22 @@ impl Player {
     }
 
     /// Advances vanilla's controlled-vehicle floating tracker and disconnects when exceeded.
-    pub(super) fn disconnect_if_vehicle_floating_too_long(&self) -> bool {
+    pub(super) fn disconnect_if_vehicle_floating_too_long(&mut self) -> bool {
         let Some(vehicle) = self.root_vehicle() else {
-            self.movement.lock().clear_vehicle_for_tick();
+            self.movement.clear_vehicle_for_tick();
             return false;
         };
         let controlled_by_player = vehicle
             .controlling_passenger()
             .is_some_and(|controller| controller.id() == self.id());
         if !controlled_by_player {
-            self.movement.lock().clear_vehicle_for_tick();
+            self.movement.clear_vehicle_for_tick();
             return false;
         }
 
         let maximum_flying_ticks = Self::maximum_flying_ticks_for_gravity(vehicle.get_gravity());
         let should_disconnect = self
             .movement
-            .lock()
             .tick_vehicle_client_floating(vehicle.id(), maximum_flying_ticks);
 
         if should_disconnect {
@@ -781,10 +764,8 @@ impl Player {
 
         self.set_rotation((yaw, pitch));
         self.set_old_position_to_current();
-        {
-            let mut movement = self.movement.lock();
-            movement.reset_last_known_client_movement();
-        }
+
+        self.movement.reset_last_known_client_movement();
 
         self.send_packet(CPlayerPosition::absolute(
             new_id,
@@ -796,8 +777,8 @@ impl Player {
     }
 
     /// Resets vanilla floating violation counters after a successful high-level teleport.
-    pub(crate) fn reset_flying_ticks(&self) {
-        self.movement.lock().reset_flying_ticks();
+    pub(crate) fn reset_flying_ticks(&mut self) {
+        self.movement.reset_flying_ticks();
     }
 
     /// Handles a teleport acknowledgment from the client.
@@ -818,7 +799,7 @@ impl Player {
                 return;
             }
             self.set_old_position_to_current();
-            let mut movement = self.movement.lock();
+            let movement = &mut self.movement;
             movement.mark_last_good_position(pos);
             movement.reset_last_known_client_movement();
         } else if packet.teleport_id == tp.teleport_id && tp.awaiting_position.is_none() {
@@ -830,7 +811,7 @@ impl Player {
     /// Returns the latest vanilla client input snapshot.
     #[must_use]
     pub fn last_client_input(&self) -> PlayerInput {
-        self.movement.lock().last_client_input()
+        self.movement.last_client_input()
     }
 
     /// Returns vanilla `ServerPlayer.getLastClientMoveIntent()`.
@@ -847,7 +828,7 @@ impl Player {
     pub fn handle_player_input(&mut self, packet: SPlayerInput) {
         // Vanilla stores the input unconditionally before the guard check.
         let input = PlayerInput::from_flags(packet.flags);
-        self.movement.lock().set_last_client_input(input);
+        self.movement.set_last_client_input(input);
 
         if !self.has_client_loaded() {
             return;

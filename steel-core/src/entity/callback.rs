@@ -196,7 +196,7 @@ impl EntityLevelCallback for PlayerEntityCallback {
             if let Some(view) = self_view {
                 match entity.as_deref() {
                     Some(e) => {
-                        if let Some(player) = e.as_player() {
+                        if let Some(player) = e.as_player_ref() {
                             world.entity_tracker().update_player(player, &view);
                         }
                     }
@@ -217,7 +217,12 @@ impl EntityLevelCallback for PlayerEntityCallback {
                 update.new_chunk,
                 |chunk| world.player_area_map.get_tracking_players(chunk),
                 |player_id| world.players.get_by_entity_id(player_id),
-                |player_id| world.entity_manager().get_by_id(player_id).map(|e| e.position()),
+                |player_id| {
+                    world
+                        .entity_manager()
+                        .get_by_id(player_id)
+                        .map(|e| e.position())
+                },
             );
         }
 
@@ -300,7 +305,12 @@ impl EntityLevelCallback for EntityChunkCallback {
                     update.new_chunk,
                     |chunk| world.player_area_map.get_tracking_players(chunk),
                     |player_id| world.players.get_by_entity_id(player_id),
-                    |player_id| world.entity_manager().get_by_id(player_id).map(|e| e.position()),
+                    |player_id| {
+                        world
+                            .entity_manager()
+                            .get_by_id(player_id)
+                            .map(|e| e.position())
+                    },
                 );
             }
         }

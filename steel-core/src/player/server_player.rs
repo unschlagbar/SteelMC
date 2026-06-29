@@ -133,7 +133,7 @@ impl ServerPlayer {
         }
     }
 
-    /// Returns the locked game entity for this player.
+    /// Returns the game entity for this player.
     #[must_use]
     pub fn entity(&self) -> &Arc<SyncMutex<Player>> {
         &self.entity

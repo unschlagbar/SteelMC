@@ -31,7 +31,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                 .then(literal("points").executes(
                     |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let points = { player.lock().experience.lock().points() };
+                            let points = player.lock().experience.points();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_POINTS
                                     .message([
@@ -47,7 +47,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                 .then(literal("levels").executes(
                     |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let level = { player.lock().experience.lock().level() };
+                            let level = player.lock().experience.level();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_LEVELS
                                     .message([
@@ -119,14 +119,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("clear")
             .executes(|(): (), ctx: &mut CommandContext| {
                 if let Some(player) = ctx.sender.get_player() {
-                    player.lock().experience.lock().set_total_points(0);
+                    player.lock().experience.set_total_points(0);
                 }
                 Ok(())
             })
             .then(argument("target", PlayerArgument::multiple()).executes(
                 |((), players): ((), Vec<Arc<SyncMutex<Player>>>), _ctx: &mut CommandContext| {
                     for player in players {
-                        player.lock().experience.lock().set_total_points(0);
+                        player.lock().experience.set_total_points(0);
                     }
                     Ok(())
                 },
@@ -146,8 +146,8 @@ fn set_experience(
     ctx: &mut CommandContext,
 ) -> Result<(), CommandError> {
     for player in &players {
-        let player_guard = player.lock();
-        let mut experience = player_guard.experience.lock();
+        let mut player_guard = player.lock();
+        let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience
                 .set_points(amount)
@@ -200,8 +200,8 @@ fn add_experience(
     ctx: &mut CommandContext,
 ) {
     for player in &players {
-        let player_guard = player.lock();
-        let mut experience = player_guard.experience.lock();
+        let mut player_guard = player.lock();
+        let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience.add_points(amount),
             ExperienceType::Levels => experience.add_levels(amount),

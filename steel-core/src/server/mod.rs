@@ -69,7 +69,7 @@ const CHUNK_SENDING_TPS: u64 = 20;
 /// Tick rate for the chunk scheduling loop.
 const CHUNK_SCHEDULING_TPS: u64 = 20;
 
-fn apply_first_visit_defaults(player: &Player, world: &Arc<World>) {
+fn apply_first_visit_defaults(player: &mut Player, world: &Arc<World>) {
     let spawn = world.level_data.read().data().spawn.clone();
     player.base().set_position_local(DVec3::new(
         f64::from(spawn.x),
@@ -80,7 +80,6 @@ fn apply_first_visit_defaults(player: &Player, world: &Arc<World>) {
     player.restore_game_modes(world.default_gamemode, Some(world.default_gamemode));
     player
         .abilities
-        .lock()
         .update_for_game_mode(world.default_gamemode);
 }
 
@@ -727,11 +726,11 @@ impl Server {
                 if *restore_location {
                     data.apply_to_player(&mut player);
                 } else {
-                    apply_first_visit_defaults(&player, &state.world);
+                    apply_first_visit_defaults(&mut player, &state.world);
                     data.apply_to_player_without_location(&mut player);
                 }
             }
-            DomainPlayerData::FirstVisit => apply_first_visit_defaults(&player, &state.world),
+            DomainPlayerData::FirstVisit => apply_first_visit_defaults(&mut player, &state.world),
         }
     }
 

@@ -64,7 +64,7 @@ impl HealthSyncState {
 impl Player {
     /// Invalidates the delta-tracking state so that the next `tick()` will send
     /// `CSetHealth` to the client (vanilla: `resetSentInfo`).
-    pub fn reset_sent_info(&self) {
-        self.health_sync.lock().invalidate();
+    pub fn reset_sent_info(&mut self) {
+        self.health_sync.invalidate();
     }
 }

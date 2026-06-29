@@ -1,6 +1,5 @@
 //! Handler for the "tellraw" command.
 use crate::command::arguments::player::PlayerArgument;
-use steel_utils::locks::SyncMutex;
 use crate::command::arguments::text_component::TextComponentArgument;
 use crate::command::commands::{
     CommandExecutor, CommandHandlerBuilder, CommandHandlerDyn, argument,
@@ -10,6 +9,7 @@ use crate::command::error::CommandError;
 use crate::command::sender::CommandSender;
 use crate::player::Player;
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 use text_components::TextComponent;
 
 /// Handler for the "tellraw" command.
@@ -28,7 +28,9 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 
 struct TellrawCommandExecutor;
 
-impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), TextComponent)> for TellrawCommandExecutor {
+impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), TextComponent)>
+    for TellrawCommandExecutor
+{
     fn execute(
         &self,
         args: (((), Vec<Arc<SyncMutex<Player>>>), TextComponent),

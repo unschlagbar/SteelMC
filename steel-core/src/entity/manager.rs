@@ -958,8 +958,7 @@ impl WorldEntityManager {
                             continue;
                         }
 
-                        if entry.entity.bounding_box().intersects(*aabb)
-                            && predicate(&entry.entity)
+                        if entry.entity.bounding_box().intersects(*aabb) && predicate(&entry.entity)
                         {
                             return true;
                         }
@@ -1954,8 +1953,8 @@ mod tests {
         }
 
         let aabb = WorldAabb::new(0.0, 63.0, 0.0, 10.0, 66.0, 3.0);
-        let result =
-            manager.nearest_entity_in_aabb_matching(&aabb, DVec3::ZERO, 0, |entity| entity.id() > 1);
+        let result = manager
+            .nearest_entity_in_aabb_matching(&aabb, DVec3::ZERO, 0, |entity| entity.id() > 1);
 
         let Some(result) = result else {
             panic!("nearest matching entity should be found");

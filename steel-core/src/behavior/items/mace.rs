@@ -79,7 +79,7 @@ impl MaceItem {
             return false;
         }
         if nearby
-            .as_player()
+            .as_player_ref()
             .is_some_and(|player| player.has_infinite_materials() && player.is_flying())
         {
             return false;
@@ -137,7 +137,7 @@ impl MaceItem {
                     DVec3::ZERO
                 };
                 nearby_living.push_impulse(DVec3::new(horizontal.x, 0.7, horizontal.z));
-                if let Some(player) = nearby_living.as_player() {
+                if let Some(player) = nearby_living.as_player_ref() {
                     player.send_packet(CSetEntityMotion::new(
                         nearby_living.id(),
                         nearby_living.velocity(),
@@ -211,7 +211,7 @@ impl ItemBehavior for MaceItem {
             true,
             Self::calculate_impact_position(attacker),
         );
-        if let Some(player) = attacker.as_player() {
+        if let Some(player) = attacker.as_player_ref() {
             player.send_packet(CSetEntityMotion::new(attacker.id(), attacker.velocity()));
         }
 

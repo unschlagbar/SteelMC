@@ -508,7 +508,7 @@ pub trait Mob: LivingEntity {
 
     fn is_valid_target(&self, target: &dyn LivingEntity) -> bool {
         if target
-            .as_player()
+            .as_player_ref()
             .is_some_and(|player| player.has_infinite_materials() || player.is_spectator())
         {
             return false;

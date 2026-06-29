@@ -40,10 +40,8 @@ pub fn entity_behavior(attr: TokenStream, item: TokenStream) -> TokenStream {
             Ok(())
         }
     });
-    syn::parse::Parser::parse2(parser, attr)
-        .unwrap_or_else(|e| panic!("#[entity_behavior]: {e}"));
-    let class_name =
-        class_name.expect("#[entity_behavior] requires `class = \"...\"`");
+    syn::parse::Parser::parse2(parser, attr).unwrap_or_else(|e| panic!("#[entity_behavior]: {e}"));
+    let class_name = class_name.expect("#[entity_behavior] requires `class = \"...\"`");
 
     // The runtime downcast key defaults to `class`, but entities whose Mojang
     // class name differs from their registry identifier (e.g. `MinecartChest`

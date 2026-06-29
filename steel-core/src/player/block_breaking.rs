@@ -72,7 +72,7 @@ impl BlockBreakingManager {
     /// Ticks the block breaking manager.
     ///
     /// This handles delayed destruction and updates break progress.
-    pub fn tick(&mut self, player: &Player, world: &Arc<World>) {
+    pub fn tick(&mut self, player: &mut Player, world: &Arc<World>) {
         self.game_ticks += 1;
 
         if self.has_delayed_destroy {
@@ -139,7 +139,7 @@ impl BlockBreakingManager {
     /// after this method returns, matching vanilla behavior.
     pub fn handle_block_break_action(
         &mut self,
-        player: &Player,
+        player: &mut Player,
         world: &Arc<World>,
         pos: BlockPos,
         action: BlockBreakAction,
@@ -255,7 +255,7 @@ impl BlockBreakingManager {
     }
 
     /// Destroys a block and sends appropriate response.
-    fn destroy_and_ack(&mut self, player: &Player, world: &Arc<World>, pos: BlockPos) {
+    fn destroy_and_ack(&mut self, player: &mut Player, world: &Arc<World>, pos: BlockPos) {
         if !self.destroy_block(player, world, pos) {
             // Send block update to resync client
             player.send_packet(CBlockUpdate {
@@ -272,7 +272,7 @@ impl BlockBreakingManager {
         clippy::unused_self,
         reason = "method belongs logically to BlockBreakingManager and will use self when additional state is added"
     )]
-    fn destroy_block(&self, player: &Player, world: &Arc<World>, pos: BlockPos) -> bool {
+    fn destroy_block(&self, player: &mut Player, world: &Arc<World>, pos: BlockPos) -> bool {
         let state = world.get_block_state(pos);
 
         // Check if player's tool can destroy this block

@@ -87,7 +87,7 @@ impl Player {
     pub fn detect_command_rate_spam(&self) {
         let should_disconnect = {
             let server_player = self.server_player();
-        let mut chat = server_player.chat.lock();
+            let mut chat = server_player.chat.lock();
             Self::detect_rate_spam(&mut chat.command_spam_throttler)
         };
 
@@ -100,7 +100,7 @@ impl Player {
     fn detect_chat_rate_spam(&self) {
         let should_disconnect = {
             let server_player = self.server_player();
-        let mut chat = server_player.chat.lock();
+            let mut chat = server_player.chat.lock();
             Self::detect_rate_spam(&mut chat.chat_spam_throttler)
         };
 

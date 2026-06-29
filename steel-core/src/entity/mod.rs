@@ -1935,7 +1935,15 @@ pub trait Entity: EntityEventSource {
     ///
     /// Mirrors vanilla player-only branches without requiring core code to
     /// downcast through `Any`.
-    fn as_player(&self) -> Option<&Player> {
+    fn as_player(&mut self) -> Option<&mut Player> {
+        None
+    }
+
+    /// Returns this entity as a player when it is the concrete server player.
+    ///
+    /// Mirrors vanilla player-only branches without requiring core code to
+    /// downcast through `Any`.
+    fn as_player_ref(&self) -> Option<&Player> {
         None
     }
 
@@ -4004,7 +4012,7 @@ pub trait LivingEntity: Entity {
         let packet = CAnimate::new(self.id(), action);
         let exclude = if update_self { None } else { Some(self.id()) };
         world.broadcast_to_entity_trackers(self.id(), packet.clone(), exclude);
-        if update_self && let Some(player) = self.as_player() {
+        if update_self && let Some(player) = self.as_player_ref() {
             player.send_packet(packet);
         }
     }
@@ -4730,7 +4738,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Sets the absorption amount.
-    fn set_absorption_amount(&self, amount: f32) {
+    fn set_absorption_amount(&mut self, amount: f32) {
         self.living_base().set_absorption_amount(amount);
     }
 
@@ -4913,14 +4921,14 @@ pub trait LivingEntity: Entity {
     }
 
     /// Returns whether this entity can lose air and take drowning damage.
-    fn can_drown_in_water(&self) -> bool {
+    fn can_drown_in_water(&mut self) -> bool {
         if self.can_breathe_underwater() || self.has_water_breathing() {
             return false;
         }
 
         !self
             .as_player()
-            .is_some_and(|player| player.abilities.lock().invulnerable)
+            .is_some_and(|player| player.abilities.invulnerable)
     }
 
     /// Returns whether the entity's eye block is a bubble column.
@@ -5596,7 +5604,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Default vanilla `LivingEntity.jumpFromGround()` implementation for overrides.
-    fn default_jump_from_ground(&self) {
+    fn default_jump_from_ground(&mut self) {
         let jump_power = self.get_jump_power();
         if jump_power <= 1.0E-5 {
             return;
@@ -5624,7 +5632,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Mirrors vanilla `LivingEntity.jumpFromGround()`.
-    fn jump_from_ground(&self) {
+    fn jump_from_ground(&mut self) {
         self.default_jump_from_ground();
     }
 
@@ -5639,7 +5647,7 @@ pub trait LivingEntity: Entity {
     }
 
     /// Applies vanilla `LivingEntity.aiStep()` jump handling.
-    fn handle_living_jump(&self) {
+    fn handle_living_jump(&mut self) {
         if !self.is_jumping() || !self.is_affected_by_fluids() {
             self.set_no_jump_delay(0);
             return;
@@ -6868,7 +6876,7 @@ mod tests {
             0.0
         }
 
-        fn set_absorption_amount(&self, _amount: f32) {}
+        fn set_absorption_amount(&mut self, _amount: f32) {}
 
         fn is_affected_by_fluids(&self) -> bool {
             self.affected_by_fluids
@@ -7769,7 +7777,7 @@ mod tests {
     #[test]
     fn jump_from_ground_uses_jump_strength_and_marks_velocity_sync() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         let jump_strength = f64::from(vanilla_attributes::JUMP_STRENGTH.default_value as f32);
 
         entity.jump_from_ground();
@@ -7797,7 +7805,7 @@ mod tests {
     #[test]
     fn living_jump_in_water_uses_fluid_jump_impulse_without_cooldown() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.5, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.5, 0.0, true);
         entity.set_jumping(true);
 
         entity.handle_living_jump();
@@ -7809,7 +7817,7 @@ mod tests {
     #[test]
     fn living_jump_without_input_resets_jump_delay_like_vanilla() {
         init_test_registry();
-        let entity = LivingFluidTestEntity::new(0.0, 0.0, true);
+        let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
         entity.set_no_jump_delay(4);
 
         entity.handle_living_jump();

@@ -154,9 +154,9 @@ impl PersistentPlayerData {
         let on_ground = player.on_ground();
         let fall_flying = player.is_fall_flying();
         let fire_freeze = player.fire_freeze_state();
-        let abilities = player.abilities.lock();
+        let abilities = &player.abilities;
         let inventory = player.inventory.lock();
-        let food_data = player.food_data.lock();
+        let food_data = &player.food_data;
 
         // Collect non-empty inventory slots
         let mut slots = Vec::new();
@@ -172,12 +172,12 @@ impl PersistentPlayerData {
         }
 
         let (experience_level, experience_progress, experience_total, score) = {
-            let lock = player.experience.lock();
+            let exp = &player.experience;
             (
-                lock.level(),
-                lock.progress() as f32,
-                lock.total_points(),
-                lock.score,
+                exp.level(),
+                exp.progress() as f32,
+                exp.total_points(),
+                exp.score,
             )
         };
         let root_vehicle = Self::root_vehicle_from_player(player)
@@ -338,7 +338,7 @@ impl PersistentPlayerData {
         );
 
         // Abilities
-        *player.abilities.lock() = self.abilities.clone().into();
+        player.abilities = self.abilities.clone().into();
 
         // Inventory
         {
@@ -361,7 +361,7 @@ impl PersistentPlayerData {
 
         // Food data
         {
-            let mut food = player.food_data.lock();
+            let food = &mut player.food_data;
             food.food_level = self.food_level;
             food.saturation_level = self.food_saturation_level;
             food.exhaustion_level = self.food_exhaustion_level;
@@ -369,7 +369,7 @@ impl PersistentPlayerData {
         }
 
         {
-            let mut experience = player.experience.lock();
+            let experience = &mut player.experience;
             experience.set_levels(self.experience_level);
             experience.set_progress(f64::from(self.experience_progress));
             experience.score = self.score;

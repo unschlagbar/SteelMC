@@ -16,7 +16,7 @@ use crate::entity::EntitySharedFlags;
 /// setters take `&mut self`. Entities expose the read path through
 /// [`Entity::synced_data`](crate::entity::Entity::synced_data) and the write path
 /// through [`Entity::synced_data_mut`](crate::entity::Entity::synced_data_mut).
-pub trait EntitySyncedData: Send + Sync {
+pub trait EntitySyncedData: Send {
     /// Packs dirty values for network sync, clearing dirty flags.
     fn pack_dirty(&self) -> Option<Vec<DataValue>>;
 
@@ -382,8 +382,8 @@ mod tests {
         data.set_base_on_fire_flag(true);
         data.set_base_ticks_frozen(12);
 
-        let values = EntitySyncedData::pack_dirty(&data)
-            .expect("expected dirty base fire/freeze metadata");
+        let values =
+            EntitySyncedData::pack_dirty(&data).expect("expected dirty base fire/freeze metadata");
         assert_eq!(values.len(), 2);
         assert!(matches!(values[0].value, EntityData::Byte(1)));
         assert!(matches!(values[1].value, EntityData::Int(12)));

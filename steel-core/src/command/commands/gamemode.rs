@@ -1,6 +1,5 @@
 //! Handler for the "gamemode" command.
 use crate::command::arguments::gamemode::GameModeArgument;
-use steel_utils::locks::SyncMutex;
 use crate::command::arguments::player::PlayerArgument;
 use crate::command::commands::{
     CommandExecutor, CommandHandlerBuilder, CommandHandlerDyn, argument,
@@ -10,6 +9,7 @@ use crate::command::error::CommandError;
 use crate::entity::Entity;
 use crate::player::Player;
 use std::sync::Arc;
+use steel_utils::locks::SyncMutex;
 use steel_utils::translations;
 use steel_utils::types::GameType;
 use text_components::TextComponent;
@@ -58,7 +58,9 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
 
 struct GameModeTargetCommandExecutor;
 
-impl CommandExecutor<(((), GameType), Vec<Arc<SyncMutex<Player>>>)> for GameModeTargetCommandExecutor {
+impl CommandExecutor<(((), GameType), Vec<Arc<SyncMutex<Player>>>)>
+    for GameModeTargetCommandExecutor
+{
     fn execute(
         &self,
         args: (((), GameType), Vec<Arc<SyncMutex<Player>>>),
