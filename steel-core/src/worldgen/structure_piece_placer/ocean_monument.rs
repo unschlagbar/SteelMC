@@ -1685,21 +1685,17 @@ fn spawn_elder(placer: &mut ScatteredFeaturePlacer<'_, '_>, x: i32, y: i32, z: i
         return;
     }
 
-    let entity = RawEntity::new(&vanilla_entities::ELDER_GUARDIAN);
-    {
-        let mut entity = entity.lock_entity();
-        let entity: &mut RawEntity = entity.downcast().unwrap();
-        entity.set_persistence_required();
-        entity.snap_to(
-            DVec3::new(
-                f64::from(pos.x()) + 0.5,
-                f64::from(pos.y()),
-                f64::from(pos.z()) + 0.5,
-            ),
-            0.0,
-            0.0,
-        );
-    }
+    let entity = RawEntity::new_for_worldgen(
+        &vanilla_entities::ELDER_GUARDIAN,
+        DVec3::new(
+            f64::from(pos.x()) + 0.5,
+            f64::from(pos.y()),
+            f64::from(pos.z()) + 0.5,
+        ),
+        0.0,
+        0.0,
+        true,
+    );
     let _ = placer.add_fresh_entity(entity);
 }
 

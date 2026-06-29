@@ -1,6 +1,6 @@
 //! NBT-preserving fallback entity.
 
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use glam::DVec3;
 use simdnbt::borrow::NbtCompound as BorrowedNbtCompoundView;
@@ -55,31 +55,39 @@ impl RawEntity {
         })
     }
 
-    /// Sets position and rotation, matching vanilla `Entity.snapTo`.
+    /// Creates a fresh raw entity placed and oriented for worldgen structure spawning.
     ///
-    /// # Panics
-    ///
-    /// Panics if the active world entity manager rejects the snap position. This is an invariant
-    /// failure for loaded raw entities.
-    pub fn snap_to(&self, position: DVec3, yaw: f32, pitch: f32) {
-        let base = self.base().expect("RawEntity snap_to called after removal");
-        if let Err(error) = base.try_set_position(position) {
-            panic!(
-                "failed to commit raw entity {} snap position: {error}",
-                base.id()
-            );
+    /// Configures position, rotation, and vanilla `PersistenceRequired` at construction so
+    /// callers never have to lock and downcast back to `RawEntity` — the key-based
+    /// [`LockedEntity::downcast`](crate::entity::LockedEntity::downcast) cannot match a raw
+    /// entity because it carries the real entity type key, not the `RawEntity::KEY` placeholder.
+    /// Position is set directly (the construction path), matching vanilla `Entity.snapTo` for a
+    /// not-yet-spawned entity.
+    #[must_use]
+    pub fn new_for_worldgen(
+        entity_type: EntityTypeRef,
+        position: DVec3,
+        yaw: f32,
+        pitch: f32,
+        persistence_required: bool,
+    ) -> SharedEntity {
+        let mut data = NbtCompound::new();
+        if persistence_required {
+            data.insert("PersistenceRequired", 1_i8);
         }
+        let base = EntityBase::pack_with(
+            next_entity_id(),
+            position,
+            entity_type.dimensions,
+            Weak::new(),
+            |base| Self {
+                base,
+                entity_type,
+                data,
+            },
+        );
         base.set_rotation((yaw, pitch));
-        self.set_old_position_to_current();
-    }
-
-    fn base(&self) -> Option<Arc<EntityBase>> {
-        self.base.upgrade()
-    }
-
-    /// Marks a raw mob as persistent when vanilla structure generation would do so.
-    pub fn set_persistence_required(&mut self) {
-        self.data.insert("PersistenceRequired", 1_i8);
+        base
     }
 }
 

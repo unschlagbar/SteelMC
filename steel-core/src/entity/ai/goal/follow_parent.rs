@@ -46,13 +46,18 @@ impl Goal for FollowParentGoal {
             VERTICAL_SCAN_RANGE,
             HORIZONTAL_SCAN_RANGE,
         );
-        let parent = world.nearest_entity_in_aabb_matching(&search_box, mob.position(), |entity| {
-            entity.uuid() != mob.uuid()
-                && entity.entity_type() == mob.entity_type()
-                && entity
-                    .as_animal()
-                    .is_some_and(|candidate| candidate.get_age() >= 0)
-        });
+        let parent = world.nearest_entity_in_aabb_matching(
+            &search_box,
+            mob.position(),
+            mob.id(),
+            |entity| {
+                entity.uuid() != mob.uuid()
+                    && entity.entity_type() == mob.entity_type()
+                    && entity
+                        .as_animal()
+                        .is_some_and(|candidate| candidate.get_age() >= 0)
+            },
+        );
         let Some(parent) = parent else {
             return false;
         };

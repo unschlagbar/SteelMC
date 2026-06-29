@@ -107,36 +107,43 @@ impl MaceItem {
         let search_box = target
             .bounding_box()
             .inflate(Self::SMASH_ATTACK_KNOCKBACK_RADIUS);
-        for nearby in world.get_entities_in_aabb_matching(&search_box, |entity| {
-            let entity = entity.lock_entity();
-
-            let Some(nearby) = entity.get().as_living_entity() else {
-                return false;
-            };
-            Self::should_knockback(attacker, target, nearby)
-        }) {
-            let nearby = nearby.lock_entity();
-            let Some(nearby_living) = nearby.get().as_living_entity() else {
-                continue;
-            };
-            let direction = nearby_living.position() - target.position();
-            let knockback_power = Self::knockback_power(attacker, nearby_living, direction);
-            if knockback_power <= 0.0 {
+        let attacker_id = attacker.id();
+        let target_id = target.id();
+        for nearby in world.get_entities_in_aabb(&search_box) {
+            // Skip the attacker and target lock-free before locking. `should_knockback`
+            // excludes both ids anyway, but `lock_entity` cannot represent a player base
+            // (it unwraps `self.entity`, which is `None` for players) and locking the
+            // attacker would re-lock the player whose behavior mutex this tick holds.
+            if nearby.id() == attacker_id || nearby.id() == target_id {
                 continue;
             }
+            // `with_entity` reaches players safely (locks the `Player`, not the entity slot).
+            nearby.with_entity(|entity| {
+                let Some(nearby_living) = entity.as_living_entity() else {
+                    return;
+                };
+                if !Self::should_knockback(attacker, target, nearby_living) {
+                    return;
+                }
+                let direction = nearby_living.position() - target.position();
+                let knockback_power = Self::knockback_power(attacker, nearby_living, direction);
+                if knockback_power <= 0.0 {
+                    return;
+                }
 
-            let horizontal = if direction.length_squared() > 0.0 {
-                direction.normalize() * knockback_power
-            } else {
-                DVec3::ZERO
-            };
-            nearby_living.push_impulse(DVec3::new(horizontal.x, 0.7, horizontal.z));
-            if let Some(player) = nearby_living.as_player() {
-                player.send_packet(CSetEntityMotion::new(
-                    nearby_living.id(),
-                    nearby_living.velocity(),
-                ));
-            }
+                let horizontal = if direction.length_squared() > 0.0 {
+                    direction.normalize() * knockback_power
+                } else {
+                    DVec3::ZERO
+                };
+                nearby_living.push_impulse(DVec3::new(horizontal.x, 0.7, horizontal.z));
+                if let Some(player) = nearby_living.as_player() {
+                    player.send_packet(CSetEntityMotion::new(
+                        nearby_living.id(),
+                        nearby_living.velocity(),
+                    ));
+                }
+            });
         }
     }
 }
@@ -148,6 +155,10 @@ impl ItemBehavior for MaceItem {
                 .with_causing_entity(attacker.id())
                 .with_direct_entity(attacker.id())
                 .with_source_position(attacker.position())
+                // Capture the attacker's loot snapshot now, while we hold our own lock, so the
+                // victim's death-loot path never re-locks us. Mirrors `damage_source_for_attack_type`;
+                // see deadlock notes on `Entity::causing_entity_loot`.
+                .with_causing_entity_loot(attacker.causing_entity_loot())
         })
     }
 

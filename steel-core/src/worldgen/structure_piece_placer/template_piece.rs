@@ -392,13 +392,8 @@ impl StructurePiecePlacer {
             f64::from(pos.y()),
             f64::from(pos.z()) + 0.5,
         );
-        let entity = RawEntity::new(&vanilla_entities::DROWNED);
-        {
-            let mut entity = entity.lock_entity();
-            let entity: &mut RawEntity = entity.downcast().unwrap();
-            entity.set_persistence_required();
-            entity.snap_to(entity_pos, 0.0, 0.0);
-        }
+        let entity =
+            RawEntity::new_for_worldgen(&vanilla_entities::DROWNED, entity_pos, 0.0, 0.0, true);
         let _ = region.add_fresh_entity(entity);
 
         let replacement = if pos.y() > region.sea_level() {
@@ -504,12 +499,8 @@ impl StructurePiecePlacer {
             f64::from(pos.y()),
             f64::from(pos.z()) + 0.5,
         );
-        let entity = RawEntity::new(&vanilla_entities::SHULKER);
-        {
-            let mut entity = entity.lock_entity();
-            let entity: &mut RawEntity = entity.downcast().unwrap();
-            entity.snap_to(entity_pos, 0.0, 0.0);
-        }
+        let entity =
+            RawEntity::new_for_worldgen(&vanilla_entities::SHULKER, entity_pos, 0.0, 0.0, false);
         let _ = region.add_fresh_entity(entity);
     }
 
@@ -602,13 +593,7 @@ impl StructurePiecePlacer {
         entity_type: EntityTypeRef,
     ) {
         let entity_pos = DVec3::new(f64::from(pos.x()), f64::from(pos.y()), f64::from(pos.z()));
-        let entity = RawEntity::new(entity_type);
-        {
-            let mut entity = entity.lock_entity();
-            let entity: &mut RawEntity = entity.downcast().unwrap();
-            entity.set_persistence_required();
-            entity.snap_to(entity_pos, 0.0, 0.0);
-        }
+        let entity = RawEntity::new_for_worldgen(entity_type, entity_pos, 0.0, 0.0, true);
         let _ = region.add_fresh_entity(entity);
     }
 

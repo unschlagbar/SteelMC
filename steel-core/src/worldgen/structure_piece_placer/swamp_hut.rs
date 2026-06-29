@@ -100,21 +100,17 @@ fn spawn_swamp_hut_mob(
     }
 
     *spawned = true;
-    let entity = RawEntity::new(entity_type);
-    {
-        let mut entity = entity.lock_entity();
-        let entity: &mut RawEntity = entity.downcast().unwrap();
-        entity.set_persistence_required();
-        entity.snap_to(
-            DVec3::new(
-                f64::from(pos.x()) + 0.5,
-                f64::from(pos.y()),
-                f64::from(pos.z()) + 0.5,
-            ),
-            0.0,
-            0.0,
-        );
-    }
+    let entity = RawEntity::new_for_worldgen(
+        entity_type,
+        DVec3::new(
+            f64::from(pos.x()) + 0.5,
+            f64::from(pos.y()),
+            f64::from(pos.z()) + 0.5,
+        ),
+        0.0,
+        0.0,
+        true,
+    );
     let _ = placer.add_fresh_entity(entity);
 }
 

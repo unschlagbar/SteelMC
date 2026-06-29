@@ -22,16 +22,17 @@ use steel_utils::{locks::SyncMutex, types::InteractionHand};
 use text_components::TextComponent;
 use uuid::Uuid;
 
-use crate::world::World;
 use crate::{
     behavior::InteractionResult,
     entity::{
-        Entity, EntityLevelCallback, EntityMoveError, InsideBlockEffectType, LockedEntity,
-        NullEntityCallback, RemovalReason, SharedEntity, WeakEntity, damage::DamageSource,
+        Animal, Entity, EntityLevelCallback, EntityMoveError, InsideBlockEffectType, LockedEntity,
+        Mob, NullEntityCallback, PathfinderMob, RemovalReason, SharedEntity, WeakEntity,
+        damage::DamageSource,
     },
     player::Player,
 };
 use crate::{entity::EntityIdentifier, physics::EntityPhysicsState};
+use crate::{entity::LivingEntity, world::World};
 use crate::{entity::fluid_contact::EntityFluidContact, portal::TeleportTransition};
 
 const PISTON_MOVEMENT_LIMIT: f64 = 0.51;
@@ -1260,47 +1261,35 @@ impl EntityBase {
     }
 
     /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
-    pub fn with_living<R>(
-        &self,
-        f: impl FnOnce(&dyn crate::entity::LivingEntity) -> R,
-    ) -> Option<R> {
+    pub fn with_living<R>(&self, f: impl FnOnce(&dyn LivingEntity) -> R) -> Option<R> {
         self.with_entity(|e| e.as_living_entity().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
-    pub fn with_living_mut<R>(
-        &self,
-        f: impl FnOnce(&mut dyn crate::entity::LivingEntity) -> R,
-    ) -> Option<R> {
+    pub fn with_living_mut<R>(&self, f: impl FnOnce(&mut dyn LivingEntity) -> R) -> Option<R> {
         self.with_entity(|e| e.as_living_entity_mut().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`Mob`], if it is one.
-    pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&dyn crate::entity::Mob) -> R) -> Option<R> {
+    pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&dyn Mob) -> R) -> Option<R> {
         self.with_entity(|e| e.as_mob().map(f))
     }
 
     /// Runs a closure with the attached entity as a mutable [`Mob`], if it is one.
-    pub(crate) fn with_mob_mut<R>(
-        &self,
-        f: impl FnOnce(&mut dyn crate::entity::Mob) -> R,
-    ) -> Option<R> {
+    pub(crate) fn with_mob_mut<R>(&self, f: impl FnOnce(&mut dyn Mob) -> R) -> Option<R> {
         self.with_entity(|e| e.as_mob_mut().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`PathfinderMob`], if it is one.
     pub(crate) fn with_pathfinder_mob<R>(
         &self,
-        f: impl FnOnce(&mut dyn crate::entity::PathfinderMob) -> R,
+        f: impl FnOnce(&mut dyn PathfinderMob) -> R,
     ) -> Option<R> {
         self.with_entity(|e| e.as_pathfinder_mob_mut().map(f))
     }
 
     /// Runs a closure with the attached entity as an [`Animal`](crate::entity::Animal), if it is one.
-    pub(crate) fn with_animal<R>(
-        &self,
-        f: impl FnOnce(&mut dyn crate::entity::Animal) -> R,
-    ) -> Option<R> {
+    pub(crate) fn with_animal<R>(&self, f: impl FnOnce(&mut dyn Animal) -> R) -> Option<R> {
         self.with_entity(|e| e.as_animal_mut().map(f))
     }
 
@@ -1317,7 +1306,12 @@ impl EntityBase {
     /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
     /// Use this when you need to hold the lock across multiple calls on the same entity.
     pub fn lock_entity(&self) -> LockedEntity<'_> {
-        LockedEntity(self.entity.get().unwrap().lock())
+        LockedEntity(
+            self.entity
+                .get()
+                .expect("Entity must be initialised")
+                .lock(),
+        )
     }
 
     // These go through `with_entity`: mobs take the behavior lock, players

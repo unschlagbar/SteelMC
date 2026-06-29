@@ -1012,15 +1012,20 @@ impl WorldEntityManager {
 
     #[must_use]
     /// Gets the nearest live entity whose bounding box intersects `aabb` and matches `predicate`.
+    ///
+    /// `exclude_id` is skipped lock-free before `predicate` runs. Callers ticking inside an
+    /// entity's behavior lock (e.g. AI goals) MUST pass that entity's id: otherwise the scan
+    /// re-locks the ticking entity when it appears in its own search box and self-deadlocks.
     pub fn nearest_entity_in_aabb_matching(
         &self,
         aabb: &WorldAabb,
         origin: DVec3,
+        exclude_id: i32,
         mut predicate: impl FnMut(&mut dyn Entity) -> bool,
     ) -> Option<SharedEntity> {
         self.get_entities_in_aabb(aabb)
             .into_iter()
-            .filter(|entity| entity.with_entity(|e| predicate(e)))
+            .filter(|entity| entity.id() != exclude_id && entity.with_entity(|e| predicate(e)))
             .min_by(|first, second| {
                 first
                     .position()
@@ -1950,7 +1955,7 @@ mod tests {
 
         let aabb = WorldAabb::new(0.0, 63.0, 0.0, 10.0, 66.0, 3.0);
         let result =
-            manager.nearest_entity_in_aabb_matching(&aabb, DVec3::ZERO, |entity| entity.id() > 1);
+            manager.nearest_entity_in_aabb_matching(&aabb, DVec3::ZERO, 0, |entity| entity.id() > 1);
 
         let Some(result) = result else {
             panic!("nearest matching entity should be found");

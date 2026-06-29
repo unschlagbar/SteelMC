@@ -135,7 +135,7 @@ impl Goal for LookAtPlayerGoal {
                 let search_box =
                     mob.bounding_box()
                         .inflate_xyz(self.look_distance, 3.0, self.look_distance);
-                world.nearest_entity_in_aabb_matching(&search_box, origin, |entity| {
+                world.nearest_entity_in_aabb_matching(&search_box, origin, mob.id(), |entity| {
                     entity.as_living_entity().is_some_and(|living| {
                         selector(living, world.as_ref())
                             && self.look_at_context.test(world.as_ref(), Some(mob), living)

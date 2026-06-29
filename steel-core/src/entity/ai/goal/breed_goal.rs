@@ -32,7 +32,7 @@ impl BreedGoal {
             .range(PARTNER_SEARCH_RANGE)
             .ignore_line_of_sight();
 
-        world.nearest_entity_in_aabb_matching(&search_box, mob.position(), |entity| {
+        world.nearest_entity_in_aabb_matching(&search_box, mob.position(), mob.id(), |entity| {
             let Some(candidate) = entity.as_animal() else {
                 return false;
             };

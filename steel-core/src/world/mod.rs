@@ -1395,6 +1395,19 @@ impl World {
 
         let random_tick_speed = self.get_game_rule(&RANDOM_TICK_SPEED).as_int().unwrap_or(3) as u32;
 
+        // Process inbound packets before the world ticks, matching vanilla's
+        // "handle packets -> tick level -> send acks" order. Block edits from a
+        // placement packet must be marked dirty *before* `broadcast_changed_chunks`
+        // (inside `chunk_map.tick_game`) so the resulting `CBlockUpdate` is sent in
+        // the same tick as, and ahead of, the `CBlockChangedAck` from this packet.
+        // Draining after the broadcast would send the ack a tick before the block
+        // update, making the client revert its prediction (e.g. a freshly placed
+        // fence visibly disconnects, then reconnects when the update finally arrives).
+        self.players.iter_players(|_uuid, player| {
+            ServerPlayer::drain_inbound(player);
+            true
+        });
+
         let chunk_map_timings =
             self.chunk_map
                 .tick_game(self, tick_count, random_tick_speed, runs_normally);
@@ -1414,7 +1427,6 @@ impl World {
             let _span = tracing::trace_span!("player_tick").entered();
             let start = Instant::now();
             self.players.iter_players(|_uuid, player| {
-                ServerPlayer::drain_inbound(player);
                 player.entity().lock().tick();
                 if runs_normally {
                     let player_guard = player.entity().lock();
@@ -3844,10 +3856,11 @@ impl World {
         &self,
         aabb: &WorldAabb,
         origin: DVec3,
+        exclude_id: i32,
         predicate: impl FnMut(&mut dyn Entity) -> bool,
     ) -> Option<SharedEntity> {
         self.entity_manager
-            .nearest_entity_in_aabb_matching(aabb, origin, predicate)
+            .nearest_entity_in_aabb_matching(aabb, origin, exclude_id, predicate)
     }
 
     /// Gets the nearest player to `position` within `max_distance`.
