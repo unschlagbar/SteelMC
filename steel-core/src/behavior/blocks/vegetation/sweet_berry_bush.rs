@@ -270,7 +270,7 @@ mod tests {
                 crate::entity::next_entity_id(),
                 DVec3::ZERO,
                 EntityDimensions::new(0.6, 1.8, 1.62),
-                std::sync::Weak::new(),
+                Weak::new(),
                 |base| Self {
                     base,
                     entity_type,

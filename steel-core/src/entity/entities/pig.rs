@@ -10,18 +10,18 @@ use simdnbt::borrow::NbtCompound as BorrowedNbtCompoundView;
 use simdnbt::owned::NbtCompound;
 use steel_macros::entity_behavior;
 use steel_protocol::packets::game::{AttributeSnapshot, EquipmentSlotItem, SoundSource};
-use steel_registry::entity_type::EntityTypeRef;
+use steel_registry::entity_type::{
+    EntityAttachmentPoint, EntityAttachments, EntityDimensions, EntityTypeRef,
+};
 use steel_registry::item_stack::ItemStack;
 use steel_registry::pig_sound_variant::{PigAge, PigSoundVariantRef};
 use steel_registry::pig_variant::PigVariantRef;
 use steel_registry::sound_event::SoundEventRef;
 use steel_registry::vanilla_entity_data::PigEntityData;
-use steel_registry::vanilla_game_rules::MAX_ENTITY_CRAMMING;
 use steel_registry::vanilla_item_tags::ItemTag;
 use steel_registry::{
     REGISTRY, RegistryEntry, RegistryExt, TaggedRegistryExt, sound_events, vanilla_attributes,
-    vanilla_damage_types, vanilla_items, vanilla_particle_types, vanilla_pig_sound_variants,
-    vanilla_pig_variants,
+    vanilla_items, vanilla_particle_types, vanilla_pig_sound_variants, vanilla_pig_variants,
 };
 use steel_utils::random::Random as _;
 use steel_utils::types::InteractionHand;
@@ -34,7 +34,7 @@ use crate::entity::ai::goal::{
 };
 use crate::entity::damage::DamageSource;
 use crate::entity::{
-    AgeableMob, AgeableMobBase, Animal, AnimalBase, Entity, EntityBase, EntityBaseLoad,
+    AgeableMob, AgeableMobBase, Animal, AnimalBase, Entity, EntityBase, EntityBaseLoad, EntityPose,
     EntitySpawnReason, EntitySyncedData, ItemBasedSteering, ItemSteerable, LivingEntity,
     LivingEntityBase, Mob, MobBase, MobEffectSyncChange, PathfinderMob, SharedEntity,
     SpawnGroupData,
@@ -43,6 +43,15 @@ use crate::inventory::equipment::EquipmentSlot;
 use crate::physics::MoveResult;
 use crate::player::Player;
 use crate::world::World;
+
+const PIG_BABY_PASSENGER_ATTACHMENTS: [EntityAttachmentPoint; 1] =
+    [EntityAttachmentPoint::new(0.0, 0.5, 0.0)];
+const PIG_BABY_DIMENSIONS: EntityDimensions = EntityDimensions::new_with_attachments(
+    0.45,
+    0.45,
+    0.40625,
+    EntityAttachments::new(&PIG_BABY_PASSENGER_ATTACHMENTS, &[], &[], &[]),
+);
 
 /// Vanilla pig entity.
 #[entity_behavior(class = "pig")]
@@ -375,68 +384,6 @@ impl Pig {
             .set_base_glowing_flag(self.has_glowing_tag() || display.glowing);
     }
 
-    fn push_entities(&mut self, world: &Arc<World>) {
-        if !world.tick_runs_normally() {
-            return;
-        }
-
-        let pusher = self.base.upgrade().unwrap();
-        let pushable_entities = world.get_pushable_entities(pusher, &self.bounding_box());
-        if pushable_entities.is_empty() {
-            return;
-        }
-
-        self.apply_entity_cramming_damage(world, &pushable_entities);
-
-        for entity in pushable_entities {
-            entity.push_entity(self);
-        }
-    }
-
-    fn apply_entity_cramming_damage(&mut self, world: &World, pushable_entities: &[SharedEntity]) {
-        let max_cramming = world
-            .get_game_rule(&MAX_ENTITY_CRAMMING)
-            .as_int()
-            .unwrap_or(24);
-
-        if max_cramming <= 0 || pushable_entities.len() <= (max_cramming - 1) as usize {
-            return;
-        }
-
-        let pig_base = self.base();
-        let random_roll = pig_base.random().lock().next_i32_bounded(4);
-        let non_passenger_count = pushable_entities
-            .iter()
-            .filter(|entity| !entity.is_passenger())
-            .count();
-
-        if Self::should_apply_entity_cramming_damage(
-            max_cramming,
-            pushable_entities.len(),
-            non_passenger_count,
-            random_roll,
-        ) {
-            self.hurt(
-                &DamageSource::environment(&vanilla_damage_types::CRAMMING),
-                6.0,
-            );
-        }
-    }
-
-    const fn should_apply_entity_cramming_damage(
-        max_cramming: i32,
-        pushable_count: usize,
-        non_passenger_count: usize,
-        random_roll: i32,
-    ) -> bool {
-        if max_cramming <= 0 || random_roll != 0 {
-            return false;
-        }
-
-        let threshold = (max_cramming - 1) as usize;
-        pushable_count > threshold && non_passenger_count > threshold
-    }
-
     /// Returns whether the stack is vanilla pig food.
     #[must_use]
     pub fn is_food(&self, item_stack: &ItemStack) -> bool {
@@ -453,6 +400,17 @@ impl Entity for Pig {
 
     fn entity_type(&self) -> EntityTypeRef {
         self.entity_type
+    }
+
+    fn dimensions_for_pose(&self, _pose: EntityPose) -> EntityDimensions {
+        let scale = LivingEntity::get_scale(self);
+        if self.is_baby() {
+            PIG_BABY_DIMENSIONS.scale(scale)
+        } else if self.entity_type.fixed {
+            self.entity_type.dimensions
+        } else {
+            self.entity_type.dimensions.scale(scale)
+        }
     }
 
     fn tick(&mut self) {
@@ -754,11 +712,6 @@ impl LivingEntity for Pig {
         if !self.is_removed() {
             self.apply_effects_from_blocks();
         }
-        if !self.is_removed()
-            && let Some(world) = self.level()
-        {
-            self.push_entities(&world);
-        }
 
         AgeableMob::tick_ageable_mob(self);
         Animal::tick_animal_love(self);
@@ -959,8 +912,11 @@ mod tests {
 
     use simdnbt::borrow::read_compound as read_borrowed_compound;
     use simdnbt::owned::NbtTag;
+    use steel_registry::entity_type::EntityAttachment;
     use steel_registry::test_support::init_test_registry;
-    use steel_registry::{vanilla_blocks, vanilla_entities, vanilla_items::ITEMS};
+    use steel_registry::{
+        vanilla_blocks, vanilla_damage_types, vanilla_entities, vanilla_items::ITEMS,
+    };
     use steel_utils::UuidExt;
     use uuid::Uuid;
 
@@ -1564,8 +1520,17 @@ mod tests {
         assert_eq!(pig.base().dimensions(), adult_dimensions);
 
         pig.set_age(-1);
-        let baby_dimensions = adult_dimensions.scale(0.5);
+        let baby_dimensions = PIG_BABY_DIMENSIONS;
         assert_eq!(pig.base().dimensions(), baby_dimensions);
+        assert_eq!(baby_dimensions.eye_height.to_bits(), 0.40625_f32.to_bits());
+        assert_eq!(
+            baby_dimensions
+                .attachments
+                .get_clamped(EntityAttachment::Passenger, 0, 0.0, baby_dimensions)
+                .y
+                .to_bits(),
+            0.5_f64.to_bits()
+        );
         assert_eq!(
             pig.bounding_box().width().to_bits(),
             f64::from(baby_dimensions.width).to_bits()
