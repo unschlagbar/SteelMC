@@ -140,7 +140,7 @@ mod tests {
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
     use super::*;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     #[test]
     fn breed_goal_uses_move_and_look_controls() {
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn breed_goal_requires_love_mode() {
         init_test_registry();
-        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let mut goal = BreedGoal::new(1.0);
 
         assert!(!goal.can_use(&mut pig));

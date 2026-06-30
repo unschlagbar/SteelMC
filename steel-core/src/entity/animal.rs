@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::behavior::InteractionResult;
 use crate::entity::ai::path::PathType;
-use crate::entity::entities::ExperienceOrbEntity;
+use crate::entity::entities::ExperienceOrb;
 use crate::entity::{
     AgeableMob, AgeableMobBase, ENTITIES, EntitySpawnReason, Mob, MobBase, SharedEntity,
     next_entity_id,
@@ -332,7 +332,7 @@ pub trait Animal: AgeableMob {
 
         if world.get_game_rule(&MOB_DROPS).as_bool() == Some(true) {
             let xp = self.base().random().lock().next_i32_bounded(7) + 1;
-            ExperienceOrbEntity::award(world, self.position(), xp);
+            ExperienceOrb::award(world, self.position(), xp);
         }
     }
 
@@ -387,7 +387,7 @@ mod tests {
     use steel_utils::BlockStateId;
 
     use super::*;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     struct SpawnRuleLevel {
         below_pos: BlockPos,
@@ -430,7 +430,7 @@ mod tests {
         init_test_registry();
         let level = spawn_rule_level(vanilla_blocks::STONE.default_state(), 15);
 
-        assert!(!<PigEntity as Animal>::check_animal_spawn_rules(
+        assert!(!<Pig as Animal>::check_animal_spawn_rules(
             &level,
             EntitySpawnReason::Natural,
             BlockPos::new(0, 64, 0)
@@ -442,7 +442,7 @@ mod tests {
         init_test_registry();
         let level = spawn_rule_level(vanilla_blocks::GRASS_BLOCK.default_state(), 8);
 
-        assert!(!<PigEntity as Animal>::check_animal_spawn_rules(
+        assert!(!<Pig as Animal>::check_animal_spawn_rules(
             &level,
             EntitySpawnReason::Natural,
             BlockPos::new(0, 64, 0)
@@ -450,7 +450,7 @@ mod tests {
 
         let level = spawn_rule_level(vanilla_blocks::GRASS_BLOCK.default_state(), 9);
 
-        assert!(<PigEntity as Animal>::check_animal_spawn_rules(
+        assert!(<Pig as Animal>::check_animal_spawn_rules(
             &level,
             EntitySpawnReason::Natural,
             BlockPos::new(0, 64, 0)
@@ -462,7 +462,7 @@ mod tests {
         init_test_registry();
         let level = spawn_rule_level(vanilla_blocks::GRASS_BLOCK.default_state(), 0);
 
-        assert!(<PigEntity as Animal>::check_animal_spawn_rules(
+        assert!(<Pig as Animal>::check_animal_spawn_rules(
             &level,
             EntitySpawnReason::TrialSpawner,
             BlockPos::new(0, 64, 0)

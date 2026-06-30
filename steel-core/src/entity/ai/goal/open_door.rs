@@ -61,10 +61,10 @@ mod tests {
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
     use super::*;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
-    fn pig() -> PigEntity {
-        PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+    fn pig() -> Pig {
+        Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
     }
 
     #[test]

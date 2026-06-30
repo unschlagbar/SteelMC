@@ -6,7 +6,7 @@ use steel_registry::vanilla_entities;
 
 use super::super::prelude::*;
 use super::super::runner::FeatureDecorationRunner;
-use crate::entity::entities::EndCrystalEntity;
+use crate::entity::entities::EndCrystal;
 use crate::entity::next_entity_id;
 
 const END_SPIKE_COUNT: usize = 10;
@@ -177,7 +177,7 @@ impl FeatureDecorationRunner {
             f64::from(spike.height + 1),
             f64::from(spike.center_z) + 0.5,
         );
-        let crystal = EndCrystalEntity::new(
+        let crystal = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             position,
@@ -185,7 +185,7 @@ impl FeatureDecorationRunner {
         );
         {
             let mut crystal = crystal.lock_entity();
-            let crystal: &mut EndCrystalEntity = crystal.downcast().unwrap();
+            let crystal: &mut EndCrystal = crystal.downcast().unwrap();
 
             crystal.set_beam_target(
                 config

@@ -12,10 +12,10 @@ mod raw;
 
 pub use block_display::BlockDisplayEntity;
 pub use chest_minecart::ChestMinecartEntity;
-pub use end_crystal::EndCrystalEntity;
-pub use experience_orb::ExperienceOrbEntity;
+pub use end_crystal::EndCrystal;
+pub use experience_orb::ExperienceOrb;
 pub use item::ItemEntity;
-pub use item_frame::ItemFrameEntity;
+pub use item_frame::ItemFrame;
 pub use leash_fence_knot::LeashFenceKnotEntity;
-pub use pig::PigEntity;
+pub use pig::Pig;
 pub use raw::RawEntity;

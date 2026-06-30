@@ -63,7 +63,7 @@ use crate::world::game_event_context::GameEventContext;
 use crate::world::{ClipBlockShape, ClipFluid, LevelReader, World};
 use crate::{enchantment_helper, entity::damage::DamageSource, player::Player};
 
-use entities::ExperienceOrbEntity;
+use entities::ExperienceOrb;
 
 /// Global counter for allocating unique entity IDs.
 ///
@@ -4728,7 +4728,7 @@ pub trait LivingEntity: Entity {
 
         let reward = self.experience_reward(world, killer_entity_id);
         if reward > 0 {
-            ExperienceOrbEntity::award(world, self.position(), reward);
+            ExperienceOrb::award(world, self.position(), reward);
         }
     }
 
@@ -6617,7 +6617,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::entity::damage::DamageSource;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
     use crate::entity::mob::Mob;
     use crate::inventory::equipment::EquipmentSlot;
 
@@ -7153,7 +7153,7 @@ mod tests {
     fn living_death_loot_table_uses_default_and_custom_mob_tables() {
         init_test_registry();
 
-        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let Some(default_table) = pig.death_loot_table() else {
             panic!("pig should resolve its default entity loot table");
         };
@@ -8098,10 +8098,10 @@ mod tests {
         init_test_registry();
 
         let old_holder: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+            Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let new_holder: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
-        let leashable: SharedEntity = PigEntity::new(
+            Pig::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(
             &vanilla_entities::PIG,
             3,
             DVec3::new(1.0, 0.0, 0.0),
@@ -8129,10 +8129,10 @@ mod tests {
         init_test_registry();
 
         let old_holder: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+            Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let new_holder: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
-        let leashable: SharedEntity = PigEntity::new(
+            Pig::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(
             &vanilla_entities::PIG,
             3,
             DVec3::new(20.0, 0.0, 0.0),
@@ -8163,8 +8163,7 @@ mod tests {
         let old_holder: SharedEntity = old_holder_typed.entity.clone();
         let new_holder_typed = LeashNotifications::new(2);
         let new_holder: SharedEntity = new_holder_typed.entity.clone();
-        let leashable: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         leashable.with_mob(|mob| {
             assert!(mob.set_leashed_to(&old_holder));
@@ -8181,8 +8180,7 @@ mod tests {
 
         let holder_typed = LeashNotifications::new(1);
         let holder: SharedEntity = holder_typed.entity.clone();
-        let leashable: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
             .with_mob(|mob| {
@@ -8203,8 +8201,7 @@ mod tests {
 
         let holder_typed = LeashNotifications::with_position(1, DVec3::new(13.0, 0.0, 0.0));
         let holder: SharedEntity = holder_typed.entity.clone();
-        let leashable: SharedEntity =
-            PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
             .with_mob(|mob| {

@@ -165,14 +165,14 @@ mod tests {
 
     use super::*;
     use crate::entity::ai::targeting::TargetingConditions;
-    use crate::entity::{Mob, entities::PigEntity};
+    use crate::entity::{Mob, entities::Pig};
 
-    fn pig(id: i32, position: DVec3) -> PigEntity {
-        PigEntity::create(&vanilla_entities::PIG, id, position, Weak::new())
+    fn pig(id: i32, position: DVec3) -> Pig {
+        Pig::create(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     fn shared_pig(id: i32, position: DVec3) -> SharedEntity {
-        PigEntity::new(&vanilla_entities::PIG, id, position, Weak::new())
+        Pig::new(&vanilla_entities::PIG, id, position, Weak::new())
     }
 
     #[test]

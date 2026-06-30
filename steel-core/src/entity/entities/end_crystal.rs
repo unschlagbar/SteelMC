@@ -19,13 +19,13 @@ use crate::world::World;
 /// End spikes. Portal handling, dragon fight callbacks, and explosion behavior are still
 /// intentionally left to the broader entity/combat foundations.
 #[entity_behavior(class = "end_crystal")]
-pub struct EndCrystalEntity {
+pub struct EndCrystal {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     entity_data: EndCrystalEntityData,
 }
 
-impl EndCrystalEntity {
+impl EndCrystal {
     /// Creates a new End Crystal entity.
     #[must_use]
     pub fn new(
@@ -95,7 +95,7 @@ impl EndCrystalEntity {
     }
 }
 
-impl Entity for EndCrystalEntity {
+impl Entity for EndCrystal {
     fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn end_crystal_does_not_duplicate_shared_invulnerable_state() {
-        let crystal = EndCrystalEntity::new(
+        let crystal = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             crate::entity::next_entity_id(),
             DVec3::ZERO,
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn end_crystal_is_pickable_like_vanilla() {
-        let crystal = EndCrystalEntity::new(
+        let crystal = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             crate::entity::next_entity_id(),
             DVec3::ZERO,
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn end_crystal_blocks_building_like_vanilla() {
-        let crystal = EndCrystalEntity::new(
+        let crystal = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             crate::entity::next_entity_id(),
             DVec3::ZERO,

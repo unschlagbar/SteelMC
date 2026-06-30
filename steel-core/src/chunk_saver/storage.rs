@@ -2727,7 +2727,7 @@ mod tests {
     use crate::block_entity::init_block_entities;
     use crate::entity::{
         DEFAULT_MAX_AIR_SUPPLY, Entity, SharedEntity,
-        entities::{EndCrystalEntity, RawEntity},
+        entities::{EndCrystal, RawEntity},
         init_entities, next_entity_id,
     };
     use glam::DVec3;
@@ -2989,7 +2989,7 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let entity_pos = DVec3::new(5.5, 6.0, 7.5);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
-        let crystal = EndCrystalEntity::new(
+        let crystal = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             entity_pos,
@@ -2997,7 +2997,7 @@ mod tests {
         );
         {
             let mut guard = crystal.lock_entity();
-            let crystal: &mut EndCrystalEntity = guard.downcast().unwrap();
+            let crystal: &mut EndCrystal = guard.downcast().unwrap();
             crystal.set_beam_target(Some(BlockPos::new(0, 64, 0)));
             crystal.set_invulnerable(true);
             crystal.set_fall_distance(3.75);
@@ -3082,7 +3082,7 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let entity: SharedEntity = EndCrystalEntity::new(
+        let entity: SharedEntity = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             DVec3::new(5.5, 6.0, 7.5),
@@ -3106,7 +3106,7 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let entity: SharedEntity = EndCrystalEntity::new(
+        let entity: SharedEntity = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             DVec3::new(5.5, 6.0, 7.5),
@@ -3141,13 +3141,13 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let vehicle: SharedEntity = EndCrystalEntity::new(
+        let vehicle: SharedEntity = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             DVec3::new(5.5, 6.0, 7.5),
             Weak::new(),
         );
-        let passenger: SharedEntity = EndCrystalEntity::new(
+        let passenger: SharedEntity = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             DVec3::new(5.5, 8.0, 7.5),
@@ -3205,7 +3205,7 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         let proto = ProtoChunk::new(single_empty_section(), pos, 0, 16, Weak::new());
         let chunk = ChunkAccess::Proto(proto);
-        let vehicle: SharedEntity = EndCrystalEntity::new(
+        let vehicle: SharedEntity = EndCrystal::new(
             &vanilla_entities::END_CRYSTAL,
             next_entity_id(),
             DVec3::new(5.5, 6.0, 7.5),

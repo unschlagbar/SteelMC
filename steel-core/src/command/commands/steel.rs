@@ -46,7 +46,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                         let current_world = target.world();
                         if current_world.domain() == world.domain() {
                             context.server.queue_world_change(
-                                target.entity.lock().shared_entity(),
+                                target.entity_base.clone(),
                                 WorldChangeRequest::WorldSpawn {
                                     target_world: world.clone(),
                                 },

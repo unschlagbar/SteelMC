@@ -34,9 +34,9 @@ impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), TextComponent)> for TellrawC
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let sender = match &context.sender {
-            CommandSender::Player(player) => player.name.clone(),
-            CommandSender::Console => "Console".to_string(),
-            CommandSender::Rcon => "Rcon".to_string(),
+            CommandSender::Player(player) => &player.name,
+            CommandSender::Console => "Console",
+            CommandSender::Rcon => "Rcon",
         };
         log::info!("{}'s tellraw: {:p}", sender, args.1);
         for player in args.0.1 {

@@ -169,7 +169,7 @@ mod tests {
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
     use super::*;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     #[test]
     fn follow_mob_goal_uses_move_and_look_controls() {
@@ -182,7 +182,7 @@ mod tests {
     fn follow_mob_goal_requires_world() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -191,7 +191,7 @@ mod tests {
     fn follow_mob_goal_temporarily_removes_water_malus() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_pathfinding_malus(PathType::Water, 4.0);
 
         goal.start(&mut mob);
@@ -213,8 +213,8 @@ mod tests {
     fn follow_mob_goal_stops_when_no_navigation_is_running() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        goal.following_mob = Some(PigEntity::new(
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        goal.following_mob = Some(Pig::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(4.0, 0.0, 0.0),
@@ -228,8 +228,8 @@ mod tests {
     fn follow_mob_goal_looks_at_following_mob() {
         init_test_registry();
         let mut goal = FollowMobGoal::new(1.0, 3.0, 7.0, |_, _| true);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let following_mob: SharedEntity = PigEntity::new(
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let following_mob: SharedEntity = Pig::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(4.0, 0.0, 0.0),

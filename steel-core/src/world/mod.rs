@@ -4065,7 +4065,7 @@ mod tests {
     use steel_registry::entity_type::EntityTypeRef;
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
-    use crate::entity::{EntityBase, entities::PigEntity};
+    use crate::entity::{EntityBase, entities::Pig};
 
     const FIRST_HALF: BlockLocalAabb = BlockLocalAabb::new(0.0, 0.0, 0.0, 0.5, 1.0, 1.0);
     const SECOND_HALF: BlockLocalAabb = BlockLocalAabb::new(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
@@ -4143,7 +4143,7 @@ mod tests {
 
         let tracker = NavigatingMobTracker::new();
         let non_pathfinder = TrackerTestEntity::shared();
-        let pig = PigEntity::new(
+        let pig = Pig::new(
             &vanilla_entities::PIG,
             2,
             DVec3::ZERO,

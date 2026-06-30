@@ -134,7 +134,7 @@ mod tests {
     use steel_registry::{test_support::init_test_registry, vanilla_entities};
 
     use super::*;
-    use crate::entity::{Mob, entities::PigEntity};
+    use crate::entity::{Mob, entities::Pig};
 
     #[test]
     fn avoid_entity_goal_uses_move_control() {
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn avoid_entity_default_selector_allows_non_player_living_entities() {
         init_test_registry();
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(no_creative_or_spectator(&pig));
     }
@@ -155,7 +155,7 @@ mod tests {
     fn avoid_entity_goal_requires_world() {
         init_test_registry();
         let mut goal = AvoidEntityGoal::new(8.0, 1.0, 1.2);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -164,8 +164,8 @@ mod tests {
     fn avoid_entity_goal_sprints_when_close_to_avoided_entity() {
         init_test_registry();
         let mut goal = AvoidEntityGoal::new(8.0, 1.0, 1.2);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        goal.to_avoid = Some(PigEntity::new(
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        goal.to_avoid = Some(Pig::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(2.0, 0.0, 0.0),
@@ -184,8 +184,8 @@ mod tests {
     fn avoid_entity_goal_walks_when_far_from_avoided_entity() {
         init_test_registry();
         let mut goal = AvoidEntityGoal::new(8.0, 1.0, 1.2);
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        goal.to_avoid = Some(PigEntity::new(
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        goal.to_avoid = Some(Pig::new(
             &vanilla_entities::PIG,
             2,
             DVec3::new(8.0, 0.0, 0.0),

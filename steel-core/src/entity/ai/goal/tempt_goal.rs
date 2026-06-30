@@ -189,7 +189,7 @@ mod tests {
     use steel_registry::{test_support::init_test_registry, vanilla_entities, vanilla_items};
 
     use super::*;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
     use crate::inventory::equipment::EquipmentSlot;
 
     #[test]
@@ -208,7 +208,7 @@ mod tests {
             |item_stack| item_stack.is(&vanilla_items::ITEMS.carrot),
             false,
         );
-        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.should_follow(&pig));
 

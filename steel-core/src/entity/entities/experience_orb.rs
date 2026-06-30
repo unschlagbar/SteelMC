@@ -42,7 +42,7 @@ const FOLLOW_ACCELERATION: f64 = 0.1;
 
 /// Vanilla experience orb entity.
 #[entity_behavior(class = "experience_orb")]
-pub struct ExperienceOrbEntity {
+pub struct ExperienceOrb {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     entity_data: ExperienceOrbEntityData,
@@ -52,7 +52,7 @@ pub struct ExperienceOrbEntity {
     following_player_id: Option<i32>,
 }
 
-impl ExperienceOrbEntity {
+impl ExperienceOrb {
     fn build(base: Weak<EntityBase>, entity_type: EntityTypeRef) -> Self {
         Self {
             base,
@@ -249,7 +249,7 @@ impl ExperienceOrbEntity {
         !self.is_removed() && (self.id() - id) % ORB_GROUPS_PER_AREA == 0 && self.value() == value
     }
 
-    fn merge(&mut self, other: &ExperienceOrbEntity) {
+    fn merge(&mut self, other: &ExperienceOrb) {
         self.count += other.count;
         self.age = self.age.min(other.age);
 
@@ -397,7 +397,7 @@ impl ExperienceOrbEntity {
     }
 }
 
-impl Entity for ExperienceOrbEntity {
+impl Entity for ExperienceOrb {
     fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
@@ -542,20 +542,20 @@ mod tests {
 
     #[test]
     fn experience_value_buckets_match_vanilla() {
-        assert_eq!(ExperienceOrbEntity::get_experience_value(2477), 2477);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(2476), 1237);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(1236), 617);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(616), 307);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(306), 149);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(148), 73);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(72), 37);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(36), 17);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(16), 7);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(6), 3);
-        assert_eq!(ExperienceOrbEntity::get_experience_value(2), 1);
+        assert_eq!(ExperienceOrb::get_experience_value(2477), 2477);
+        assert_eq!(ExperienceOrb::get_experience_value(2476), 1237);
+        assert_eq!(ExperienceOrb::get_experience_value(1236), 617);
+        assert_eq!(ExperienceOrb::get_experience_value(616), 307);
+        assert_eq!(ExperienceOrb::get_experience_value(306), 149);
+        assert_eq!(ExperienceOrb::get_experience_value(148), 73);
+        assert_eq!(ExperienceOrb::get_experience_value(72), 37);
+        assert_eq!(ExperienceOrb::get_experience_value(36), 17);
+        assert_eq!(ExperienceOrb::get_experience_value(16), 7);
+        assert_eq!(ExperienceOrb::get_experience_value(6), 3);
+        assert_eq!(ExperienceOrb::get_experience_value(2), 1);
     }
 
-    fn test_orb() -> ExperienceOrbEntity {
+    fn test_orb() -> ExperienceOrb {
         // Fixed id 1: merge grouping asserts depend on `id % ORB_GROUPS_PER_AREA`.
         let base = Arc::new(EntityBase::new(
             1,
@@ -566,7 +566,7 @@ mod tests {
         let base_weak = Arc::downgrade(&base);
         // Leak the base so the weak back-reference stays upgradable.
         std::mem::forget(base);
-        ExperienceOrbEntity::build(base_weak, &vanilla_entities::EXPERIENCE_ORB)
+        ExperienceOrb::build(base_weak, &vanilla_entities::EXPERIENCE_ORB)
     }
 
     #[test]

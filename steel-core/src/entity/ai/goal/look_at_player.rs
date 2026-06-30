@@ -204,7 +204,7 @@ mod tests {
 
     use super::*;
     use crate::entity::Entity as _;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     #[test]
     fn look_at_player_goal_claims_only_look_control() {
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn look_at_player_goal_uses_vanilla_adjusted_look_time() {
         init_test_registry();
-        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let mut goal = LookAtPlayerGoal::new(6.0);
         let seed = 12345;
         pig.base().random().lock().set_seed(seed);

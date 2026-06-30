@@ -197,14 +197,14 @@ mod tests {
 
     use super::*;
     use crate::entity::ai::node::Node;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
     use crate::entity::{Entity, EntityGroundContact, EntityMovementFlags};
 
-    fn pig(position: DVec3) -> PigEntity {
-        PigEntity::create(&vanilla_entities::PIG, 1, position, Weak::new())
+    fn pig(position: DVec3) -> Pig {
+        Pig::create(&vanilla_entities::PIG, 1, position, Weak::new())
     }
 
-    fn set_horizontal_collision(mob: &PigEntity) {
+    fn set_horizontal_collision(mob: &Pig) {
         mob.base().set_movement_flags(
             EntityMovementFlags::new().with_horizontal_collision(true),
             EntityGroundContact::airborne(),

@@ -104,7 +104,7 @@ mod tests {
 
     use super::*;
     use crate::entity::Entity;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     #[test]
     fn try_find_water_goal_claims_no_controls_like_vanilla() {
@@ -117,7 +117,7 @@ mod tests {
     fn try_find_water_goal_requires_on_ground() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -126,7 +126,7 @@ mod tests {
     fn try_find_water_goal_requires_world_after_on_ground_check() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mut mob = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         mob.set_on_ground(true);
 
         assert!(!goal.can_use(&mut mob));

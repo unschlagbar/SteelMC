@@ -23,14 +23,14 @@ use crate::world::World;
 /// persistence. Interaction, drops, map tracking, and support checks belong to
 /// the full item-frame entity implementation.
 #[entity_behavior(class = "item_frame")]
-pub struct ItemFrameEntity {
+pub struct ItemFrame {
     base: Weak<EntityBase>,
     entity_type: EntityTypeRef,
     entity_data: ItemFrameEntityData,
     block_pos: BlockPos,
 }
 
-impl ItemFrameEntity {
+impl ItemFrame {
     fn build(
         base: Weak<EntityBase>,
         entity_type: EntityTypeRef,
@@ -69,7 +69,7 @@ impl ItemFrameEntity {
     ) -> SharedEntity {
         EntityBase::pack_with(
             next_entity_id(),
-            ItemFrameEntity::frame_center(block_pos, direction),
+            ItemFrame::frame_center(block_pos, direction),
             entity_type.dimensions,
             Weak::new(),
             |base| Self::build(base, entity_type, block_pos, direction),
@@ -187,7 +187,7 @@ impl ItemFrameEntity {
     }
 }
 
-impl Entity for ItemFrameEntity {
+impl Entity for ItemFrame {
     fn base_weak(&self) -> &Weak<EntityBase> {
         &self.base
     }
@@ -313,14 +313,14 @@ mod tests {
 
     #[test]
     fn item_frame_persists_structure_marker_state() {
-        let frame = ItemFrameEntity::new_attached(
+        let frame = ItemFrame::new_attached(
             &vanilla_entities::ITEM_FRAME,
             BlockPos::new(12, 80, 14),
             Direction::West,
         );
         {
             let mut frame = frame.lock_entity();
-            let frame: &mut ItemFrameEntity = frame.downcast().unwrap();
+            let frame: &mut ItemFrame = frame.downcast().unwrap();
             frame.set_item(ItemStack::new(&vanilla_items::ITEMS.elytra));
         }
 
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn item_frame_is_pickable_like_vanilla() {
-        let frame = ItemFrameEntity::new_attached(
+        let frame = ItemFrame::new_attached(
             &vanilla_entities::ITEM_FRAME,
             BlockPos::new(12, 80, 14),
             Direction::West,

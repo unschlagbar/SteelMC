@@ -124,7 +124,7 @@ mod tests {
     use super::*;
     use crate::entity::LivingEntity;
     use crate::entity::damage::DamageSource;
-    use crate::entity::entities::PigEntity;
+    use crate::entity::entities::Pig;
 
     #[test]
     fn panic_goal_uses_move_control() {
@@ -138,7 +138,7 @@ mod tests {
     fn panic_goal_uses_vanilla_panic_damage_tag() {
         init_test_registry();
         let goal = PanicGoal::new(1.25);
-        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.should_panic(&mut pig));
 
