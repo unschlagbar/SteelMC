@@ -5,7 +5,8 @@
 //! embed this struct and expose it via `LivingEntity::living_base()`, just like
 //! `EntityBase` is used for core `Entity` fields.
 
-use std::{array, sync::Arc};
+use std::vec::Drain;
+use std::{array, mem, sync::Arc};
 
 use glam::DVec3;
 use rustc_hash::FxHashMap;
@@ -19,7 +20,6 @@ use steel_registry::mob_effect::MobEffectRef;
 use steel_registry::vanilla_attributes;
 use steel_registry::vanilla_entity_data::VanillaLivingEntityData;
 use steel_registry::vanilla_mob_effects;
-use steel_utils::locks::SyncMutex;
 use steel_utils::types::InteractionHand;
 use steel_utils::{BlockPos, Identifier};
 use uuid::Uuid;
@@ -514,8 +514,22 @@ impl Default for LivingSwingState {
     }
 }
 
-#[derive(Debug, Clone)]
-struct LivingEntityState {
+/// Common runtime fields shared by all living entities.
+///
+/// **Deviation from vanilla:** Vanilla calls this guard `LivingEntity.dead`,
+/// but it means death side effects have been processed, not health is zero.
+/// `ServerPlayer.die()` does NOT call `super.die()` and never sets that field.
+/// Steel uses this guard for players too because it reuses the same `Player`
+/// instance; health remains the source of truth for dead-or-dying checks such
+/// as client respawn requests.
+pub struct LivingEntityBase {
+    /// attributes
+    pub attributes: AttributeMap,
+    active_mob_effects: FxHashMap<MobEffectRef, ActiveMobEffect>,
+    dirty_mob_effects: Vec<MobEffectSyncChange>,
+    equipment: EntityEquipment,
+    equipment_attribute_modifiers: [Vec<EquipmentAttributeModifierKey>; EquipmentSlot::ALL.len()],
+
     effects_dirty: bool,
     death_processed: bool,
     invulnerable_time: i32,
@@ -531,26 +545,55 @@ struct LivingEntityState {
     absorption_amount: f32,
     skip_drop_experience: bool,
     death_time: i32,
-    speed: f32,
+    /// Cached movement speed used by living movement code.
+    pub speed: f32,
     current_impulse_impact_pos: Option<DVec3>,
     current_impulse_context_reset_grace_time: i32,
-    fall_flying: bool,
+    /// Whether this living entity is currently fall flying.
+    pub fall_flying: bool,
     fall_flying_ticks: i32,
     sprinting: bool,
     sleeping_pos: Option<BlockPos>,
     last_climbable_pos: Option<BlockPos>,
-    discard_friction: bool,
-    jumping: bool,
-    travel_input: LivingTravelInput,
+    /// Whether vanilla living travel should skip friction damping.
+    pub discard_friction: bool,
+    /// Whether this living entity is applying jump input.
+    pub jumping: bool,
+    /// Vanilla living travel input (`xxa`/`yya`/`zza`).
+    pub travel_input: LivingTravelInput,
     rotation: LivingRotationState,
     swing: LivingSwingState,
-    no_jump_delay: i32,
-    no_action_time: i32,
+    /// Vanilla jump cooldown ticks.
+    pub no_jump_delay: i32,
+    /// Vanilla `LivingEntity.noActionTime`.
+    pub no_action_time: i32,
 }
 
-impl LivingEntityState {
-    const fn new(speed: f32) -> Self {
+#[derive(Debug)]
+struct EquipmentAttributeModifierKey {
+    attribute: AttributeRef,
+    id: Identifier,
+}
+
+impl LivingEntityBase {
+    /// Creates living runtime state from an entity type's default attributes.
+    #[must_use]
+    pub fn new(entity_type: EntityTypeRef) -> Self {
+        Self::with_attributes(AttributeMap::new_for_entity(entity_type))
+    }
+
+    /// Creates living runtime state from an explicit attribute map.
+    #[must_use]
+    pub fn with_attributes(attributes: AttributeMap) -> Self {
+        let speed = attributes.required_value(vanilla_attributes::MOVEMENT_SPEED) as f32;
+
         Self {
+            attributes,
+            active_mob_effects: FxHashMap::default(),
+            dirty_mob_effects: Vec::new(),
+            equipment: EntityEquipment::new(),
+            equipment_attribute_modifiers: array::from_fn(|_| Vec::new()),
+
             effects_dirty: false,
             death_processed: false,
             invulnerable_time: 0,
@@ -584,65 +627,9 @@ impl LivingEntityState {
         }
     }
 
-    const fn reset_death_state(&mut self) {
-        self.death_processed = false;
-        self.death_time = 0;
-        self.invulnerable_time = 0;
-        self.last_hurt = 0.0;
-        self.absorption_amount = 0.0;
-        self.skip_drop_experience = false;
-    }
-}
-
-/// Common runtime fields shared by all living entities.
-///
-/// **Deviation from vanilla:** Vanilla calls this guard `LivingEntity.dead`,
-/// but it means death side effects have been processed, not health is zero.
-/// `ServerPlayer.die()` does NOT call `super.die()` and never sets that field.
-/// Steel uses this guard for players too because it reuses the same `Player`
-/// instance; health remains the source of truth for dead-or-dying checks such
-/// as client respawn requests.
-pub struct LivingEntityBase {
-    state: SyncMutex<LivingEntityState>,
-    attributes: SyncMutex<AttributeMap>,
-    active_mob_effects: SyncMutex<FxHashMap<MobEffectRef, ActiveMobEffect>>,
-    dirty_mob_effects: SyncMutex<Vec<MobEffectSyncChange>>,
-    equipment: SyncMutex<EntityEquipment>,
-    equipment_attribute_modifiers:
-        SyncMutex<[Vec<EquipmentAttributeModifierKey>; EquipmentSlot::ALL.len()]>,
-}
-
-#[derive(Debug)]
-struct EquipmentAttributeModifierKey {
-    attribute: AttributeRef,
-    id: Identifier,
-}
-
-impl LivingEntityBase {
-    /// Creates living runtime state from an entity type's default attributes.
-    #[must_use]
-    pub fn new(entity_type: EntityTypeRef) -> Self {
-        Self::with_attributes(AttributeMap::new_for_entity(entity_type))
-    }
-
-    /// Creates living runtime state from an explicit attribute map.
-    #[must_use]
-    pub fn with_attributes(attributes: AttributeMap) -> Self {
-        let speed = attributes.required_value(vanilla_attributes::MOVEMENT_SPEED) as f32;
-
-        Self {
-            state: SyncMutex::new(LivingEntityState::new(speed)),
-            attributes: SyncMutex::new(attributes),
-            active_mob_effects: SyncMutex::new(FxHashMap::default()),
-            dirty_mob_effects: SyncMutex::new(Vec::new()),
-            equipment: SyncMutex::new(EntityEquipment::new()),
-            equipment_attribute_modifiers: SyncMutex::new(array::from_fn(|_| Vec::new())),
-        }
-    }
-
     /// Returns this entity's attribute map.
     #[inline]
-    pub const fn attributes(&self) -> &SyncMutex<AttributeMap> {
+    pub const fn attributes(&self) -> &AttributeMap {
         &self.attributes
     }
 
@@ -653,68 +640,70 @@ impl LivingEntityBase {
     pub fn initialize_synced_data<T: VanillaLivingEntityData>(&self, entity_data: &mut T) {
         let max_health = self
             .attributes
-            .lock()
             .required_value(vanilla_attributes::MAX_HEALTH) as f32;
         entity_data.living_entity_mut().set_health(max_health);
     }
 
     /// Returns vanilla `LivingEntity.equipment` storage.
     #[inline]
-    pub const fn equipment(&self) -> &SyncMutex<EntityEquipment> {
+    pub const fn equipment(&mut self) -> &mut EntityEquipment {
+        &mut self.equipment
+    }
+
+    /// Returns vanilla `LivingEntity.equipment` storage.
+    #[inline]
+    pub const fn equipment_ref(&self) -> &EntityEquipment {
         &self.equipment
     }
 
     /// Returns vanilla living body/head rotation state.
     #[must_use]
     pub fn rotation_state(&self) -> LivingRotationState {
-        self.state.lock().rotation
+        self.rotation
     }
 
     /// Returns vanilla arm-swing animation state.
     #[must_use]
     pub fn swing_state(&self) -> LivingSwingState {
-        self.state.lock().swing
+        self.swing
     }
 
     /// Returns vanilla `yBodyRot`.
     #[must_use]
     pub fn y_body_rot(&self) -> f32 {
-        self.state.lock().rotation.y_body_rot
+        self.rotation.y_body_rot
     }
 
     /// Sets vanilla `yBodyRot`.
-    pub fn set_y_body_rot(&self, y_body_rot: f32) {
-        self.state.lock().rotation.y_body_rot = y_body_rot;
+    pub fn set_y_body_rot(&mut self, y_body_rot: f32) {
+        self.rotation.y_body_rot = y_body_rot;
     }
 
     /// Returns vanilla `yHeadRot`.
     #[must_use]
     pub fn y_head_rot(&self) -> f32 {
-        self.state.lock().rotation.y_head_rot
+        self.rotation.y_head_rot
     }
 
     /// Sets vanilla `yHeadRot`.
-    pub fn set_y_head_rot(&self, y_head_rot: f32) {
-        self.state.lock().rotation.y_head_rot = y_head_rot;
+    pub fn set_y_head_rot(&mut self, y_head_rot: f32) {
+        self.rotation.y_head_rot = y_head_rot;
     }
 
     /// Copies current living head/body rotations to their old-rotation fields.
-    pub fn advance_rotation_for_base_tick(&self) {
-        let mut state = self.state.lock();
-        state.rotation.y_head_rot_o = state.rotation.y_head_rot;
-        state.rotation.y_body_rot_o = state.rotation.y_body_rot;
+    pub fn advance_rotation_for_base_tick(&mut self) {
+        self.rotation.y_head_rot_o = self.rotation.y_head_rot;
+        self.rotation.y_body_rot_o = self.rotation.y_body_rot;
     }
 
     /// Copies current attack animation to vanilla `oAttackAnim`.
-    pub fn advance_attack_animation_for_base_tick(&self) {
-        let mut state = self.state.lock();
-        state.swing.old_attack_anim = state.swing.attack_anim;
+    pub fn advance_attack_animation_for_base_tick(&mut self) {
+        self.swing.old_attack_anim = self.swing.attack_anim;
     }
 
     /// Starts vanilla `LivingEntity.swing` state if the swing gate allows it.
-    pub fn start_swing(&self, hand: InteractionHand, current_swing_duration: i32) -> bool {
-        let mut state = self.state.lock();
-        let swing = &mut state.swing;
+    pub fn start_swing(&mut self, hand: InteractionHand, current_swing_duration: i32) -> bool {
+        let swing = &mut self.swing;
         if swing.swinging && swing.swing_time < current_swing_duration / 2 && swing.swing_time >= 0
         {
             return false;
@@ -727,9 +716,8 @@ impl LivingEntityBase {
     }
 
     /// Updates vanilla `LivingEntity.swingTime` and `attackAnim`.
-    pub fn update_swing_time(&self, current_swing_duration: i32) {
-        let mut state = self.state.lock();
-        let swing = &mut state.swing;
+    pub fn update_swing_time(&mut self, current_swing_duration: i32) {
+        let swing = &mut self.swing;
         if swing.swinging {
             swing.swing_time += 1;
             if swing.swing_time >= current_swing_duration {
@@ -746,50 +734,39 @@ impl LivingEntityBase {
     /// Returns vanilla `LivingEntity.absorptionAmount` for non-player living entities.
     #[must_use]
     pub fn absorption_amount(&self) -> f32 {
-        self.state.lock().absorption_amount
+        self.absorption_amount
     }
 
     /// Sets vanilla `LivingEntity.absorptionAmount` for non-player living entities.
-    pub fn set_absorption_amount(&self, amount: f32) {
-        self.state.lock().absorption_amount = amount.max(0.0);
+    pub fn set_absorption_amount(&mut self, amount: f32) {
+        self.absorption_amount = amount.max(0.0);
     }
 
     /// Runs vanilla `LivingEntity.skipDropExperience`.
-    pub fn skip_drop_experience(&self) {
-        self.state.lock().skip_drop_experience = true;
+    pub fn skip_drop_experience(&mut self) {
+        self.skip_drop_experience = true;
     }
 
     /// Returns vanilla `LivingEntity.wasExperienceConsumed`.
     #[must_use]
     pub fn was_experience_consumed(&self) -> bool {
-        self.state.lock().skip_drop_experience
-    }
-
-    /// Returns vanilla `LivingEntity.noActionTime`.
-    #[must_use]
-    pub fn no_action_time(&self) -> i32 {
-        self.state.lock().no_action_time
-    }
-
-    /// Sets vanilla `LivingEntity.noActionTime`.
-    pub fn set_no_action_time(&self, no_action_time: i32) {
-        self.state.lock().no_action_time = no_action_time;
+        self.skip_drop_experience
     }
 
     /// Increments vanilla `LivingEntity.noActionTime` by one tick.
-    pub fn increment_no_action_time(&self) {
-        self.state.lock().no_action_time += 1;
+    pub fn increment_no_action_time(&mut self) {
+        self.no_action_time += 1;
     }
 
     /// Refreshes transient item attribute modifiers for an equipment slot.
     pub fn refresh_equipment_attribute_modifiers(
-        &self,
+        &mut self,
         slot: EquipmentSlot,
         item_stack: &ItemStack,
     ) {
         let slot_index = slot.index();
-        let mut attributes = self.attributes.lock();
-        let mut installed_modifiers = self.equipment_attribute_modifiers.lock();
+        let attributes = &mut self.attributes;
+        let installed_modifiers = &mut self.equipment_attribute_modifiers;
 
         for key in installed_modifiers[slot_index].drain(..) {
             attributes.remove_modifier(key.attribute, &key.id);
@@ -832,28 +809,22 @@ impl LivingEntityBase {
     /// Returns whether this living entity has an active vanilla mob effect.
     #[must_use]
     pub fn has_mob_effect(&self, effect: MobEffectRef) -> bool {
-        self.active_mob_effects.lock().contains_key(&effect)
+        self.active_mob_effects.contains_key(&effect)
     }
 
     /// Returns active vanilla mob-effect state.
     #[must_use]
     pub fn mob_effect(&self, effect: MobEffectRef) -> Option<ActiveMobEffect> {
-        self.active_mob_effects.lock().get(&effect).cloned()
-    }
-
-    /// Returns all active vanilla mob effects.
-    #[must_use]
-    pub fn active_mob_effects(&self) -> Vec<ActiveMobEffect> {
-        self.active_mob_effects.lock().values().cloned().collect()
+        self.active_mob_effects.get(&effect).cloned()
     }
 
     /// Adds or updates active vanilla mob-effect state.
-    pub fn add_mob_effect(&self, effect: MobEffectInstance) -> bool {
+    pub fn add_mob_effect(&mut self, effect: MobEffectInstance) -> bool {
         let effect_key = effect.effect;
         let mut existing_effect = None;
         let mut changed_effect = None;
         {
-            let mut effects = self.active_mob_effects.lock();
+            let effects = &mut self.active_mob_effects;
             if let Some(current) = effects.get_mut(&effect_key) {
                 if current.update(effect) {
                     changed_effect = Some(current.clone());
@@ -888,12 +859,12 @@ impl LivingEntityBase {
     }
 
     /// Sets active vanilla mob-effect state.
-    pub fn set_mob_effect(&self, effect: MobEffectRef, amplifier: i32) {
+    pub fn set_mob_effect(&mut self, effect: MobEffectRef, amplifier: i32) {
         self.add_mob_effect(MobEffectInstance::new(effect, amplifier));
     }
 
     /// Sets the presence of a vanilla mob effect.
-    pub fn set_mob_effect_active(&self, effect: MobEffectRef, active: bool) {
+    pub fn set_mob_effect_active(&mut self, effect: MobEffectRef, active: bool) {
         if active {
             self.set_mob_effect(effect, 0);
         } else {
@@ -902,8 +873,8 @@ impl LivingEntityBase {
     }
 
     /// Removes active vanilla mob-effect state.
-    pub fn remove_mob_effect(&self, effect: MobEffectRef) -> bool {
-        let removed = self.active_mob_effects.lock().remove(&effect);
+    pub fn remove_mob_effect(&mut self, effect: MobEffectRef) -> bool {
+        let removed = self.active_mob_effects.remove(&effect);
         let Some(removed) = removed else {
             return false;
         };
@@ -915,11 +886,11 @@ impl LivingEntityBase {
     }
 
     /// Ticks active mob-effect durations and queues vanilla sync changes.
-    pub fn tick_mob_effects(&self) {
+    pub fn tick_mob_effects(&mut self) {
         let mut removed = Vec::new();
         let mut updated = Vec::new();
         {
-            let mut effects = self.active_mob_effects.lock();
+            let effects = &mut self.active_mob_effects;
             let effect_keys = effects.keys().copied().collect::<Vec<_>>();
             for effect_key in effect_keys {
                 let Some(effect) = effects.get_mut(&effect_key) else {
@@ -959,15 +930,19 @@ impl LivingEntityBase {
     }
 
     /// Drains pending mob-effect packet changes.
-    pub fn drain_dirty_mob_effects(&self) -> Vec<MobEffectSyncChange> {
-        self.dirty_mob_effects.lock().drain(..).collect()
+    pub fn drain_dirty_mob_effects(&mut self) -> Drain<'_, MobEffectSyncChange> {
+        self.dirty_mob_effects.drain(..)
+    }
+
+    /// Get the active mob effects
+    pub fn active_mob_effects(&self) -> Vec<MobEffectInstance> {
+        self.active_mob_effects.values().cloned().collect()
     }
 
     /// Returns whether synchronized effect entity data should be recomputed.
-    pub fn take_effects_dirty(&self) -> bool {
-        let mut state = self.state.lock();
-        let dirty = state.effects_dirty;
-        state.effects_dirty = false;
+    pub fn take_effects_dirty(&mut self) -> bool {
+        let dirty = self.effects_dirty;
+        self.effects_dirty = false;
         dirty
     }
 
@@ -978,7 +953,6 @@ impl LivingEntityBase {
     ) -> MobEffectDisplayState {
         let mut effects = self
             .active_mob_effects
-            .lock()
             .values()
             .cloned()
             .collect::<Vec<_>>();
@@ -1009,8 +983,8 @@ impl LivingEntityBase {
         }
     }
 
-    fn add_effect_attribute_modifiers(&self, effect: &MobEffectInstance) {
-        let mut attributes = self.attributes.lock();
+    fn add_effect_attribute_modifiers(&mut self, effect: &MobEffectInstance) {
+        let attributes = &mut self.attributes;
         for modifier in effect.effect.attribute_modifiers {
             attributes.remove_modifier(modifier.attribute, &modifier.id);
             attributes.add_modifier(
@@ -1025,152 +999,122 @@ impl LivingEntityBase {
         }
     }
 
-    fn refresh_effect_attribute_modifiers(&self, effect: &MobEffectInstance) {
+    fn refresh_effect_attribute_modifiers(&mut self, effect: &MobEffectInstance) {
         self.remove_effect_attribute_modifiers(effect.effect);
         self.add_effect_attribute_modifiers(effect);
     }
 
-    fn remove_effect_attribute_modifiers(&self, effect: MobEffectRef) {
-        let mut attributes = self.attributes.lock();
+    fn remove_effect_attribute_modifiers(&mut self, effect: MobEffectRef) {
+        let attributes = &mut self.attributes;
         for modifier in effect.attribute_modifiers {
             attributes.remove_modifier(modifier.attribute, &modifier.id);
         }
     }
 
-    fn queue_mob_effect_sync(&self, change: MobEffectSyncChange) {
-        self.dirty_mob_effects.lock().push(change);
+    fn queue_mob_effect_sync(&mut self, change: MobEffectSyncChange) {
+        self.dirty_mob_effects.push(change);
     }
 
-    fn mark_effects_dirty(&self) {
-        self.state.lock().effects_dirty = true;
-    }
-
-    /// Gets the cached movement speed used by living movement code.
-    #[inline]
-    pub fn speed(&self) -> f32 {
-        self.state.lock().speed
-    }
-
-    /// Sets the cached movement speed used by living movement code.
-    #[inline]
-    pub fn set_speed(&self, speed: f32) {
-        self.state.lock().speed = speed;
+    fn mark_effects_dirty(&mut self) {
+        self.effects_dirty = true;
     }
 
     /// Refreshes the cached movement speed from the `MOVEMENT_SPEED` attribute.
-    pub fn refresh_speed_from_attributes(&self) {
+    pub fn refresh_speed_from_attributes(&mut self) {
         if let Some(speed) = self
             .attributes
-            .lock()
             .get_value(vanilla_attributes::MOVEMENT_SPEED)
         {
-            self.state.lock().speed = speed as f32;
+            self.speed = speed as f32;
         }
     }
 
     /// Applies vanilla post-impulse movement validation grace.
-    pub fn apply_post_impulse_grace_time(&self, ticks: i32) {
-        let mut state = self.state.lock();
-        state.current_impulse_context_reset_grace_time =
-            state.current_impulse_context_reset_grace_time.max(ticks);
+    pub fn apply_post_impulse_grace_time(&mut self, ticks: i32) {
+        self.current_impulse_context_reset_grace_time =
+            self.current_impulse_context_reset_grace_time.max(ticks);
     }
 
     /// Returns whether movement validation is inside post-impulse grace.
     #[must_use]
     pub fn is_in_post_impulse_grace_time(&self) -> bool {
-        self.state.lock().current_impulse_context_reset_grace_time > 0
+        self.current_impulse_context_reset_grace_time > 0
     }
 
     /// Mirrors vanilla `LivingEntity.setIgnoreFallDamageFromCurrentImpulse`.
     pub fn set_ignore_fall_damage_from_current_impulse(
-        &self,
+        &mut self,
         ignore_fall_damage: bool,
         new_impulse_impact_pos: DVec3,
     ) {
-        let mut state = self.state.lock();
         if ignore_fall_damage {
-            state.current_impulse_context_reset_grace_time = state
+            self.current_impulse_context_reset_grace_time = self
                 .current_impulse_context_reset_grace_time
                 .max(POST_IMPULSE_GRACE_TICKS);
-            state.current_impulse_impact_pos = Some(new_impulse_impact_pos);
+            self.current_impulse_impact_pos = Some(new_impulse_impact_pos);
         } else {
-            state.current_impulse_context_reset_grace_time = 0;
+            self.current_impulse_context_reset_grace_time = 0;
         }
     }
 
     /// Returns vanilla `LivingEntity.currentImpulseImpactPos`.
     #[must_use]
     pub fn current_impulse_impact_pos(&self) -> Option<DVec3> {
-        self.state.lock().current_impulse_impact_pos
+        self.current_impulse_impact_pos
     }
 
     /// Returns vanilla `LivingEntity.isIgnoringFallDamageFromCurrentImpulse`.
     #[must_use]
     pub fn is_ignoring_fall_damage_from_current_impulse(&self) -> bool {
-        self.state.lock().current_impulse_impact_pos.is_some()
+        self.current_impulse_impact_pos.is_some()
     }
 
     /// Mirrors vanilla `LivingEntity.tryResetCurrentImpulseContext`.
-    pub fn try_reset_current_impulse_context(&self) {
-        let mut state = self.state.lock();
-        if state.current_impulse_context_reset_grace_time == 0 {
-            state.current_impulse_impact_pos = None;
+    pub fn try_reset_current_impulse_context(&mut self) {
+        if self.current_impulse_context_reset_grace_time == 0 {
+            self.current_impulse_impact_pos = None;
         }
     }
 
     /// Mirrors vanilla `LivingEntity.resetCurrentImpulseContext`.
-    pub fn reset_current_impulse_context(&self) {
-        let mut state = self.state.lock();
-        state.current_impulse_context_reset_grace_time = 0;
-        state.current_impulse_impact_pos = None;
+    pub fn reset_current_impulse_context(&mut self) {
+        self.current_impulse_context_reset_grace_time = 0;
+        self.current_impulse_impact_pos = None;
     }
 
     /// Decrements post-impulse grace once per living-entity tick.
-    pub fn tick_post_impulse_grace_time(&self) {
-        let mut state = self.state.lock();
-        if state.current_impulse_context_reset_grace_time > 0 {
-            state.current_impulse_context_reset_grace_time -= 1;
+    pub fn tick_post_impulse_grace_time(&mut self) {
+        if self.current_impulse_context_reset_grace_time > 0 {
+            self.current_impulse_context_reset_grace_time -= 1;
         }
-    }
-
-    /// Returns whether this living entity is currently fall flying.
-    #[must_use]
-    pub fn is_fall_flying(&self) -> bool {
-        self.state.lock().fall_flying
-    }
-
-    /// Sets the vanilla living-entity fall-flying state.
-    pub fn set_fall_flying(&self, fall_flying: bool) {
-        self.state.lock().fall_flying = fall_flying;
     }
 
     /// Returns vanilla `LivingEntity.fallFlyTicks`.
     #[must_use]
     pub fn fall_flying_ticks(&self) -> i32 {
-        self.state.lock().fall_flying_ticks
+        self.fall_flying_ticks
     }
 
     /// Ticks vanilla `LivingEntity.fallFlyTicks`.
-    pub fn tick_fall_flying_state(&self, fall_flying: bool) {
-        let mut state = self.state.lock();
+    pub fn tick_fall_flying_state(&mut self, fall_flying: bool) {
         if fall_flying {
-            state.fall_flying_ticks = state.fall_flying_ticks.wrapping_add(1);
+            self.fall_flying_ticks = self.fall_flying_ticks.wrapping_add(1);
         } else {
-            state.fall_flying_ticks = 0;
+            self.fall_flying_ticks = 0;
         }
     }
 
     /// Returns whether this living entity is sprinting.
     #[must_use]
     pub fn is_sprinting(&self) -> bool {
-        self.state.lock().sprinting
+        self.sprinting
     }
 
     /// Sets the vanilla living-entity sprinting state and movement-speed modifier.
-    pub fn set_sprinting(&self, sprinting: bool) {
-        self.state.lock().sprinting = sprinting;
+    pub fn set_sprinting(&mut self, sprinting: bool) {
+        self.sprinting = sprinting;
 
-        let mut attributes = self.attributes.lock();
+        let attributes = &mut self.attributes;
         if sprinting {
             attributes.add_modifier(
                 vanilla_attributes::MOVEMENT_SPEED,
@@ -1192,17 +1136,17 @@ impl LivingEntityBase {
     /// Returns the bed position that makes this living entity sleeping.
     #[must_use]
     pub fn sleeping_pos(&self) -> Option<BlockPos> {
-        self.state.lock().sleeping_pos
+        self.sleeping_pos
     }
 
     /// Sets the vanilla living-entity sleeping position.
-    pub fn set_sleeping_pos(&self, bed_position: BlockPos) {
-        self.state.lock().sleeping_pos = Some(bed_position);
+    pub fn set_sleeping_pos(&mut self, bed_position: BlockPos) {
+        self.sleeping_pos = Some(bed_position);
     }
 
     /// Clears the vanilla living-entity sleeping position.
-    pub fn clear_sleeping_pos(&self) {
-        self.state.lock().sleeping_pos = None;
+    pub fn clear_sleeping_pos(&mut self) {
+        self.sleeping_pos = None;
     }
 
     /// Returns whether this living entity has a sleeping position.
@@ -1214,69 +1158,23 @@ impl LivingEntityBase {
     /// Returns the last climbable block position this living entity touched.
     #[must_use]
     pub fn last_climbable_pos(&self) -> Option<BlockPos> {
-        self.state.lock().last_climbable_pos
+        self.last_climbable_pos
     }
 
     /// Records the last climbable block position this living entity touched.
-    pub fn set_last_climbable_pos(&self, pos: BlockPos) {
-        self.state.lock().last_climbable_pos = Some(pos);
-    }
-
-    /// Returns whether vanilla living travel should skip friction damping.
-    #[must_use]
-    pub fn should_discard_friction(&self) -> bool {
-        self.state.lock().discard_friction
-    }
-
-    /// Sets whether vanilla living travel should skip friction damping.
-    pub fn set_discard_friction(&self, discard_friction: bool) {
-        self.state.lock().discard_friction = discard_friction;
-    }
-
-    /// Returns whether this living entity is applying jump input.
-    #[must_use]
-    pub fn is_jumping(&self) -> bool {
-        self.state.lock().jumping
-    }
-
-    /// Sets whether this living entity is applying jump input.
-    pub fn set_jumping(&self, jumping: bool) {
-        self.state.lock().jumping = jumping;
-    }
-
-    /// Returns vanilla living travel input.
-    #[must_use]
-    pub fn travel_input(&self) -> LivingTravelInput {
-        self.state.lock().travel_input
-    }
-
-    /// Sets vanilla living travel input.
-    pub fn set_travel_input(&self, input: LivingTravelInput) {
-        self.state.lock().travel_input = input;
+    pub fn set_last_climbable_pos(&mut self, pos: BlockPos) {
+        self.last_climbable_pos = Some(pos);
     }
 
     /// Applies vanilla `LivingEntity.applyInput()` damping to travel input.
-    pub fn dampen_travel_input(&self) {
-        let mut state = self.state.lock();
-        state.travel_input = state.travel_input.dampened();
-    }
-
-    /// Returns vanilla jump cooldown ticks.
-    #[must_use]
-    pub fn no_jump_delay(&self) -> i32 {
-        self.state.lock().no_jump_delay
-    }
-
-    /// Sets vanilla jump cooldown ticks.
-    pub fn set_no_jump_delay(&self, ticks: i32) {
-        self.state.lock().no_jump_delay = ticks;
+    pub fn dampen_travel_input(&mut self) {
+        self.travel_input = self.travel_input.dampened();
     }
 
     /// Decrements vanilla jump cooldown once per living AI step.
-    pub fn tick_no_jump_delay(&self) {
-        let mut state = self.state.lock();
-        if state.no_jump_delay > 0 {
-            state.no_jump_delay -= 1;
+    pub fn tick_no_jump_delay(&mut self) {
+        if self.no_jump_delay > 0 {
+            self.no_jump_delay -= 1;
         }
     }
 
@@ -1295,10 +1193,9 @@ impl LivingEntityBase {
     }
 
     /// Decrements remaining invulnerability ticks by one if any are active.
-    pub fn decrement_invulnerable_time(&self) {
-        let mut state = self.state.lock();
-        if state.invulnerable_time > 0 {
-            state.invulnerable_time -= 1;
+    pub fn decrement_invulnerable_time(&mut self) {
+        if self.invulnerable_time > 0 {
+            self.invulnerable_time -= 1;
         }
     }
 
@@ -1307,116 +1204,107 @@ impl LivingEntityBase {
     /// Returns `None` when damage should be ignored because death was already
     /// processed or the amount did not exceed the active invulnerability frame.
     pub fn apply_damage_cooldown(
-        &self,
+        &mut self,
         amount: f32,
         bypasses_cooldown: bool,
     ) -> Option<(bool, f32)> {
-        let mut state = self.state.lock();
-        if state.death_processed {
+        if self.death_processed {
             return None;
         }
 
-        if state.invulnerable_time > 10 && !bypasses_cooldown {
-            if amount <= state.last_hurt {
+        if self.invulnerable_time > 10 && !bypasses_cooldown {
+            if amount <= self.last_hurt {
                 return None;
             }
-            let effective = amount - state.last_hurt;
-            state.last_hurt = amount;
+            let effective = amount - self.last_hurt;
+            self.last_hurt = amount;
             Some((false, effective))
         } else {
-            state.last_hurt = amount;
-            state.invulnerable_time = 20;
+            self.last_hurt = amount;
+            self.invulnerable_time = 20;
             Some((true, amount))
         }
     }
 
     /// Records vanilla `LivingEntity.lastDamageSource` after successful damage.
-    pub fn record_last_damage_source(&self, source: &DamageSource, game_time: i64) {
-        let mut state = self.state.lock();
-        state.last_damage_source = Some(source.clone());
-        state.last_damage_stamp = game_time;
+    pub fn record_last_damage_source(&mut self, source: &DamageSource, game_time: i64) {
+        self.last_damage_source = Some(source.clone());
+        self.last_damage_stamp = game_time;
     }
 
     /// Returns vanilla `LivingEntity.getLastDamageSource()`.
-    pub fn last_damage_source(&self, game_time: i64) -> Option<DamageSource> {
-        let mut state = self.state.lock();
-        if game_time - state.last_damage_stamp > 40 {
-            state.last_damage_source = None;
+    pub fn last_damage_source(&mut self, game_time: i64) -> Option<DamageSource> {
+        if game_time - self.last_damage_stamp > 40 {
+            self.last_damage_source = None;
         }
-        state.last_damage_source.clone()
+        self.last_damage_source.clone()
     }
 
     /// Sets vanilla `LivingEntity.lastHurtByPlayer` and memory time.
-    pub fn set_last_hurt_by_player(&self, player_uuid: Uuid, time_to_remember: i32) {
-        let mut state = self.state.lock();
-        state.last_hurt_by_player = Some(player_uuid);
-        state.last_hurt_by_player_memory_time = time_to_remember;
+    pub fn set_last_hurt_by_player(&mut self, player_uuid: Uuid, time_to_remember: i32) {
+        self.last_hurt_by_player = Some(player_uuid);
+        self.last_hurt_by_player_memory_time = time_to_remember;
     }
 
     /// Returns vanilla `LivingEntity.lastHurtByPlayerMemoryTime`.
     #[must_use]
     pub fn last_hurt_by_player_memory_time(&self) -> i32 {
-        self.state.lock().last_hurt_by_player_memory_time
+        self.last_hurt_by_player_memory_time
     }
 
     /// Returns the remembered player UUID, if present.
     #[must_use]
     pub fn last_hurt_by_player_uuid(&self) -> Option<Uuid> {
-        self.state.lock().last_hurt_by_player
+        self.last_hurt_by_player
     }
 
     /// Returns vanilla `LivingEntity.lastHurtByMob`, if still resolvable.
     #[must_use]
-    pub fn last_hurt_by_mob(&self) -> Option<SharedEntity> {
-        let mut state = self.state.lock();
-        living_entity_from_weak(&mut state.last_hurt_by_mob)
+    pub fn last_hurt_by_mob(&mut self) -> Option<SharedEntity> {
+        living_entity_from_weak(&mut self.last_hurt_by_mob)
     }
 
     /// Returns vanilla `LivingEntity.lastHurtByMobTimestamp`.
     #[must_use]
     pub fn last_hurt_by_mob_timestamp(&self) -> i32 {
-        self.state.lock().last_hurt_by_mob_timestamp
+        self.last_hurt_by_mob_timestamp
     }
 
     /// Sets vanilla `LivingEntity.lastHurtByMob` and timestamp.
-    pub fn set_last_hurt_by_mob(&self, target: Option<&SharedEntity>, tick_count: i32) {
-        let mut state = self.state.lock();
-        state.last_hurt_by_mob = weak_living_entity(target);
-        state.last_hurt_by_mob_timestamp = tick_count;
+    pub fn set_last_hurt_by_mob(&mut self, target: Option<&SharedEntity>, tick_count: i32) {
+        self.last_hurt_by_mob = weak_living_entity(target);
+        self.last_hurt_by_mob_timestamp = tick_count;
     }
 
     /// Returns vanilla `LivingEntity.lastHurtMob`, if still resolvable.
     #[must_use]
-    pub fn last_hurt_mob(&self) -> Option<SharedEntity> {
-        let mut state = self.state.lock();
-        living_entity_from_weak(&mut state.last_hurt_mob)
+    pub fn last_hurt_mob(&mut self) -> Option<SharedEntity> {
+        living_entity_from_weak(&mut self.last_hurt_mob)
     }
 
     /// Returns vanilla `LivingEntity.lastHurtMobTimestamp`.
     #[must_use]
     pub fn last_hurt_mob_timestamp(&self) -> i32 {
-        self.state.lock().last_hurt_mob_timestamp
+        self.last_hurt_mob_timestamp
     }
 
     /// Sets vanilla `LivingEntity.lastHurtMob` and timestamp.
-    pub fn set_last_hurt_mob(&self, target: Option<&SharedEntity>, tick_count: i32) {
-        let mut state = self.state.lock();
-        state.last_hurt_mob = weak_living_entity(target);
-        state.last_hurt_mob_timestamp = tick_count;
+    pub fn set_last_hurt_mob(&mut self, target: Option<&SharedEntity>, tick_count: i32) {
+        self.last_hurt_mob = weak_living_entity(target);
+        self.last_hurt_mob_timestamp = tick_count;
     }
 
     /// Ticks vanilla last-hurt-by-player memory.
-    pub fn tick_last_hurt_by_player_memory(&self) {
-        let mut state = self.state.lock();
-        if state.last_hurt_by_player_memory_time > 0 {
-            state.last_hurt_by_player_memory_time -= 1;
+    pub fn tick_last_hurt_by_player_memory(&mut self) {
+        if self.last_hurt_by_player_memory_time > 0 {
+            self.last_hurt_by_player_memory_time -= 1;
         } else {
-            state.last_hurt_by_player = None;
+            self.last_hurt_by_player = None;
         }
     }
 
     /// Ticks vanilla living combat-memory cleanup.
-    pub fn tick_living_combat_memory(&self, tick_count: i32) {
+    pub fn tick_living_combat_memory(&mut self, tick_count: i32) {
         if self
             .last_hurt_mob()
             .is_some_and(|target| living_is_dead(&target))
@@ -1435,61 +1323,67 @@ impl LivingEntityBase {
     /// Marks death side effects as processed.
     ///
     /// Returns `false` if they were already processed.
-    pub fn mark_death_processed(&self) -> bool {
-        let mut state = self.state.lock();
-        if state.death_processed {
+    pub fn mark_death_processed(&mut self) -> bool {
+        if self.death_processed {
             return false;
         }
-        state.death_processed = true;
+        self.death_processed = true;
         true
     }
 
     /// Increments death animation time by 1 and returns the new value.
     #[inline]
-    pub fn increment_death_time(&self) -> i32 {
-        let mut state = self.state.lock();
-        state.death_time += 1;
-        state.death_time
+    pub fn increment_death_time(&mut self) -> i32 {
+        self.death_time += 1;
+        self.death_time
     }
 
     /// Resets all death-related state back to alive defaults.
-    #[inline]
-    pub fn reset_death_state(&self) {
-        self.state.lock().reset_death_state();
+    pub const fn reset_death_state(&mut self) {
+        self.death_processed = false;
+        self.death_time = 0;
+        self.invulnerable_time = 0;
+        self.last_hurt = 0.0;
+        self.absorption_amount = 0.0;
+        self.skip_drop_experience = false;
     }
 
     /// Resets state that vanilla gets from constructing a fresh living player for death respawn.
-    pub fn reset_for_player_respawn(&self) {
+    pub fn reset_for_player_respawn(&mut self) {
+        // Strip attribute modifiers contributed by sprinting and active effects so the
+        // retained attribute map carries over clean (vanilla rebuilds these on respawn).
         self.set_sprinting(false);
-        let removed_effects = {
-            let mut effects = self.active_mob_effects.lock();
-            let removed_effects = effects.keys().copied().collect::<Vec<_>>();
-            effects.clear();
-            removed_effects
-        };
 
-        for effect in removed_effects.iter().copied() {
+        let active_effects = mem::take(&mut self.active_mob_effects);
+        for effect in active_effects.keys() {
             self.remove_effect_attribute_modifiers(effect);
         }
 
-        {
-            let mut dirty_effects = self.dirty_mob_effects.lock();
-            dirty_effects.clear();
-            dirty_effects.extend(
-                removed_effects
-                    .into_iter()
-                    .map(|effect| MobEffectSyncChange::Remove { effect }),
-            );
-        }
+        // We take this because there is a good chance it already has capacity so we dont need to reallocate
+        let dirty_effects = mem::take(&mut self.dirty_mob_effects);
+        // Retain the attribute map and equipment across the respawn; everything else
+        // is reset to fresh living defaults, matching vanilla constructing a new player.
+        let attributes = mem::take(&mut self.attributes);
+        let equipment = mem::take(&mut self.equipment);
+        let equipment_attribute_modifiers = mem::replace(
+            &mut self.equipment_attribute_modifiers,
+            array::from_fn(|_| Vec::new()),
+        );
 
-        let speed = self
-            .attributes
-            .lock()
-            .required_value(vanilla_attributes::MOVEMENT_SPEED) as f32;
+        *self = Self::with_attributes(attributes);
 
-        let mut state = self.state.lock();
-        *state = LivingEntityState::new(speed);
-        state.effects_dirty = true;
+        self.equipment = equipment;
+        self.equipment_attribute_modifiers = equipment_attribute_modifiers;
+        self.dirty_mob_effects = dirty_effects;
+
+        self.dirty_mob_effects.clear();
+        self.dirty_mob_effects.extend(
+            active_effects
+                .keys()
+                .map(|effect| MobEffectSyncChange::Remove { effect }),
+        );
+
+        self.effects_dirty = true;
     }
 }
 
@@ -1568,7 +1462,7 @@ mod tests {
     #[test]
     fn last_damage_source_expires_after_vanilla_window() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PIG);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PIG);
         let source = DamageSource::environment(&vanilla_damage_types::GENERIC);
 
         assert!(base.last_damage_source(0).is_none());
@@ -1585,7 +1479,7 @@ mod tests {
     #[test]
     fn last_hurt_by_player_memory_ticks_down_then_clears_reference() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PIG);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PIG);
         let player_uuid = uuid::Uuid::from_u128(7);
 
         base.set_last_hurt_by_player(player_uuid, 2);
@@ -1624,7 +1518,7 @@ mod tests {
     #[test]
     fn post_impulse_grace_counts_down_by_tick() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.apply_post_impulse_grace_time(2);
 
@@ -1638,7 +1532,7 @@ mod tests {
     #[test]
     fn current_impulse_context_tracks_fall_damage_impact_position() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let impact_pos = DVec3::new(1.0, 72.0, -3.0);
 
         base.set_ignore_fall_damage_from_current_impulse(true, impact_pos);
@@ -1651,7 +1545,7 @@ mod tests {
     #[test]
     fn current_impulse_context_resets_after_grace_window() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.set_ignore_fall_damage_from_current_impulse(true, DVec3::new(0.0, 72.0, 0.0));
         base.apply_post_impulse_grace_time(1);
@@ -1670,7 +1564,7 @@ mod tests {
     #[test]
     fn post_impulse_grace_keeps_larger_existing_window() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.apply_post_impulse_grace_time(5);
         base.apply_post_impulse_grace_time(2);
@@ -1687,19 +1581,19 @@ mod tests {
     #[test]
     fn fall_flying_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
-        assert!(!base.is_fall_flying());
-        base.set_fall_flying(true);
-        assert!(base.is_fall_flying());
-        base.set_fall_flying(false);
-        assert!(!base.is_fall_flying());
+        assert!(!base.fall_flying);
+        base.fall_flying = true;
+        assert!(base.fall_flying);
+        base.fall_flying = false;
+        assert!(!base.fall_flying);
     }
 
     #[test]
     fn fall_flying_ticks_are_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         assert_eq!(base.fall_flying_ticks(), 0);
         base.tick_fall_flying_state(true);
@@ -1712,7 +1606,7 @@ mod tests {
     #[test]
     fn living_rotation_is_base_tick_snapshot_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PIG);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PIG);
 
         base.set_y_body_rot(30.0);
         base.set_y_head_rot(45.0);
@@ -1739,7 +1633,7 @@ mod tests {
     #[test]
     fn living_swing_uses_vanilla_restart_gate() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PIG);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PIG);
 
         assert!(base.start_swing(InteractionHand::MainHand, DEFAULT_SWING_DURATION));
         let state = base.swing_state();
@@ -1766,7 +1660,7 @@ mod tests {
     #[test]
     fn living_swing_time_updates_attack_animation() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PIG);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PIG);
 
         assert!(base.start_swing(InteractionHand::MainHand, DEFAULT_SWING_DURATION));
         base.update_swing_time(DEFAULT_SWING_DURATION);
@@ -1797,18 +1691,17 @@ mod tests {
     #[test]
     fn equipment_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
-        assert!(base.equipment().lock().is_empty());
+        assert!(base.equipment().is_empty());
 
-        base.equipment().lock().set(
+        base.equipment.set(
             EquipmentSlot::Chest,
             ItemStack::new(&vanilla_items::ITEMS.elytra),
         );
 
         assert!(
             base.equipment()
-                .lock()
                 .get_ref(EquipmentSlot::Chest)
                 .is(&vanilla_items::ITEMS.elytra)
         );
@@ -1817,11 +1710,10 @@ mod tests {
     #[test]
     fn sprinting_is_living_entity_state_and_speed_modifier() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let movement_speed = vanilla_attributes::MOVEMENT_SPEED;
         let base_speed = base
             .attributes()
-            .lock()
             .get_value(movement_speed)
             .expect("player should have movement speed");
 
@@ -1830,7 +1722,6 @@ mod tests {
         assert!(base.is_sprinting());
         assert!(
             base.attributes()
-                .lock()
                 .get_value(movement_speed)
                 .expect("player should have movement speed")
                 > base_speed
@@ -1840,7 +1731,6 @@ mod tests {
         assert!(!base.is_sprinting());
         assert_eq!(
             base.attributes()
-                .lock()
                 .get_value(movement_speed)
                 .expect("player should have movement speed")
                 .to_bits(),
@@ -1851,7 +1741,7 @@ mod tests {
     #[test]
     fn active_mob_effect_presence_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         assert!(!base.has_mob_effect(vanilla_mob_effects::DOLPHINS_GRACE));
         base.set_mob_effect_active(vanilla_mob_effects::DOLPHINS_GRACE, true);
@@ -1867,7 +1757,7 @@ mod tests {
     #[test]
     fn active_mob_effect_amplifier_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.set_mob_effect(vanilla_mob_effects::JUMP_BOOST, 2);
 
@@ -1880,11 +1770,10 @@ mod tests {
     #[test]
     fn mob_effect_attribute_modifiers_use_extracted_vanilla_data() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let movement_speed = vanilla_attributes::MOVEMENT_SPEED;
         let base_speed = base
             .attributes()
-            .lock()
             .get_value(movement_speed)
             .expect("player should have movement speed");
         let speed_modifier = &vanilla_mob_effects::SPEED.attribute_modifiers[0];
@@ -1898,7 +1787,6 @@ mod tests {
 
         let boosted_speed = base
             .attributes()
-            .lock()
             .get_value(movement_speed)
             .expect("player should have movement speed");
         let expected = base_speed * (1.0 + speed_modifier.amount * 2.0);
@@ -1907,7 +1795,6 @@ mod tests {
         assert!(base.remove_mob_effect(vanilla_mob_effects::SPEED));
         assert_eq!(
             base.attributes()
-                .lock()
                 .get_value(movement_speed)
                 .expect("player should have movement speed")
                 .to_bits(),
@@ -1918,21 +1805,20 @@ mod tests {
     #[test]
     fn player_respawn_reset_clears_living_runtime_and_effect_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let movement_speed = vanilla_attributes::MOVEMENT_SPEED;
         let base_speed = base
             .attributes()
-            .lock()
             .get_value(movement_speed)
             .expect("player should have movement speed");
 
         base.set_sprinting(true);
         base.set_sleeping_pos(BlockPos::new(1, 64, 1));
-        base.set_fall_flying(true);
+        base.fall_flying = true;
         base.tick_fall_flying_state(true);
         base.set_absorption_amount(4.0);
         base.skip_drop_experience();
-        base.set_no_action_time(80);
+        base.no_action_time = 80;
         base.set_last_hurt_by_player(uuid::Uuid::from_u128(9), 100);
         base.record_last_damage_source(
             &DamageSource::environment(&vanilla_damage_types::GENERIC),
@@ -1943,73 +1829,76 @@ mod tests {
         assert_eq!(base.increment_death_time(), 1);
         base.set_mob_effect(vanilla_mob_effects::SPEED, 1);
         base.set_mob_effect(vanilla_mob_effects::INVISIBILITY, 0);
-        base.drain_dirty_mob_effects();
+        base.dirty_mob_effects.clear();
 
         base.reset_for_player_respawn();
 
         assert!(!base.is_sprinting());
         assert_eq!(base.sleeping_pos(), None);
-        assert!(!base.is_fall_flying());
+        assert!(!base.fall_flying);
         assert_eq!(base.fall_flying_ticks(), 0);
         assert_eq!(base.absorption_amount().to_bits(), 0.0_f32.to_bits());
         assert!(!base.was_experience_consumed());
-        assert_eq!(base.no_action_time(), 0);
+        assert_eq!(base.no_action_time, 0);
         assert!(base.last_hurt_by_player_uuid().is_none());
         assert!(base.last_damage_source(7).is_none());
         assert!(!base.has_mob_effect(vanilla_mob_effects::SPEED));
         assert!(!base.has_mob_effect(vanilla_mob_effects::INVISIBILITY));
         assert_eq!(
             base.attributes()
-                .lock()
                 .get_value(movement_speed)
                 .expect("player should have movement speed")
                 .to_bits(),
             base_speed.to_bits()
         );
 
-        let state = base.state.lock();
-        assert!(!state.death_processed);
-        assert_eq!(state.death_time, 0);
-        assert_eq!(state.last_hurt.to_bits(), 0.0_f32.to_bits());
-        drop(state);
+        assert!(!base.death_processed);
+        assert_eq!(base.death_time, 0);
+        assert_eq!(base.last_hurt.to_bits(), 0.0_f32.to_bits());
 
-        let changes = base.drain_dirty_mob_effects();
-        assert!(changes.contains(&MobEffectSyncChange::Remove {
-            effect: vanilla_mob_effects::SPEED
-        }));
-        assert!(changes.contains(&MobEffectSyncChange::Remove {
-            effect: vanilla_mob_effects::INVISIBILITY
-        }));
+        {
+            let mut changes = base.dirty_mob_effects.drain(..);
+            assert!(changes.any(|e| e
+                == MobEffectSyncChange::Remove {
+                    effect: vanilla_mob_effects::SPEED
+                }));
+
+            assert!(changes.any(|e| e
+                == MobEffectSyncChange::Remove {
+                    effect: vanilla_mob_effects::INVISIBILITY
+                }));
+        }
+
         assert!(base.take_effects_dirty());
     }
 
     #[test]
     fn mob_effect_duration_tick_removes_expired_effect() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.add_mob_effect(MobEffectInstance::with_duration(
             vanilla_mob_effects::DOLPHINS_GRACE,
             1,
             0,
         ));
-        base.drain_dirty_mob_effects();
+        base.dirty_mob_effects.clear();
 
         base.tick_mob_effects();
 
         assert!(!base.has_mob_effect(vanilla_mob_effects::DOLPHINS_GRACE));
         assert_eq!(
-            base.drain_dirty_mob_effects(),
-            vec![MobEffectSyncChange::Remove {
+            base.dirty_mob_effects[0],
+            MobEffectSyncChange::Remove {
                 effect: vanilla_mob_effects::DOLPHINS_GRACE
-            }]
+            }
         );
     }
 
     #[test]
     fn stronger_shorter_effect_downgrades_to_hidden_effect() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
         base.add_mob_effect(MobEffectInstance::with_duration(
             vanilla_mob_effects::SPEED,
@@ -2021,7 +1910,7 @@ mod tests {
             2,
             1,
         ));
-        base.drain_dirty_mob_effects();
+        base.dirty_mob_effects.clear();
 
         base.tick_mob_effects();
         base.tick_mob_effects();
@@ -2032,18 +1921,18 @@ mod tests {
         assert_eq!(effect.amplifier(), 0);
         assert_eq!(effect.duration(), 8);
         assert_eq!(
-            base.drain_dirty_mob_effects(),
-            vec![MobEffectSyncChange::Update {
+            base.dirty_mob_effects[0],
+            MobEffectSyncChange::Update {
                 effect,
                 blend_for_self: false,
-            }]
+            }
         );
     }
 
     #[test]
     fn sleeping_uses_living_entity_sleeping_position() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let bed_pos = BlockPos::new(12, 64, -4);
 
         assert!(!base.is_sleeping());
@@ -2061,7 +1950,7 @@ mod tests {
     #[test]
     fn last_climbable_pos_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
         let climbable_pos = BlockPos::new(-5, 72, 3);
 
         assert_eq!(base.last_climbable_pos(), None);
@@ -2072,46 +1961,43 @@ mod tests {
     #[test]
     fn discard_friction_is_living_entity_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
-        assert!(!base.should_discard_friction());
-        base.set_discard_friction(true);
-        assert!(base.should_discard_friction());
-        base.set_discard_friction(false);
-        assert!(!base.should_discard_friction());
+        assert!(!base.discard_friction);
+        base.discard_friction = true;
+        assert!(base.discard_friction);
+        base.discard_friction = false;
+        assert!(!base.discard_friction);
     }
 
     #[test]
     fn living_travel_input_is_shared_living_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
-        assert_eq!(base.travel_input(), LivingTravelInput::ZERO);
-        base.set_travel_input(LivingTravelInput::new(1.0, 0.5, -1.0));
-        assert_eq!(base.travel_input(), LivingTravelInput::new(1.0, 0.5, -1.0));
+        assert_eq!(base.travel_input, LivingTravelInput::ZERO);
+        base.travel_input = LivingTravelInput::new(1.0, 0.5, -1.0);
+        assert_eq!(base.travel_input, LivingTravelInput::new(1.0, 0.5, -1.0));
 
         base.dampen_travel_input();
-        assert_eq!(
-            base.travel_input(),
-            LivingTravelInput::new(0.98, 0.5, -0.98)
-        );
+        assert_eq!(base.travel_input, LivingTravelInput::new(0.98, 0.5, -0.98));
     }
 
     #[test]
     fn jumping_and_jump_delay_are_shared_living_state() {
         init_test_registry();
-        let base = LivingEntityBase::new(&vanilla_entities::PLAYER);
+        let mut base = LivingEntityBase::new(&vanilla_entities::PLAYER);
 
-        assert!(!base.is_jumping());
-        base.set_jumping(true);
-        assert!(base.is_jumping());
+        assert!(!base.jumping);
+        base.jumping = true;
+        assert!(base.jumping);
 
-        assert_eq!(base.no_jump_delay(), 0);
-        base.set_no_jump_delay(2);
+        assert_eq!(base.no_jump_delay, 0);
+        base.no_jump_delay = 2;
         base.tick_no_jump_delay();
-        assert_eq!(base.no_jump_delay(), 1);
+        assert_eq!(base.no_jump_delay, 1);
         base.tick_no_jump_delay();
         base.tick_no_jump_delay();
-        assert_eq!(base.no_jump_delay(), 0);
+        assert_eq!(base.no_jump_delay, 0);
     }
 }

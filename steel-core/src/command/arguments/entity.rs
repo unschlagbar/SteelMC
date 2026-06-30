@@ -3,11 +3,10 @@ use crate::command::arguments::CommandArgument;
 use crate::command::arguments::SuggestionContext;
 use crate::command::context::CommandContext;
 use crate::entity::Entity;
-use crate::player::Player;
+use crate::player::ServerPlayer;
 use rand::seq::IteratorRandom;
 use std::sync::Arc;
 use steel_protocol::packets::game::{ArgumentType, SuggestionEntry, SuggestionType};
-use steel_utils::locks::SyncMutex;
 use steel_utils::translations::{
     ARGUMENT_ENTITY_SELECTOR_ALL_ENTITIES, ARGUMENT_ENTITY_SELECTOR_ALL_PLAYERS,
     ARGUMENT_ENTITY_SELECTOR_NEAREST_ENTITY, ARGUMENT_ENTITY_SELECTOR_NEAREST_PLAYER,
@@ -35,14 +34,14 @@ impl EntityArgument {
 }
 
 impl CommandArgument for EntityArgument {
-    type Output = Vec<Arc<SyncMutex<Player>>>;
+    type Output = Vec<Arc<ServerPlayer>>;
 
     fn parse<'a>(
         &self,
         arg: &'a [&'a str],
         context: &mut CommandContext,
     ) -> Option<(&'a [&'a str], Self::Output)> {
-        let players = context.server.get_players();
+        let players = context.server.get_server_players();
         if players.is_empty() {
             return Some((&arg[1..], vec![]));
         }
@@ -53,7 +52,11 @@ impl CommandArgument for EntityArgument {
                 let position = context.position;
                 let mut near_dist = (f64::MAX, players[0].clone());
                 for player in players {
-                    let dist = player.lock().position().distance_squared(position);
+                    let dist = player
+                        .entity()
+                        .lock()
+                        .position()
+                        .distance_squared(position);
                     if dist < near_dist.0 {
                         near_dist = (dist, player);
                     }
@@ -76,13 +79,10 @@ impl CommandArgument for EntityArgument {
                 } else {
                     Uuid::nil()
                 };
-                let player = players.into_iter().find_map(|p| {
-                    let matches = {
-                        let guard = p.lock();
-                        guard.gameprofile.name == name || guard.uuid() == uuid
-                    };
-                    if matches { Some(p) } else { None }
-                })?;
+                // Name and UUID are lock-free on `ServerPlayer`.
+                let player = players
+                    .into_iter()
+                    .find(|p| p.name().as_ref() == name || p.uuid() == uuid)?;
                 vec![player]
             }
         };
@@ -111,9 +111,9 @@ impl CommandArgument for EntityArgument {
         suggestions.append(
             &mut suggestion_ctx
                 .server
-                .get_players()
+                .get_server_players()
                 .iter()
-                .map(|p| SuggestionEntry::new(p.lock().gameprofile.name.clone()))
+                .map(|p| SuggestionEntry::new(p.name().to_string()))
                 .collect(),
         );
         suggestions.retain(|s| s.text.starts_with(prefix));

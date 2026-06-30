@@ -34,17 +34,17 @@ fn list_players(context: &mut CommandContext, show_uuids: bool) {
     let max_player = context.server.config.max_players;
     let formatted_player_list = context
         .server
-        .get_players()
+        .get_server_players()
         .iter()
         .map(|player| {
-            let profile = player.lock().gameprofile.clone();
+            // Name and UUID are lock-free on `ServerPlayer`.
             if show_uuids {
                 COMMANDS_LIST_NAME_AND_ID
-                    .message([profile.name.clone(), profile.id.to_string()])
+                    .message([player.name().to_string(), player.uuid().to_string()])
                     .component()
                     .to_string()
             } else {
-                profile.name.clone()
+                player.name().to_string()
             }
         })
         .collect::<Vec<String>>()

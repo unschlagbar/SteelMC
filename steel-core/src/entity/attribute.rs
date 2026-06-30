@@ -260,6 +260,16 @@ pub struct AttributeMap {
     to_sync: DirtySet,
 }
 
+impl Default for AttributeMap {
+    fn default() -> Self {
+        Self {
+            instances: Vec::new(),
+            to_update: DirtySet::new(),
+            to_sync: DirtySet::new(),
+        }
+    }
+}
+
 impl AttributeMap {
     /// Creates an `AttributeMap` from an entity type's default attributes
     ///

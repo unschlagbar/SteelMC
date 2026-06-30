@@ -138,7 +138,7 @@ impl Player {
     }
 
     /// Applies vanilla post-impulse movement validation grace.
-    pub fn apply_post_impulse_grace_time(&self, ticks: i32) {
+    pub fn apply_post_impulse_grace_time(&mut self, ticks: i32) {
         LivingEntity::apply_post_impulse_grace_time(self, ticks);
     }
 
@@ -150,7 +150,7 @@ impl Player {
         };
 
         let controlled_by_player = vehicle
-            .controlling_passenger()
+            .controlling_passenger_for_rider(self)
             .is_some_and(|controller| controller.id() == self.id());
         if !controlled_by_player {
             self.movement.clear_vehicle_for_tick();
@@ -470,7 +470,7 @@ impl Player {
             return;
         };
         let controlled_by_player = vehicle
-            .controlling_passenger()
+            .controlling_passenger_for_rider(self)
             .is_some_and(|controller| controller.id() == self.id());
         if !controlled_by_player {
             return;
@@ -512,7 +512,13 @@ impl Player {
             vehicle.reset_fall_distance();
         }
 
-        if vehicle.move_entity(MoverType::Player, move_delta).is_none() {
+        // We confirmed above that this player controls the vehicle. Moving it
+        // re-derives `uses_client_movement_packets`, which would re-lock this
+        // (already-held) player; the scoped override answers it lock-free.
+        vehicle.set_client_movement_override(true);
+        let move_result = vehicle.move_entity(MoverType::Player, move_delta);
+        vehicle.set_client_movement_override(false);
+        if move_result.is_none() {
             self.send_packet(Self::move_vehicle_packet_from_entity(vehicle.as_ref()));
             return;
         }
@@ -533,9 +539,9 @@ impl Player {
             .bounding_box()
             .translate(target_pos - vehicle.position());
         let vehicle_y = vehicle.position().y;
-        let descending = vehicle.is_descending();
         let (old_collision, new_collision) = {
             let vehicle_entity = vehicle.lock_entity();
+            let descending = vehicle_entity.get().is_descending();
             let collision_world = WorldCollisionProvider::for_entity(&world, vehicle_entity.get());
             (
                 collision_world.has_entity_context_collision(old_aabb, vehicle_y, descending),
@@ -705,7 +711,7 @@ impl Player {
             return false;
         };
         let controlled_by_player = vehicle
-            .controlling_passenger()
+            .controlling_passenger_for_rider(self)
             .is_some_and(|controller| controller.id() == self.id());
         if !controlled_by_player {
             self.movement.clear_vehicle_for_tick();

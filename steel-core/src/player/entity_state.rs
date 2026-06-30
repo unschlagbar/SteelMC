@@ -188,7 +188,7 @@ impl Player {
 
     /// Returns true if vanilla rules consider this player to be on a climbable block.
     #[must_use]
-    pub(super) fn on_climbable(&self) -> bool {
+    pub(super) fn on_climbable(&mut self) -> bool {
         if self.is_flying() {
             return false;
         }

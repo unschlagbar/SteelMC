@@ -6,7 +6,6 @@ pub mod error;
 pub mod sender;
 
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_protocol::packets::game::{CCommandSuggestions, CCommands, CommandNode, SuggestionEntry};
 use text_components::{Modifier, TextComponent, format::Color};
@@ -15,7 +14,7 @@ use crate::command::commands::CommandHandlerDyn;
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
 use crate::command::sender::CommandSender;
-use crate::player::Player;
+use crate::player::ServerPlayer;
 use crate::server::Server;
 
 /// A struct that parses and dispatches commands to their appropriate handlers.
@@ -186,16 +185,14 @@ impl CommandDispatcher {
     /// Handles a command suggestion request from a player.
     pub fn handle_player_suggestions(
         &self,
-        player: &Arc<SyncMutex<Player>>,
+        player: &Arc<ServerPlayer>,
         id: i32,
         command: &str,
         server: Arc<Server>,
     ) {
         let (suggestions, start, length) =
             self.handle_suggestions(CommandSender::Player(Arc::clone(player)), command, server);
-        player
-            .lock()
-            .send_packet(CCommandSuggestions::new(id, start, length, suggestions));
+        player.send_packet(CCommandSuggestions::new(id, start, length, suggestions));
     }
 
     /// Handles a command suggestion request from a player.

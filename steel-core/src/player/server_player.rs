@@ -12,13 +12,18 @@
 //! reference so entity code can send packets and reach session data.
 
 use std::sync::{Arc, Weak};
+use uuid::Uuid;
 
 use arc_swap::ArcSwap;
 use steel_protocol::packet_traits::{ClientPacket, EncodedPacket};
 use steel_protocol::utils::{ConnectionProtocol, RawPacket};
 use steel_utils::ChunkPos;
 use steel_utils::locks::SyncMutex;
+use text_components::resolving::TextResolutor;
+use text_components::{TextComponent, content::Resolvable, custom::CustomData};
 use tokio::sync::mpsc::UnboundedReceiver;
+
+use steel_protocol::packets::game::CSystemChatMessage;
 
 use crate::chunk::player_chunk_view::PlayerChunkView;
 use crate::config::RuntimeConfig;
@@ -77,6 +82,14 @@ pub struct ServerPlayer {
 
     /// World the player's view is being kept for (`ArcSwap` for lock-free reads).
     pub world: ArcSwap<World>,
+
+    /// Lock-free copy of the player's profile name. Constant for the session, so
+    /// command handlers can read it without locking the `Player` mutex (avoiding
+    /// the self-deadlock when a command prints the name of the player who sent it).
+    name: Arc<str>,
+    /// Lock-free copy of the player's UUID (the profile id). Used for target
+    /// matching in command argument parsing without locking the entity.
+    uuid: Uuid,
 }
 
 impl ServerPlayer {
@@ -99,6 +112,11 @@ impl ServerPlayer {
         client_information: ClientInformation,
         inbound_rx: UnboundedReceiver<RawPacket>,
     ) -> Self {
+        // Capture the lock-free profile fields before `gameprofile` is moved into
+        // the `Player`.
+        let name: Arc<str> = gameprofile.name.as_str().into();
+        let uuid = gameprofile.id;
+
         let entity = Arc::new_cyclic(|entity_weak| {
             SyncMutex::new(Player::new(
                 gameprofile,
@@ -130,7 +148,32 @@ impl ServerPlayer {
             teleport_state: SyncMutex::new(TeleportState::new()),
             tick_state: SyncMutex::new(PlayerTickState::new()),
             world: ArcSwap::new(world),
+            name,
+            uuid,
         }
+    }
+
+    /// The player's profile name (lock-free; constant for the session).
+    #[must_use]
+    pub fn name(&self) -> &Arc<str> {
+        &self.name
+    }
+
+    /// The player's UUID (lock-free; constant for the session).
+    #[must_use]
+    pub const fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// The world the player is currently in (lock-free).
+    #[must_use]
+    pub fn world(&self) -> Arc<World> {
+        self.world.load_full()
+    }
+
+    /// Sends a system message to the player without locking the entity.
+    pub fn send_message(&self, text: &TextComponent) {
+        self.send_packet(CSystemChatMessage::new(text, self, false));
     }
 
     /// Returns the game entity for this player.
@@ -172,5 +215,19 @@ impl ServerPlayer {
         if !packets.is_empty() {
             self.connection.send_encoded_bundle(packets);
         }
+    }
+}
+
+impl TextResolutor for ServerPlayer {
+    fn resolve_content(&self, _resolvable: &Resolvable) -> TextComponent {
+        TextComponent::new()
+    }
+
+    fn resolve_custom(&self, _data: &CustomData) -> Option<TextComponent> {
+        None
+    }
+
+    fn translate(&self, _key: &str) -> Option<String> {
+        None
     }
 }

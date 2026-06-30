@@ -238,7 +238,10 @@ mod tests {
             BlockPos::new(4, 65, -9),
         );
 
-        assert_eq!(knot.spawn_position(), DVec3::new(4.0, 65.0, -9.0));
+        assert_eq!(
+            knot.with_entity(|e| e.spawn_position()),
+            DVec3::new(4.0, 65.0, -9.0)
+        );
     }
 
     #[test]

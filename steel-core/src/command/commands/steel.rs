@@ -1,7 +1,6 @@
 //! Steel server commands: /steel tp <targets> <world>
 
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use text_components::TextComponent;
 
@@ -10,7 +9,7 @@ use crate::command::arguments::world::WorldArgument;
 use crate::command::commands::{CommandHandlerBuilder, CommandHandlerDyn, argument, literal};
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
-use crate::player::Player;
+use crate::player::ServerPlayer;
 use crate::portal::WorldChangeRequest;
 use crate::world::World;
 
@@ -25,14 +24,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
     .then(
         literal("tp").then(argument("targets", PlayerArgument::multiple()).then(
             argument("world", WorldArgument).executes(
-                |(((), targets), world): (((), Vec<Arc<SyncMutex<Player>>>), Arc<World>),
+                |(((), targets), world): (((), Vec<Arc<ServerPlayer>>), Arc<World>),
                  context: &mut CommandContext|
                  -> Result<(), CommandError> {
                     let dim_name = &world.key;
                     let count = targets.len();
 
                     for target in &targets {
-                        let guard = target.lock();
+                        let guard = target.entity().lock();
                         if guard.is_domain_switching() {
                             return Err(CommandError::CommandFailed(Box::new(
                                 TextComponent::plain(format!(
@@ -44,10 +43,10 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     }
 
                     for target in &targets {
-                        let current_world = target.lock().get_world();
+                        let current_world = target.world();
                         if current_world.domain() == world.domain() {
                             context.server.queue_world_change(
-                                target.lock().shared_entity(),
+                                target.entity().lock().shared_entity(),
                                 WorldChangeRequest::WorldSpawn {
                                     target_world: world.clone(),
                                 },
@@ -55,7 +54,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                         } else {
                             context
                                 .server
-                                .queue_domain_switch_to_world(target.clone(), world.clone())
+                                .queue_domain_switch_to_world(target.entity().clone(), world.clone())
                                 .map_err(|error| {
                                     CommandError::CommandFailed(Box::new(TextComponent::plain(
                                         error,
@@ -67,7 +66,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     let msg = if count == 1 {
                         format!(
                             "Teleporting {} to {}",
-                            targets[0].lock().gameprofile.name,
+                            targets[0].name(),
                             dim_name
                         )
                     } else {

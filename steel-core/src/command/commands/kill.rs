@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use steel_utils::locks::SyncMutex;
 use text_components::TextComponent;
 
 use crate::command::arguments::entity::EntityArgument;
@@ -13,7 +12,7 @@ use crate::command::commands::{
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
 use crate::entity::damage::DamageSource;
-use crate::player::Player;
+use crate::player::{Player, ServerPlayer};
 use steel_registry::vanilla_damage_types;
 use steel_utils::translations;
 
@@ -42,12 +41,14 @@ impl CommandExecutor<()> for KillSelfExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        kill_player(&mut player.lock());
+        kill_player(&mut player.entity().lock());
 
         // TODO: use getDisplayName() (team formatting, hover event, UUID insertion)
+        // Release the player lock before `send_message` re-locks the same sender.
+        let player_name = player.name().to_string();
         context.sender.send_message(
             &translations::COMMANDS_KILL_SUCCESS_SINGLE
-                .message([TextComponent::plain(player.lock().gameprofile.name.clone())])
+                .message([TextComponent::plain(player_name)])
                 .into(),
         );
 
@@ -57,10 +58,10 @@ impl CommandExecutor<()> for KillSelfExecutor {
 
 struct KillTargetsExecutor;
 
-impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for KillTargetsExecutor {
+impl CommandExecutor<((), Vec<Arc<ServerPlayer>>)> for KillTargetsExecutor {
     fn execute(
         &self,
-        args: ((), Vec<Arc<SyncMutex<Player>>>),
+        args: ((), Vec<Arc<ServerPlayer>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((), targets) = args;
@@ -74,9 +75,9 @@ impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for KillTargetsExecutor 
         let mut last_name = String::new();
         let mut victim_count = 0;
         for target in &targets {
-            kill_player(&mut target.lock());
+            kill_player(&mut target.entity().lock());
             victim_count += 1;
-            last_name.clone_from(&target.lock().gameprofile.name);
+            last_name.clone_from(&target.entity().lock().gameprofile.name);
             // TODO: non-player entities via Entity::kill() (remove with RemovalReason::KILLED)
         }
 

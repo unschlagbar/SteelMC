@@ -23,7 +23,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                 .ok_or(CommandError::InvalidRequirement)?;
             let server = context.server.clone();
             server
-                .queue_domain_switch(player, domain.clone())
+                .queue_domain_switch(player.entity().clone(), domain.clone())
                 .map_err(|error| {
                     CommandError::CommandFailed(Box::new(TextComponent::plain(error)))
                 })?;

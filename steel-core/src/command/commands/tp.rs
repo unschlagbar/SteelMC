@@ -1,10 +1,10 @@
 //! Handler for the "teleport" command.
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use glam::DVec3;
 use steel_utils::{BlockPos, translations};
 use text_components::TextComponent;
+use uuid::Uuid;
 
 use crate::{
     command::{
@@ -14,14 +14,14 @@ use crate::{
         error::CommandError,
     },
     entity::Entity,
-    player::Player,
+    player::{Player, ServerPlayer},
     world::World,
 };
 
-type MultipleRotationArgs = ((((), Vec<Arc<SyncMutex<Player>>>), DVec3), (f32, f32));
+type MultipleRotationArgs = ((((), Vec<Arc<ServerPlayer>>), DVec3), (f32, f32));
 type MultipleEntityArgs = (
-    ((), Vec<Arc<SyncMutex<Player>>>),
-    Vec<Arc<SyncMutex<Player>>>,
+    ((), Vec<Arc<ServerPlayer>>),
+    Vec<Arc<ServerPlayer>>,
 );
 
 /// Handler for the "teleport" command.
@@ -37,14 +37,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             .then(
                 argument("position", Vector3Argument)
                     .executes(
-                        |(((), targets), pos): (((), Vec<Arc<SyncMutex<Player>>>), DVec3),
+                        |(((), targets), pos): (((), Vec<Arc<ServerPlayer>>), DVec3),
                          context: &mut CommandContext| {
                             let player = context
                                 .sender
                                 .get_player()
                                 .ok_or(CommandError::InvalidRequirement)?;
 
-                            let rotation = player.lock().rotation();
+                            let rotation = player.entity().lock().rotation();
                             teleport_to_pos(&targets, pos, rotation, context)
                         },
                     )
@@ -68,7 +68,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     .player
                     .clone()
                     .ok_or(CommandError::InvalidRequirement)?;
-                let rotation = player.lock().rotation();
+                let rotation = player.entity().lock().rotation();
 
                 teleport_to_pos(&[player], pos, rotation, context)
             })
@@ -86,7 +86,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 }
 
 fn teleport_to_pos(
-    targets: &[Arc<SyncMutex<Player>>],
+    targets: &[Arc<ServerPlayer>],
     pos: DVec3,
     rotation: (f32, f32),
     ctx: &mut CommandContext,
@@ -103,7 +103,7 @@ fn teleport_to_pos(
     let targets = current_players(targets, ctx)?;
     for player in &targets {
         teleport_player(
-            &mut player.lock(),
+            &mut player.entity().lock(),
             pos.x,
             pos.y,
             pos.z,
@@ -116,7 +116,7 @@ fn teleport_to_pos(
         ctx.sender.send_message(
             &translations::COMMANDS_TELEPORT_SUCCESS_LOCATION_SINGLE
                 .message([
-                    TextComponent::from(target.lock().gameprofile.name.clone()),
+                    TextComponent::from(target.name().to_string()),
                     TextComponent::from(format!("{:.2}", pos.x)),
                     TextComponent::from(format!("{:.2}", pos.y)),
                     TextComponent::from(format!("{:.2}", pos.z)),
@@ -139,32 +139,32 @@ fn teleport_to_pos(
 }
 
 fn teleport_to_player(
-    targets: &[Arc<SyncMutex<Player>>],
-    destination: &[Arc<SyncMutex<Player>>],
+    targets: &[Arc<ServerPlayer>],
+    destination: &[Arc<ServerPlayer>],
     ctx: &mut CommandContext,
 ) -> Result<(), CommandError> {
     let Some(destination) = destination.first() else {
         return Err(no_player_found());
     };
-    let destination = current_player(&destination.lock(), ctx).ok_or_else(no_player_found)?;
+    let destination = current_player(destination.uuid(), ctx).ok_or_else(no_player_found)?;
 
     let (pos, yaw, pitch) = {
-        let guard = destination.lock();
+        let guard = destination.entity().lock();
         let (yaw, pitch) = guard.rotation();
         (guard.position(), yaw, pitch)
     };
-    let destination_name = destination.lock().gameprofile.name.clone();
+    let destination_name = destination.name().to_string();
 
     let targets = current_players(targets, ctx)?;
     for player in &targets {
-        teleport_player(&mut player.lock(), pos.x, pos.y, pos.z, yaw, pitch)?;
+        teleport_player(&mut player.entity().lock(), pos.x, pos.y, pos.z, yaw, pitch)?;
     }
 
     if let [target] = targets.as_slice() {
         ctx.sender.send_message(
             &translations::COMMANDS_TELEPORT_SUCCESS_ENTITY_SINGLE
                 .message([
-                    TextComponent::from(target.lock().gameprofile.name.clone()),
+                    TextComponent::from(target.name().to_string()),
                     TextComponent::from(destination_name.clone()),
                 ])
                 .into(),
@@ -183,16 +183,20 @@ fn teleport_to_player(
 }
 
 fn current_players(
-    players: &[Arc<SyncMutex<Player>>],
+    players: &[Arc<ServerPlayer>],
     ctx: &CommandContext,
-) -> Result<Vec<Arc<SyncMutex<Player>>>, CommandError> {
-    let current_players = ctx.server.get_players();
+) -> Result<Vec<Arc<ServerPlayer>>, CommandError> {
+    // Re-resolve the parsed targets against the currently-online sessions (a
+    // target may have disconnected between parse and execution). UUIDs are
+    // lock-free on `ServerPlayer`.
+    let current_players = ctx.server.get_server_players();
     let players = players
         .iter()
         .filter_map(|player| {
+            let target_uuid = player.uuid();
             current_players
                 .iter()
-                .find(|current| current.lock().uuid() == player.lock().uuid())
+                .find(|current| current.uuid() == target_uuid)
                 .cloned()
         })
         .collect::<Vec<_>>();
@@ -202,11 +206,11 @@ fn current_players(
     Ok(players)
 }
 
-fn current_player(player: &Player, ctx: &CommandContext) -> Option<Arc<SyncMutex<Player>>> {
+fn current_player(uuid: Uuid, ctx: &CommandContext) -> Option<Arc<ServerPlayer>> {
     ctx.server
-        .get_players()
+        .get_server_players()
         .into_iter()
-        .find(|current| current.lock().uuid() == player.uuid())
+        .find(|current| current.uuid() == uuid)
 }
 
 fn no_player_found() -> CommandError {

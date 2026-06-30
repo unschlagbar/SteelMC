@@ -1,7 +1,6 @@
 //! Experience Command
 
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_utils::translations;
 use text_components::TextComponent;
@@ -13,7 +12,7 @@ use crate::{
         context::CommandContext,
         error::CommandError,
     },
-    player::Player,
+    player::ServerPlayer,
 };
 
 /// Handler for the "xp" command.
@@ -29,13 +28,13 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("query").then(
             argument("target", PlayerArgument::multiple())
                 .then(literal("points").executes(
-                    |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
+                    |((), players): ((), Vec<Arc<ServerPlayer>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let points = player.lock().experience.points();
+                            let points = player.entity().lock().experience.points();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_POINTS
                                     .message([
-                                        TextComponent::from(player.lock().gameprofile.name.clone()),
+                                        TextComponent::from(player.name().to_string()),
                                         TextComponent::from(points.to_string()),
                                     ])
                                     .into(),
@@ -45,13 +44,13 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     },
                 ))
                 .then(literal("levels").executes(
-                    |((), players): ((), Vec<Arc<SyncMutex<Player>>>), ctx: &mut CommandContext| {
+                    |((), players): ((), Vec<Arc<ServerPlayer>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let level = player.lock().experience.level();
+                            let level = player.entity().lock().experience.level();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_LEVELS
                                     .message([
-                                        TextComponent::from(player.lock().gameprofile.name.clone()),
+                                        TextComponent::from(player.name().to_string()),
                                         TextComponent::from(level.to_string()),
                                     ])
                                     .into(),
@@ -67,19 +66,19 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             argument("target", PlayerArgument::multiple()).then(
                 argument("amount", IntegerArgument::bounded(Some(0), None))
                     .executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Points, ctx)
                         },
                     )
                     .then(literal("points").executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Points, ctx)
                         },
                     ))
                     .then(literal("levels").executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             set_experience(players, amount, ExperienceType::Levels, ctx)
                         },
@@ -92,21 +91,21 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             argument("target", PlayerArgument::multiple()).then(
                 argument("amount", IntegerArgument::new())
                     .executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Points, ctx);
                             Ok(())
                         },
                     )
                     .then(literal("points").executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Points, ctx);
                             Ok(())
                         },
                     ))
                     .then(literal("levels").executes(
-                        |(((), players), amount): (((), Vec<Arc<SyncMutex<Player>>>), i32),
+                        |(((), players), amount): (((), Vec<Arc<ServerPlayer>>), i32),
                          ctx: &mut CommandContext| {
                             add_experience(players, amount, ExperienceType::Levels, ctx);
                             Ok(())
@@ -119,14 +118,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("clear")
             .executes(|(): (), ctx: &mut CommandContext| {
                 if let Some(player) = ctx.sender.get_player() {
-                    player.lock().experience.set_total_points(0);
+                    player.entity().lock().experience.set_total_points(0);
                 }
                 Ok(())
             })
             .then(argument("target", PlayerArgument::multiple()).executes(
-                |((), players): ((), Vec<Arc<SyncMutex<Player>>>), _ctx: &mut CommandContext| {
+                |((), players): ((), Vec<Arc<ServerPlayer>>), _ctx: &mut CommandContext| {
                     for player in players {
-                        player.lock().experience.set_total_points(0);
+                        player.entity().lock().experience.set_total_points(0);
                     }
                     Ok(())
                 },
@@ -140,13 +139,13 @@ enum ExperienceType {
 }
 
 fn set_experience(
-    players: Vec<Arc<SyncMutex<Player>>>,
+    players: Vec<Arc<ServerPlayer>>,
     amount: i32,
     xp_type: ExperienceType,
     ctx: &mut CommandContext,
 ) -> Result<(), CommandError> {
     for player in &players {
-        let mut player_guard = player.lock();
+        let mut player_guard = player.entity().lock();
         let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience
@@ -162,11 +161,14 @@ fn set_experience(
             ExperienceType::Levels => &translations::COMMANDS_EXPERIENCE_SET_LEVELS_SUCCESS_SINGLE,
         };
 
+        // Release the player lock before `send_message` locks the sender, which may
+        // be this same player.
+        let player_name = player.name().to_string();
         ctx.sender.send_message(
             &translation
                 .message([
                     TextComponent::from(amount.to_string()),
-                    TextComponent::from(player.lock().gameprofile.name.clone()),
+                    TextComponent::from(player_name),
                 ])
                 .into(),
         );
@@ -194,13 +196,13 @@ fn set_experience(
 }
 
 fn add_experience(
-    players: Vec<Arc<SyncMutex<Player>>>,
+    players: Vec<Arc<ServerPlayer>>,
     amount: i32,
     xp_type: ExperienceType,
     ctx: &mut CommandContext,
 ) {
     for player in &players {
-        let mut player_guard = player.lock();
+        let mut player_guard = player.entity().lock();
         let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience.add_points(amount),
@@ -214,11 +216,14 @@ fn add_experience(
             ExperienceType::Levels => &translations::COMMANDS_EXPERIENCE_ADD_LEVELS_SUCCESS_SINGLE,
         };
 
+        // Release the player lock before `send_message` locks the sender, which may
+        // be this same player.
+        let player_name = player.name().to_string();
         ctx.sender.send_message(
             &translation
                 .message([
                     TextComponent::from(amount.to_string()),
-                    TextComponent::from(player.lock().gameprofile.name.clone()),
+                    TextComponent::from(player_name),
                 ])
                 .into(),
         );

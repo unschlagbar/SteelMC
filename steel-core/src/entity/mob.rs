@@ -530,7 +530,7 @@ pub trait Mob: LivingEntity {
             }
 
             let should_increase = {
-                let equipment = self.living_base().equipment().lock();
+                let equipment = self.living_base().equipment();
                 !equipment.get_ref(slot).is_empty() && self.equipment_drop_chance(slot) <= 1.0
             };
             if should_increase {
@@ -589,7 +589,6 @@ pub trait Mob: LivingEntity {
     ) -> Option<SpawnGroupData> {
         let needs_random_spawn_bonus = !self
             .attributes()
-            .lock()
             .has_modifier(vanilla_attributes::FOLLOW_RANGE, &RANDOM_SPAWN_BONUS_ID);
         let (random_spawn_bonus, left_handed) = {
             let mut random = world.random().lock();
@@ -600,7 +599,7 @@ pub trait Mob: LivingEntity {
         };
 
         if let Some(amount) = random_spawn_bonus {
-            self.attributes().lock().add_modifier(
+            self.attributes_mut().add_modifier(
                 vanilla_attributes::FOLLOW_RANGE,
                 AttributeModifier {
                     id: RANDOM_SPAWN_BONUS_ID,
@@ -698,7 +697,7 @@ pub trait Mob: LivingEntity {
         self.mob_base().drop_chances.set_guaranteed_drop(slot);
     }
 
-    fn drop_custom_death_loot_mob(&self, _source: &DamageSource, killed_by_player: bool) {
+    fn drop_custom_death_loot_mob(&mut self, _source: &DamageSource, killed_by_player: bool) {
         if self.level().is_none() {
             return;
         }
@@ -711,7 +710,7 @@ pub trait Mob: LivingEntity {
             }
 
             let can_drop_item = {
-                let equipment = self.living_base().equipment().lock();
+                let equipment = self.living_base().equipment();
                 let item_stack = equipment.get_ref(slot);
                 !item_stack.is_empty()
                     && !item_stack
@@ -729,7 +728,7 @@ pub trait Mob: LivingEntity {
             }
 
             let mut item_stack = {
-                let mut equipment = self.living_base().equipment().lock();
+                let equipment = self.living_base().equipment();
                 let item_stack = equipment.get_ref(slot);
                 if item_stack.is_empty()
                     || item_stack
@@ -1150,7 +1149,7 @@ pub trait Mob: LivingEntity {
         self.home_radius() != -1
     }
 
-    fn check_mob_despawn(&self) {
+    fn check_mob_despawn(&mut self) {
         if self
             .level()
             .is_some_and(|world| world.difficulty() == Difficulty::Peaceful)
@@ -1205,8 +1204,14 @@ pub trait Mob: LivingEntity {
 
     fn controlling_passenger_mob(&self) -> Option<SharedEntity> {
         let first_passenger = self.first_passenger()?;
+        // Reject non-mob passengers (e.g. players) lock-free before locking the
+        // passenger for `can_control_vehicle`: a player riding this mob may be
+        // mid-tick holding its own lock, so re-locking it here would deadlock.
+        if self.is_no_ai() || !first_passenger.is_mob() {
+            return None;
+        }
         let can_control = first_passenger.with_entity(|e| e.can_control_vehicle());
-        if self.is_no_ai() || !first_passenger.is_mob() || !can_control {
+        if !can_control {
             return None;
         }
 
@@ -1269,7 +1274,6 @@ pub trait Mob: LivingEntity {
         };
         let attack_damage = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::ATTACK_DAMAGE) as f32;
         let damage_source = self.mob_attack_damage_source();
         let enchantment_context = EnchantmentDamageContext::new(
@@ -1283,16 +1287,16 @@ pub trait Mob: LivingEntity {
         // TODO: Apply item attack damage bonuses once item combat behavior exposes them.
 
         let old_movement = target.velocity();
-        let was_hurt = target.hurt(&damage_source, damage);
-        if was_hurt {
-            target.with_entity(|target_entity| {
+        let was_hurt = target.with_entity(|target| {
+            let was_hurt = target.hurt(&damage_source, damage);
+            if was_hurt {
                 self.cause_extra_knockback(
-                    target_entity,
-                    self.get_attack_knockback(target_entity, &weapon_item, &damage_source),
+                    target,
+                    self.get_attack_knockback(target, &weapon_item, &damage_source),
                     old_movement,
                 );
                 let mut post_attack_context = EnchantmentPostAttackContext::new(
-                    target_entity,
+                    target,
                     Some(self.as_entity_event_source_mut()),
                     None,
                     &damage_source,
@@ -1302,10 +1306,11 @@ pub trait Mob: LivingEntity {
                     &weapon_item,
                     &mut post_attack_context,
                 );
-            });
-            self.set_last_hurt_mob(Some(target));
-            self.play_attack_sound();
-        }
+            }
+            was_hurt
+        });
+        self.set_last_hurt_mob(Some(target));
+        self.play_attack_sound();
 
         if let Some(user) = self.as_entity_event_source_mut().as_living_entity_mut() {
             enchantment_helper::do_post_piercing_attack_effects(user);
@@ -1331,7 +1336,6 @@ pub trait Mob: LivingEntity {
     ) -> f64 {
         let attack_knockback = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::ATTACK_KNOCKBACK);
         let enchantment_context = EnchantmentDamageContext::new(
             target.entity_type(),
@@ -1449,7 +1453,7 @@ pub trait Mob: LivingEntity {
     }
 
     /// Mirrors vanilla `Mob.setSpeed`: update cached speed and forward AI input.
-    fn set_mob_speed(&self, speed: f32) {
+    fn set_mob_speed(&mut self, speed: f32) {
         self.set_speed(speed);
         let input = self.travel_input();
         self.set_travel_input(LivingTravelInput::new(
@@ -1541,7 +1545,6 @@ pub trait Mob: LivingEntity {
         ));
         let movement_speed = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::MOVEMENT_SPEED);
         self.set_mob_speed((speed_modifier * movement_speed) as f32);
 
@@ -1554,7 +1557,6 @@ pub trait Mob: LivingEntity {
     fn tick_strafe_control(&mut self, forward: f32, right: f32) {
         let movement_speed = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::MOVEMENT_SPEED) as f32;
         let speed = movement_speed * 0.25;
         let mut strafe_forward = forward;
@@ -1601,7 +1603,6 @@ pub trait Mob: LivingEntity {
     fn tick_jumping_control(&mut self, speed_modifier: f64) {
         let movement_speed = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::MOVEMENT_SPEED);
         self.set_mob_speed((speed_modifier * movement_speed) as f32);
         if self.on_ground()
@@ -1649,7 +1650,7 @@ pub trait Mob: LivingEntity {
         self.clamp_head_rotation_to_body_when_pathing();
     }
 
-    fn clamp_head_rotation_to_body_when_pathing(&self) {
+    fn clamp_head_rotation_to_body_when_pathing(&mut self) {
         if self.mob_base_ref().navigation.is_done() {
             return;
         }
@@ -2058,7 +2059,6 @@ pub trait PathfinderMob: Mob {
 
         let follow_range = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::FOLLOW_RANGE);
         let max_path_length = {
             let navigation = &mut self.mob_base().navigation;
@@ -2326,7 +2326,7 @@ mod tests {
         /// Attaches this mob to its own base and returns the shared handle.
         fn shared(mut self) -> SharedEntity {
             let base = self.base_strong.take().expect("entity already shared");
-            base.attach_entity(Box::new(SyncMutex::new(self)));
+            base.attach_entity(self);
             base
         }
 
@@ -2458,7 +2458,11 @@ mod tests {
     }
 
     impl LivingEntity for DespawnTestMob {
-        fn living_base(&self) -> &LivingEntityBase {
+        fn living_base(&mut self) -> &mut LivingEntityBase {
+            &mut self.living_base
+        }
+
+        fn living_base_ref(&self) -> &LivingEntityBase {
             &self.living_base
         }
 
@@ -2512,7 +2516,10 @@ mod tests {
     }
 
     impl LivingEntity for HiddenTarget {
-        fn living_base(&self) -> &LivingEntityBase {
+        fn living_base(&mut self) -> &mut LivingEntityBase {
+            &mut self.living_base
+        }
+        fn living_base_ref(&self) -> &LivingEntityBase {
             &self.living_base
         }
 
@@ -2841,8 +2848,7 @@ mod tests {
         let mut mob = mob.lock_entity();
         let mob: &mut DespawnTestMob = unsafe { mob.downcast_unchecked() };
 
-        mob.attributes()
-            .lock()
+        mob.attributes_mut()
             .set_base_value(vanilla_attributes::ATTACK_DAMAGE, 4.0);
         let target: SharedEntity =
             DespawnTestMob::with_position(2, DVec3::new(1.0, 0.0, 0.0), None, false);
@@ -2870,7 +2876,7 @@ mod tests {
         let mut mob = mob.lock_entity();
         let mob: &mut DespawnTestMob = unsafe { mob.downcast_unchecked() };
         {
-            let mut attributes = mob.attributes().lock();
+            let attributes = mob.attributes_mut();
             attributes.set_base_value(vanilla_attributes::ATTACK_DAMAGE, 4.0);
             attributes.set_base_value(vanilla_attributes::ATTACK_KNOCKBACK, 2.0);
         }
@@ -2957,7 +2963,7 @@ mod tests {
 
     #[test]
     fn mob_despawn_resets_no_action_time_near_player() {
-        let mob = DespawnTestMob::new(Some(31.0 * 31.0), false);
+        let mut mob = DespawnTestMob::new(Some(31.0 * 31.0), false);
 
         mob.set_no_action_time(42);
         mob.check_mob_despawn();
@@ -2968,7 +2974,7 @@ mod tests {
 
     #[test]
     fn mob_despawn_discards_far_removable_mob() {
-        let mob = DespawnTestMob::new(Some(129.0 * 129.0), true);
+        let mut mob = DespawnTestMob::new(Some(129.0 * 129.0), true);
 
         mob.check_mob_despawn();
 

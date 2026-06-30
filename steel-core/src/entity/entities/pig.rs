@@ -337,12 +337,11 @@ impl PigEntity {
     pub fn ridden_speed(&mut self) -> f32 {
         let movement_speed = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::MOVEMENT_SPEED) as f32;
         movement_speed * 0.225 * ItemSteerable::boost_factor(self)
     }
 
-    fn set_ridden_rotation(&self, controller_yaw: f32, controller_pitch: f32) {
+    fn set_ridden_rotation(&mut self, controller_yaw: f32, controller_pitch: f32) {
         self.set_rotation((controller_yaw, controller_pitch * 0.5));
         self.base().set_old_yaw_to_current();
         let yaw = self.rotation().0;
@@ -474,7 +473,7 @@ impl Entity for PigEntity {
         self.tick_living_state();
     }
 
-    fn check_despawn(&self) {
+    fn check_despawn(&mut self) {
         Mob::check_mob_despawn(self);
     }
 
@@ -542,7 +541,7 @@ impl Entity for PigEntity {
         !self.is_removed()
     }
 
-    fn is_pushable(&self) -> bool {
+    fn is_pushable(&mut self) -> bool {
         Entity::is_alive(self) && !self.is_spectator() && !self.on_climbable()
     }
 
@@ -561,6 +560,26 @@ impl Entity for PigEntity {
             return Some(passenger);
         }
 
+        self.controlling_passenger_mob()
+    }
+
+    fn controlling_passenger_for_rider(&self, rider: &Player) -> Option<SharedEntity> {
+        if self.is_saddled()
+            && let Some(passenger) = self.first_passenger()
+            && passenger.id() == rider.id()
+            && {
+                let mut is_holding_carrot_on_a_stick = |item_stack: &ItemStack| {
+                    item_stack.is(&vanilla_items::ITEMS.carrot_on_a_stick)
+                };
+                rider.is_holding(&mut is_holding_carrot_on_a_stick)
+            }
+        {
+            return Some(passenger);
+        }
+
+        // The carrot check above already used `rider` directly, and
+        // `controlling_passenger_mob` rejects non-mob passengers (i.e. players)
+        // lock-free, so this fallback never re-locks `rider`.
         self.controlling_passenger_mob()
     }
 
@@ -593,28 +612,27 @@ impl Entity for PigEntity {
     }
 
     fn pack_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.attributes().lock().syncable_snapshots()
+        self.attributes().syncable_snapshots()
     }
 
-    fn drain_dirty_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.attributes().lock().drain_dirty_sync()
+    fn drain_dirty_syncable_attributes(&mut self) -> Vec<AttributeSnapshot> {
+        self.attributes_mut().drain_dirty_sync()
     }
 
-    fn drain_dirty_mob_effects(&self) -> Vec<MobEffectSyncChange> {
-        self.living_base.drain_dirty_mob_effects()
+    fn drain_dirty_mob_effects(&mut self) -> Vec<MobEffectSyncChange> {
+        self.living_base.drain_dirty_mob_effects().collect()
     }
 
     fn pack_all_equipment(&self) -> Vec<EquipmentSlotItem> {
         self.pack_living_equipment()
     }
 
-    fn drain_dirty_equipment(&self) -> Vec<EquipmentSlotItem> {
+    fn drain_dirty_equipment(&mut self) -> Vec<EquipmentSlotItem> {
         self.drain_dirty_living_equipment()
     }
 
     fn max_up_step(&self) -> f32 {
         self.attributes()
-            .lock()
             .get_value(vanilla_attributes::STEP_HEIGHT)
             .unwrap_or(0.6) as f32
     }
@@ -667,7 +685,11 @@ impl Entity for PigEntity {
 }
 
 impl LivingEntity for PigEntity {
-    fn living_base(&self) -> &LivingEntityBase {
+    fn living_base(&mut self) -> &mut LivingEntityBase {
+        &mut self.living_base
+    }
+
+    fn living_base_ref(&self) -> &LivingEntityBase {
         &self.living_base
     }
 
@@ -901,11 +923,10 @@ impl Mob for PigEntity {
 
         if !has_food && self.is_saddled() && !self.is_vehicle() && !player.is_secondary_use_active()
         {
-            if let Some(world) = self.level()
-                && let Some(vehicle) = world.get_entity_by_id(self.id())
-            {
-                player.start_riding(&vehicle);
-            }
+            // `self` (the pig) and `player` are both behavior-locked here, so pass
+            // the live `&mut dyn Entity` straight in — `start_riding` operates on
+            // the locked refs and never re-locks (which would self-deadlock).
+            player.start_riding(self);
             return InteractionResult::Success;
         }
 
@@ -993,7 +1014,7 @@ mod tests {
         let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert_eq!(pig.get_health().to_bits(), 10.0_f32.to_bits());
-        let attributes = pig.attributes().lock();
+        let attributes = pig.attributes();
         assert_eq!(
             attributes
                 .required_value(vanilla_attributes::MAX_HEALTH)
@@ -1129,7 +1150,7 @@ mod tests {
     fn pig_ridden_rotation_matches_controller_head_and_body_yaw() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.base().set_old_rotation((7.0, -12.0));
 
         pig.set_ridden_rotation(450.0, 120.0);
@@ -1209,14 +1230,13 @@ mod tests {
     fn pig_dispenser_can_equip_saddle_only_when_alive_adult_and_empty() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let saddle = ItemStack::new(&ITEMS.saddle);
 
         assert!(LivingEntity::can_equip_with_dispenser(&pig, &saddle));
 
         pig.living_base
             .equipment()
-            .lock()
             .set(EquipmentSlot::Saddle, ItemStack::new(&ITEMS.saddle));
         assert!(!LivingEntity::can_equip_with_dispenser(&pig, &saddle));
 
@@ -1254,13 +1274,12 @@ mod tests {
     fn pig_saddled_state_reads_saddle_equipment() {
         init_test_registry();
 
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!pig.is_saddled());
 
         pig.living_base
             .equipment()
-            .lock()
             .set(EquipmentSlot::Saddle, ItemStack::new(&ITEMS.saddle));
 
         assert!(pig.is_saddled());
@@ -1351,7 +1370,7 @@ mod tests {
         assert!(LivingEntity::should_drop_experience(&pig));
         assert!(!LivingEntity::was_experience_consumed(&pig));
 
-        LivingEntity::skip_drop_experience(&pig);
+        LivingEntity::skip_drop_experience(&mut pig);
         assert!(LivingEntity::was_experience_consumed(&pig));
 
         pig.living_base().reset_death_state();
@@ -1393,7 +1412,6 @@ mod tests {
         let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         pig.living_base
             .equipment()
-            .lock()
             .set(EquipmentSlot::Saddle, ItemStack::new(&ITEMS.saddle));
         pig.set_guaranteed_drop(EquipmentSlot::Saddle);
 
@@ -1577,8 +1595,7 @@ mod tests {
         let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
         let adult_dimensions = vanilla_entities::PIG.dimensions;
 
-        pig.attributes()
-            .lock()
+        pig.attributes_mut()
             .set_base_value(vanilla_attributes::SCALE, 2.0);
         LivingEntity::refresh_dirty_attributes(&mut pig);
 

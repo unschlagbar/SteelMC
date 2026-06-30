@@ -6,10 +6,8 @@ use crate::command::commands::{
 };
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
-use crate::entity::Entity;
-use crate::player::Player;
+use crate::player::ServerPlayer;
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 use steel_utils::translations;
 use steel_utils::types::GameType;
 use text_components::TextComponent;
@@ -50,7 +48,7 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
             .ok_or(CommandError::InvalidRequirement)?;
 
         // Set the player's game mode
-        player.lock().set_game_mode(gamemode);
+        player.entity().lock().set_game_mode(gamemode);
 
         Ok(())
     }
@@ -58,12 +56,12 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
 
 struct GameModeTargetCommandExecutor;
 
-impl CommandExecutor<(((), GameType), Vec<Arc<SyncMutex<Player>>>)>
+impl CommandExecutor<(((), GameType), Vec<Arc<ServerPlayer>>)>
     for GameModeTargetCommandExecutor
 {
     fn execute(
         &self,
-        args: (((), GameType), Vec<Arc<SyncMutex<Player>>>),
+        args: (((), GameType), Vec<Arc<ServerPlayer>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let (((), gamemode), targets) = args;
@@ -71,19 +69,20 @@ impl CommandExecutor<(((), GameType), Vec<Arc<SyncMutex<Player>>>)>
         let mode_translation = get_gamemode_translation(gamemode);
 
         for target in targets {
-            if target.lock().set_game_mode(gamemode) {
-                // Send feedback to sender if sender is not the target
-                let sender_is_target = if let Some(sender_player) = context.sender.get_player() {
-                    sender_player.lock().id() == target.lock().id()
-                } else {
-                    false
-                };
+            if target.entity().lock().set_game_mode(gamemode) {
+                // Send feedback to sender only if the sender is not the target.
+                // UUIDs are lock-free on `ServerPlayer`.
+                let sender_is_target = context
+                    .sender
+                    .get_player()
+                    .is_some_and(|sender_player| sender_player.uuid() == target.uuid());
 
                 if !sender_is_target {
+                    let target_name = target.name().to_string();
                     context.sender.send_message(
                         &translations::COMMANDS_GAMEMODE_SUCCESS_OTHER
                             .message([
-                                TextComponent::plain(target.lock().gameprofile.name.clone()),
+                                TextComponent::plain(target_name),
                                 TextComponent::from(mode_translation),
                             ])
                             .into(),

@@ -1,6 +1,5 @@
 //! /// Handler for the "give" command.
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_registry::{data_components::vanilla_components, item_stack::ItemStack, items::ItemRef};
 use steel_utils::translations;
@@ -14,10 +13,10 @@ use crate::{
         sender::CommandSender,
     },
     inventory::container::Container,
-    player::Player,
+    player::ServerPlayer,
 };
 
-type GiveWithCountArgs = ((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32);
+type GiveWithCountArgs = ((((), Vec<Arc<ServerPlayer>>), ItemRef), i32);
 
 /// Handler for the "give" command.
 #[must_use]
@@ -31,7 +30,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         argument("targets", PlayerArgument::multiple()).then(
             argument("item", ItemStackArgument) // FIXME: should be item predicate instead to also handle tags and components
                 .executes(
-                    |(((), targets), item): (((), Vec<Arc<SyncMutex<Player>>>), ItemRef),
+                    |(((), targets), item): (((), Vec<Arc<ServerPlayer>>), ItemRef),
                      ctx: &mut CommandContext| {
                         give(&targets, item, 1, &ctx.sender);
 
@@ -52,7 +51,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
     )
 }
 
-fn give(targets: &Vec<Arc<SyncMutex<Player>>>, item: ItemRef, count: i32, sender: &CommandSender) {
+fn give(targets: &Vec<Arc<ServerPlayer>>, item: ItemRef, count: i32, sender: &CommandSender) {
     let max_stack_size = item
         .components
         .get(vanilla_components::MAX_STACK_SIZE)
@@ -77,7 +76,7 @@ fn give(targets: &Vec<Arc<SyncMutex<Player>>>, item: ItemRef, count: i32, sender
 
     for target in targets {
         let mut remaining = count;
-        let inventory = target.lock().inventory.clone();
+        let inventory = target.entity().lock().inventory.clone();
 
         while remaining > 0 {
             let stack_size = max_stack_size.min(remaining);
@@ -86,12 +85,18 @@ fn give(targets: &Vec<Arc<SyncMutex<Player>>>, item: ItemRef, count: i32, sender
             let added = inventory.lock().add(&mut copy);
 
             if !added || !copy.is_empty() {
-                target.lock().drop_item(copy, false, false);
+                target.entity().lock().drop_item(copy, false, false);
             }
         }
     }
 
     if targets.len() == 1 {
+        // Name is lock-free on `ServerPlayer`.
+        let target_name = targets
+            .first()
+            .expect("targets cannot be empty.")
+            .name()
+            .to_string();
         sender.send_message(
             &translations::COMMANDS_GIVE_SUCCESS_SINGLE
                 .message([
@@ -100,15 +105,7 @@ fn give(targets: &Vec<Arc<SyncMutex<Player>>>, item: ItemRef, count: i32, sender
                         // FIXME: display name
                         HoverEvent::show_item(item.key.path.clone(), None, None::<&str>),
                     ),
-                    TextComponent::from(
-                        targets
-                            .first()
-                            .expect("targets cannot be empty.")
-                            .lock()
-                            .gameprofile
-                            .name
-                            .clone(),
-                    ),
+                    TextComponent::from(target_name),
                 ])
                 .into(),
         );

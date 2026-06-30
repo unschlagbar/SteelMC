@@ -7,9 +7,8 @@ use crate::command::commands::{
 use crate::command::context::CommandContext;
 use crate::command::error::CommandError;
 use crate::command::sender::CommandSender;
-use crate::player::Player;
+use crate::player::ServerPlayer;
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 use text_components::TextComponent;
 
 /// Handler for the "tellraw" command.
@@ -28,22 +27,22 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 
 struct TellrawCommandExecutor;
 
-impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), TextComponent)>
+impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), TextComponent)>
     for TellrawCommandExecutor
 {
     fn execute(
         &self,
-        args: (((), Vec<Arc<SyncMutex<Player>>>), TextComponent),
+        args: (((), Vec<Arc<ServerPlayer>>), TextComponent),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let sender = match &context.sender {
-            CommandSender::Player(player) => player.lock().gameprofile.name.clone(),
+            CommandSender::Player(player) => player.name().to_string(),
             CommandSender::Console => "Console".to_string(),
             CommandSender::Rcon => "Rcon".to_string(),
         };
         log::info!("{}'s tellraw: {:p}", sender, args.1);
         for player in args.0.1 {
-            player.lock().send_message(&args.1);
+            player.send_message(&args.1);
         }
         Ok(())
     }

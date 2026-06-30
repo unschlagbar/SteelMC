@@ -102,7 +102,9 @@ pub struct JavaConnection {
     ///
     /// The listener decodes raw packets off the IO task and enqueues them here;
     /// the owning player drains and applies them on the game tick, so game state
-    /// is only ever mutated by a single thread.
+    /// is only ever mutated by a single thread. Latency-sensitive connection
+    /// packets (keep-alive, ping) are handled inline in [`Self::dispatch_raw_packet`]
+    /// and never reach this queue.
     inbound_packets: UnboundedSender<RawPacket>,
     cancel_token: CancellationToken,
     compression: Option<CompressionInfo>,
@@ -303,18 +305,19 @@ impl JavaConnection {
     ///
     /// Called only from [`ServerPlayer::drain_inbound`](crate::player::ServerPlayer::drain_inbound),
     /// so all game-state mutation happens on a single thread. Latency-sensitive
-    /// connection packets (keep-alive) are handled inline in [`Self::listener`] and
-    /// never reach here.
+    /// connection packets (keep-alive, ping) are handled inline in
+    /// [`Self::dispatch_raw_packet`] and never reach here.
     #[expect(
         clippy::too_many_lines,
         reason = "single match dispatch over all play packets; splitting would hurt readability"
     )]
     pub(crate) fn apply_inbound_packet(
-        player: &Arc<SyncMutex<Player>>,
+        s_player: &Arc<ServerPlayer>,
         packet: RawPacket,
         server: &Arc<Server>,
     ) -> Result<(), PacketError> {
         let data = &mut Cursor::new(packet.payload.as_slice());
+        let player = s_player.entity();
 
         if !player.lock().has_joined_world() && !Self::can_process_before_join(packet.id) {
             return Ok(());
@@ -405,7 +408,7 @@ impl JavaConnection {
             }
             play::S_CHAT_COMMAND => {
                 server.command_dispatcher.read().handle_command(
-                    CommandSender::Player(Arc::clone(player)),
+                    CommandSender::Player(Arc::clone(s_player)),
                     SChatCommand::read_packet(data)?.command,
                     server,
                 );
@@ -413,7 +416,7 @@ impl JavaConnection {
             play::S_COMMAND_SUGGESTION => {
                 let packet = SCommandSuggestion::read_packet(data)?;
                 server.command_dispatcher.read().handle_player_suggestions(
-                    player,
+                    s_player,
                     packet.id,
                     &packet.command,
                     server.clone(),
@@ -492,10 +495,6 @@ impl JavaConnection {
                 let packet = SClientCommand::read_packet(data)?;
                 player.lock().handle_client_command(packet.action);
             }
-            play::S_PING_REQUEST => {
-                let packet = SPingRequest::read_packet(data)?;
-                player.lock().send_packet(CPongResponse::new(packet.time));
-            }
             play::S_CHANGE_GAME_MODE => {
                 // TODO: Check player permission level (Or gamemode permission)
                 let packet = SChangeGameMode::read_packet(data)?;
@@ -512,18 +511,33 @@ impl JavaConnection {
 
     /// Handles a freshly decoded raw packet off the IO task.
     ///
-    /// Keep-alive is connection-level and latency-sensitive, so it is processed
-    /// inline here. Every other packet is queued for the owning player to apply on
-    /// the game tick, keeping game-state mutation single-threaded.
+    /// Connection-level, latency-sensitive packets (keep-alive and ping) are
+    /// answered inline here on the IO task — matching vanilla, which never defers
+    /// these to the server tick — so a client's latency probe round-trips in
+    /// network time instead of waiting up to a tick. Every other (game-state)
+    /// packet is queued for the owning player to apply on the game tick, keeping
+    /// game-state mutation single-threaded.
     fn dispatch_raw_packet(&self, packet: RawPacket) {
-        if packet.id == play::S_KEEP_ALIVE {
-            match SKeepAlive::read_packet(&mut Cursor::new(packet.payload.as_slice())) {
-                Ok(keep_alive) => self.handle_keep_alive(keep_alive),
-                Err(err) => {
-                    log::warn!("Failed to decode keep-alive from client {}: {err}", self.id);
+        match packet.id {
+            play::S_KEEP_ALIVE => {
+                match SKeepAlive::read_packet(&mut Cursor::new(packet.payload.as_slice())) {
+                    Ok(keep_alive) => self.handle_keep_alive(keep_alive),
+                    Err(err) => {
+                        log::warn!("Failed to decode keep-alive from client {}: {err}", self.id);
+                    }
                 }
+                return;
             }
-            return;
+            play::S_PING_REQUEST => {
+                match SPingRequest::read_packet(&mut Cursor::new(packet.payload.as_slice())) {
+                    Ok(ping) => self.send_packet(CPongResponse::new(ping.time)),
+                    Err(err) => {
+                        log::warn!("Failed to decode ping request from client {}: {err}", self.id);
+                    }
+                }
+                return;
+            }
+            _ => {}
         }
 
         if self.inbound_packets.send(packet).is_err() {

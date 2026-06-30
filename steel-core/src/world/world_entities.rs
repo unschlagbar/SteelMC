@@ -111,10 +111,10 @@ impl World {
             self.entity_tracker().on_player_leave(entity_id);
 
             self.player_area_map.on_player_leave(&guard);
-            self.chunk_map.remove_player(&guard);
 
             (uuid, player_data, server)
         };
+        self.chunk_map.remove_player(&player);
 
         let start = Instant::now();
 
@@ -162,7 +162,7 @@ impl World {
         self.entity_tracker().on_player_leave(entity_id);
         self.player_area_map.on_player_leave(&guard);
         // Note: no CRemovePlayerInfo — player stays in the global tab list
-        self.chunk_map.remove_player(&guard);
+        self.chunk_map.remove_player(&player);
     }
 
     /// Removes a player during a domain switch after the caller has saved
@@ -178,7 +178,7 @@ impl World {
         self.unregister_player_entity(&guard);
         self.entity_tracker().on_player_leave(entity_id);
         self.player_area_map.on_player_leave(&guard);
-        self.chunk_map.remove_player(&guard);
+        self.chunk_map.remove_player(&player);
     }
 
     /// Adds a player to the world.

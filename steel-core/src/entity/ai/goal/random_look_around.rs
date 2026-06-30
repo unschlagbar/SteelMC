@@ -122,7 +122,11 @@ mod tests {
     }
 
     impl LivingEntity for TestPathfinderMob {
-        fn living_base(&self) -> &LivingEntityBase {
+        fn living_base(&mut self) -> &mut LivingEntityBase {
+            &mut self.living_base
+        }
+
+        fn living_base_ref(&self) -> &LivingEntityBase {
             &self.living_base
         }
 

@@ -81,7 +81,7 @@ impl Entity for ChestMinecartEntity {
         !self.is_removed()
     }
 
-    fn is_pushable(&self) -> bool {
+    fn is_pushable(&mut self) -> bool {
         true
     }
 

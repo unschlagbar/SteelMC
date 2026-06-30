@@ -389,7 +389,6 @@ impl Player {
     fn current_item_attack_strength_delay(&self) -> f32 {
         let attack_speed = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::ATTACK_SPEED);
         Self::attack_strength_delay_from_speed(attack_speed)
     }
@@ -474,7 +473,6 @@ impl Player {
 
     fn entity_interaction_range(&self) -> f64 {
         self.attributes()
-            .lock()
             .required_value(vanilla_attributes::ENTITY_INTERACTION_RANGE)
     }
 
@@ -592,7 +590,6 @@ impl Player {
         LivingEntity::refresh_equipment_attribute_modifiers(self, EquipmentSlot::MainHand);
         let base_damage = self
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::ATTACK_DAMAGE) as f32;
         let mut hit_something = false;
         for target in self.piercing_hit_entities(item_stack, &world) {
@@ -701,7 +698,7 @@ impl Player {
             stack.copy_with_count(stack.count())
         };
         let (attack_damage, attack_speed, attack_knockback) = {
-            let attributes = self.attributes().lock();
+            let attributes = self.attributes();
             (
                 attributes.required_value(vanilla_attributes::ATTACK_DAMAGE) as f32,
                 attributes.required_value(vanilla_attributes::ATTACK_SPEED),
@@ -761,18 +758,27 @@ impl Player {
         apply_to_target: bool,
     ) {
         let (source_item, item_hurt_enemy) = {
-            let mut inventory = self.inventory.lock();
-            inventory.mutate_item_in_hand(InteractionHand::MainHand, |stack| {
-                if stack.is_empty() {
-                    return (ItemStack::empty(), false);
-                }
-                let behavior = ITEM_BEHAVIORS.get_behavior(stack.item());
+            let mut hand_stack = self
+                .inventory
+                .lock()
+                .get_item_in_hand(InteractionHand::MainHand)
+                .clone();
+            if hand_stack.is_empty() {
+                (ItemStack::empty(), false)
+            } else {
+                let behavior = ITEM_BEHAVIORS.get_behavior(hand_stack.item());
                 if let Some(living_target) = entity.as_living_entity() {
-                    behavior.hurt_enemy(stack, living_target, self);
+                    behavior.hurt_enemy(&mut hand_stack, living_target, self);
                 }
-                let source_item = stack.copy_with_count(stack.count());
-                (source_item, stack.get_weapon().is_some())
-            })
+                let source_item = hand_stack.copy_with_count(hand_stack.count());
+                let item_hurt_enemy = hand_stack.get_weapon().is_some();
+                self.inventory
+                    .lock()
+                    .mutate_item_in_hand(InteractionHand::MainHand, |stack| {
+                        *stack = hand_stack;
+                    });
+                (source_item, item_hurt_enemy)
+            }
         };
         let mut post_attack_context =
             EnchantmentPostAttackContext::new(entity, Some(self), None, damage_source, true);
@@ -1058,11 +1064,11 @@ impl Player {
     ///
     /// Vanilla: `ServerPlayer.updatePlayerAttributes()` — applies creative-mode
     /// range modifiers every tick.
-    pub(super) fn update_player_attributes(&self) {
+    pub(super) fn update_player_attributes(&mut self) {
         LivingEntity::refresh_all_equipment_attribute_modifiers(self);
 
         let is_creative = self.game_mode() == GameType::Creative;
-        let mut attrs = self.attributes().lock();
+        let attrs = self.attributes_mut();
 
         if is_creative {
             attrs.set_modifier(
@@ -1157,7 +1163,6 @@ impl Player {
 
         let base_range = self
             .attributes()
-            .lock()
             .get_value(vanilla_attributes::BLOCK_INTERACTION_RANGE)
             .unwrap_or(4.5);
         let max_range = base_range + buffer;
@@ -1190,7 +1195,7 @@ impl Player {
     }
 
     /// Triggers arm swing animation and broadcasts it to tracking players.
-    pub fn swing(&self, hand: InteractionHand, update_self: bool) {
+    pub fn swing(&mut self, hand: InteractionHand, update_self: bool) {
         LivingEntity::swing(self, hand, update_self);
     }
 
@@ -1343,7 +1348,7 @@ impl Player {
     }
 
     /// Handles the use of an item.
-    pub fn handle_use_item(&self, packet: SUseItem) {
+    pub fn handle_use_item(&mut self, packet: SUseItem) {
         log::info!(
             "Player {} used {:?} (sequence: {}, yaw: {}, pitch: {})",
             self.gameprofile.name,

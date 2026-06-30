@@ -398,7 +398,7 @@ fn apply_supported_entity_effect(
             min_amplifier,
             max_amplifier,
         } => {
-            let Some(living) = entity.as_living_entity() else {
+            if !entity.is_living_entity() {
                 return;
             };
             let min_duration = min_duration.calculate(level);
@@ -415,6 +415,8 @@ fn apply_supported_entity_effect(
             };
             let duration_ticks = java_round(duration_seconds * 20.0);
             let amplifier = java_round(amplifier).max(0);
+
+            let living = entity.as_living_entity_mut().unwrap();
             living.add_mob_effect(MobEffectInstance::with_duration(
                 effect,
                 duration_ticks,
@@ -800,8 +802,8 @@ mod tests {
             }
         }
 
-        fn equip(&self, slot: EquipmentSlot, stack: ItemStack) {
-            self.living_base.equipment().lock().set(slot, stack);
+        fn equip(&mut self, slot: EquipmentSlot, stack: ItemStack) {
+            self.living_base.equipment().set(slot, stack);
         }
     }
 
@@ -821,10 +823,18 @@ mod tests {
         fn as_living_entity(&self) -> Option<&dyn LivingEntity> {
             Some(self)
         }
+
+        fn as_living_entity_mut(&mut self) -> Option<&mut dyn LivingEntity> {
+            Some(self)
+        }
     }
 
     impl LivingEntity for TestLivingEntity {
-        fn living_base(&self) -> &LivingEntityBase {
+        fn living_base(&mut self) -> &mut LivingEntityBase {
+            &mut self.living_base
+        }
+
+        fn living_base_ref(&self) -> &LivingEntityBase {
             &self.living_base
         }
 
@@ -980,7 +990,7 @@ mod tests {
             Identifier::vanilla_static("frost_walker"),
             1,
         );
-        let victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
         victim.equip(EquipmentSlot::Feet, boots);
 
         assert!(is_immune_to_damage(
@@ -997,7 +1007,7 @@ mod tests {
             Identifier::vanilla_static("frost_walker"),
             1,
         );
-        let wrong_slot_victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
+        let mut wrong_slot_victim = TestLivingEntity::new(&vanilla_entities::PLAYER);
         wrong_slot_victim.equip(EquipmentSlot::Head, helmet);
 
         assert!(!is_immune_to_damage(

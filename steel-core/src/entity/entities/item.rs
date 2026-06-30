@@ -13,7 +13,6 @@ use steel_registry::item_stack::ItemStack;
 use steel_registry::vanilla_entities;
 use steel_registry::vanilla_entity_data::ItemEntityData;
 use steel_utils::UuidExt;
-use steel_utils::locks::SyncMutex;
 use uuid::Uuid;
 
 use crate::entity::damage::DamageSource;
@@ -204,7 +203,7 @@ impl ItemEntity {
                     .with_rotation((yaw, 0.0)),
                 world,
             );
-            base.attach_entity(Box::new(SyncMutex::new(inner)));
+            base.attach_entity(inner);
             base
         })
     }
@@ -700,30 +699,19 @@ mod tests {
     };
 
     use crate::entity::{Entity, damage::DamageSource};
-    use crate::world::World;
 
     use super::ItemEntity;
 
     #[test]
     fn item_entities_do_not_obstruct_block_placement() {
-        let item = ItemEntity::create(
-            &vanilla_entities::ITEM,
-            1,
-            DVec3::ZERO,
-            Weak::<World>::new(),
-        );
+        let item = ItemEntity::create(&vanilla_entities::ITEM, 1, DVec3::ZERO, Weak::new());
 
         assert!(!item.blocks_building());
     }
 
     #[test]
     fn item_lava_hurt_sound_uses_vanilla_interval() {
-        let item = ItemEntity::create(
-            &vanilla_entities::ITEM,
-            1,
-            DVec3::ZERO,
-            Weak::<World>::new(),
-        );
+        let item = ItemEntity::create(&vanilla_entities::ITEM, 1, DVec3::ZERO, Weak::new());
 
         {
             let mut item = item.lock_entity();
@@ -751,7 +739,7 @@ mod tests {
             1,
             DVec3::ZERO,
             ItemStack::new(&vanilla_items::ITEMS.stone),
-            Weak::<World>::new(),
+            Weak::new(),
         );
         let velocity = item.velocity();
 
@@ -764,17 +752,12 @@ mod tests {
 
     #[test]
     fn item_damage_truncates_after_fractional_subtraction() {
-        let item = ItemEntity::create(
-            &vanilla_entities::ITEM,
-            1,
-            DVec3::ZERO,
-            Weak::<World>::new(),
-        );
+        let item = ItemEntity::create(&vanilla_entities::ITEM, 1, DVec3::ZERO, Weak::new());
 
-        assert!(item.hurt(
+        assert!(item.with_entity(|e| e.hurt(
             &DamageSource::environment(&vanilla_damage_types::GENERIC),
             0.75
-        ));
+        )));
 
         let mut item = item.lock_entity();
         let item: &mut ItemEntity = item.downcast().unwrap();

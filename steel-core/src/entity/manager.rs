@@ -1587,11 +1587,11 @@ mod tests {
             Arc::new_cyclic(|weak| {
                 let base =
                     EntityBase::with_uuid(id, uuid, position, entity_type.dimensions, Weak::new());
-                base.attach_entity(Box::new(SyncMutex::new(Self {
+                base.attach_entity(Self {
                     base: weak.clone(),
                     entity_type,
                     always_ticking: false,
-                })));
+                });
                 base
             })
         }
@@ -1605,11 +1605,11 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Box::new(SyncMutex::new(Self {
+                base.attach_entity(Self {
                     base: weak.clone(),
                     entity_type: &vanilla_entities::ITEM,
                     always_ticking: true,
-                })));
+                });
                 base
             })
         }
@@ -1651,11 +1651,11 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Box::new(SyncMutex::new(Self {
+                base.attach_entity(Self {
                     base: weak.clone(),
                     tick_position,
                     tick_rotation,
-                })));
+                });
                 base
             })
         }
@@ -1701,11 +1701,11 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Box::new(SyncMutex::new(Self {
+                base.attach_entity(Self {
                     base: weak.clone(),
                     manager,
                     entity_to_add: SyncMutex::new(Some(entity_to_add)),
-                })));
+                });
                 base
             })
         }
@@ -1748,7 +1748,7 @@ mod tests {
                     vanilla_entities::ITEM.dimensions,
                     Weak::new(),
                 );
-                base.attach_entity(Box::new(SyncMutex::new(Self { base: weak.clone() })));
+                base.attach_entity(Self { base: weak.clone() });
                 base
             })
         }
@@ -1763,7 +1763,7 @@ mod tests {
             &vanilla_entities::ITEM
         }
 
-        fn check_despawn(&self) {
+        fn check_despawn(&mut self) {
             self.set_removed(RemovalReason::Discarded);
         }
     }

@@ -122,7 +122,6 @@ impl Goal for TemptGoal {
         };
         let range = mob
             .attributes()
-            .lock()
             .required_value(vanilla_attributes::TEMPT_RANGE);
         let targeting_conditions = Self::targeting_conditions(range);
         self.player = world.nearest_player(mob.position(), range, |player| {
@@ -209,7 +208,7 @@ mod tests {
             |item_stack| item_stack.is(&vanilla_items::ITEMS.carrot),
             false,
         );
-        let pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = PigEntity::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.should_follow(&pig));
 

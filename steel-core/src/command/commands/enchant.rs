@@ -4,7 +4,6 @@
 // TODO: Support all LivingEntity targets when the entity system supports it
 use std::borrow::Cow;
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_registry::enchantment::{Enchantment, EnchantmentRef};
 use steel_utils::translations;
@@ -20,7 +19,7 @@ use crate::{
         context::CommandContext,
         error::CommandError,
     },
-    player::Player,
+    player::ServerPlayer,
 };
 
 /// Handler for the `/enchant` command.
@@ -36,7 +35,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             argument("enchantment", EnchantmentArgument)
                 .executes(
                     |(((), targets), enchantment): (
-                        ((), Vec<Arc<SyncMutex<Player>>>),
+                        ((), Vec<Arc<ServerPlayer>>),
                         EnchantmentRef,
                     ),
                      ctx: &mut CommandContext| {
@@ -47,7 +46,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     argument("level", IntegerArgument::bounded(Some(0), None)).executes(
                         #[expect(clippy::type_complexity, reason = "command framework pattern")]
                         |((((), targets), enchantment), level): (
-                            (((), Vec<Arc<SyncMutex<Player>>>), EnchantmentRef),
+                            (((), Vec<Arc<ServerPlayer>>), EnchantmentRef),
                             i32,
                         ),
                          ctx: &mut CommandContext| {
@@ -60,7 +59,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 }
 
 fn enchant(
-    targets: &[Arc<SyncMutex<Player>>],
+    targets: &[Arc<ServerPlayer>],
     enchantment: EnchantmentRef,
     level: i32,
     ctx: &mut CommandContext,
@@ -80,7 +79,7 @@ fn enchant(
     let enchantment_key = enchantment.key.clone();
 
     for target in targets {
-        let inventory = target.lock().inventory.clone();
+        let inventory = target.entity().lock().inventory.clone();
         let mut inv = inventory.lock();
         let item = inv.get_selected_item();
 
@@ -88,7 +87,7 @@ fn enchant(
             if targets.len() == 1 {
                 return Err(CommandError::CommandFailed(Box::new(
                     translations::COMMANDS_ENCHANT_FAILED_ITEMLESS
-                        .message([TextComponent::from(target.lock().gameprofile.name.clone())])
+                        .message([TextComponent::from(target.name().to_string())])
                         .into(),
                 )));
             }
@@ -123,11 +122,14 @@ fn enchant(
     let enchantment_name = enchantment_display_name(enchantment, level);
 
     if targets.len() == 1 {
+        // Release the target lock before `send_message` locks the sender (possibly
+        // this same player) — re-locking the non-reentrant mutex would self-deadlock.
+        let target_name = targets[0].name().to_string();
         ctx.sender.send_message(
             &translations::COMMANDS_ENCHANT_SUCCESS_SINGLE
                 .message([
                     enchantment_name,
-                    TextComponent::from(targets[0].lock().gameprofile.name.clone()),
+                    TextComponent::from(target_name),
                 ])
                 .into(),
         );

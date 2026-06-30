@@ -171,8 +171,10 @@ impl EntityRegistry {
 
         let entity = load_factory(entity_type, load);
         let nbt: BorrowedNbtCompoundView<'_, '_> = nbt.into();
-        entity.with_entity(|e| e.load_additional(nbt));
-        entity.sync_base_entity_data();
+        entity.with_entity(|e| {
+            e.load_additional(nbt);
+            e.sync_base_entity_data();
+        });
         Some(entity)
     }
 
@@ -188,8 +190,10 @@ impl EntityRegistry {
         if let Some(load_factory) = self.entries.get(id).and_then(|entry| entry.load_factory) {
             let entity = load_factory(entity_type, load);
             let nbt: BorrowedNbtCompoundView<'_, '_> = nbt.into();
-            entity.with_entity(|e| e.load_additional(nbt));
-            entity.sync_base_entity_data();
+            entity.with_entity(|e| {
+                e.load_additional(nbt);
+                e.sync_base_entity_data();
+            });
             return entity;
         }
 

@@ -815,6 +815,18 @@ impl Server {
         players
     }
 
+    /// Gets all the server-side player sessions on the server.
+    pub fn get_server_players(&self) -> Vec<Arc<ServerPlayer>> {
+        let mut players = vec![];
+        for world in self.worlds.values() {
+            world.players.iter_players(|_, p: &Arc<ServerPlayer>| {
+                players.push(Arc::clone(p));
+                true
+            });
+        }
+        players
+    }
+
     /// Returns the total number of players currently online across all worlds.
     #[must_use]
     pub fn player_count(&self) -> usize {

@@ -381,18 +381,23 @@ impl EntityTracker {
 
         self.entities.iter_sync(|entity_id, tracked| {
             let entity_id = *entity_id;
-            let Some(entity) = tracked.entity.upgrade() else {
+            let Some(entity_base) = tracked.entity.upgrade() else {
                 dead_entities.push(entity_id);
                 return true;
             };
 
-            if entity.is_removed() {
+            if entity_base.is_removed() {
                 return true;
             }
 
+            let Some(entity) = entity_base.get_entity() else {
+                return true;
+            };
+            let mut entity = entity.lock();
+
             entity.update_data_before_sync();
 
-            let passenger_ids = self.direct_tracked_passenger_ids(entity.as_ref());
+            let passenger_ids = self.direct_tracked_passenger_ids(entity_base.as_ref());
             {
                 let mut last_passenger_ids = tracked.last_passenger_ids.lock();
                 if *last_passenger_ids != passenger_ids {
@@ -411,7 +416,7 @@ impl EntityTracker {
                             CSetPassengers::new(
                                 entity_id,
                                 self.direct_passenger_ids_seen_by_player(
-                                    entity.as_ref(),
+                                    entity_base.as_ref(),
                                     *player_id,
                                 ),
                             ),
@@ -495,7 +500,10 @@ impl EntityTracker {
                 equipment_to_broadcast.push((entity_id, dirty_equipment));
             }
 
-            let leash_holder_id = leash_holder_id(entity.as_ref());
+            // `entity` is already locked above; use the no-relock helper instead
+            // of `leash_holder_id` (which would re-lock the same entity via
+            // `with_entity` and self-deadlock the tick thread).
+            let leash_holder_id = leash_holder_id_of(&*entity);
             {
                 let mut last_leash_holder_id = tracked.last_leash_holder_id.lock();
                 if *last_leash_holder_id != leash_holder_id {
@@ -906,10 +914,6 @@ impl EntityTracker {
     }
 }
 
-fn leash_holder_id(entity: &EntityBase) -> Option<i32> {
-    entity.with_entity(|e| leash_holder_id_of(e))
-}
-
 /// Leash holder id from an already-locked concrete entity, without re-locking.
 fn leash_holder_id_of(entity: &dyn Entity) -> Option<i32> {
     entity
@@ -1192,7 +1196,7 @@ mod tests {
             self.attributes.clone()
         }
 
-        fn drain_dirty_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
+        fn drain_dirty_syncable_attributes(&mut self) -> Vec<AttributeSnapshot> {
             mem::take(&mut *self.dirty_attributes.lock())
         }
 
@@ -1200,7 +1204,7 @@ mod tests {
             self.equipment.lock().clone()
         }
 
-        fn drain_dirty_equipment(&self) -> Vec<EquipmentSlotItem> {
+        fn drain_dirty_equipment(&mut self) -> Vec<EquipmentSlotItem> {
             mem::take(&mut *self.dirty_equipment.lock())
         }
     }
@@ -1216,14 +1220,16 @@ mod tests {
                 entity.velocity(),
                 entity.on_ground(),
                 entity.rotation(),
-                entity.head_yaw(),
+                entity.with_entity(|e| e.head_yaw()),
                 entity.entity_type().update_interval,
                 entity.entity_type().track_deltas,
             )),
             last_passenger_ids: SyncMutex::new(
                 tracker.direct_tracked_passenger_ids(entity.as_ref()),
             ),
-            last_leash_holder_id: SyncMutex::new(leash_holder_id(entity.as_ref())),
+            last_leash_holder_id: SyncMutex::new(
+                entity.as_ref().with_entity(|e| leash_holder_id_of(e)),
+            ),
             tracking_range: EntityTrackingRange::from_client_chunk_range(
                 entity.entity_type().client_tracking_range,
             ),

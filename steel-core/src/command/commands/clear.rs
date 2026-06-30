@@ -1,6 +1,5 @@
 //! Handler for the "clear" command.
 use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
 
 use steel_registry::{item_stack::ItemStack, items::ItemRef};
 use steel_utils::translations;
@@ -15,7 +14,7 @@ use crate::{
         sender::CommandSender,
     },
     inventory::container::Container,
-    player::Player,
+    player::ServerPlayer,
 };
 
 /// Handler for the "clear" command.
@@ -50,9 +49,9 @@ impl CommandExecutor<()> for ClearNoArgumentExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        let inventory = player.lock().inventory.clone();
+        let inventory = player.entity().lock().inventory.clone();
         let count = inventory.lock().clear_content();
-        let target_name = player.lock().gameprofile.name.clone();
+        let target_name = player.name().to_string();
 
         clear_messages(&context.sender, count, 1, Some(target_name), false);
 
@@ -62,10 +61,10 @@ impl CommandExecutor<()> for ClearNoArgumentExecutor {
 
 struct ClearMultipleArgumentExecutor;
 
-impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for ClearMultipleArgumentExecutor {
+impl CommandExecutor<((), Vec<Arc<ServerPlayer>>)> for ClearMultipleArgumentExecutor {
     fn execute(
         &self,
-        args: ((), Vec<Arc<SyncMutex<Player>>>),
+        args: ((), Vec<Arc<ServerPlayer>>),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((), targets) = args;
@@ -73,7 +72,7 @@ impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for ClearMultipleArgumen
         let count = targets
             .iter()
             .map(|player| {
-                let inventory = player.lock().inventory.clone();
+                let inventory = player.entity().lock().inventory.clone();
                 let count = inventory.lock().clear_content();
                 count
             })
@@ -83,7 +82,7 @@ impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for ClearMultipleArgumen
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.lock().gameprofile.name.clone()),
+            targets.first().map(|it| it.name().to_string()),
             false,
         );
 
@@ -93,10 +92,10 @@ impl CommandExecutor<((), Vec<Arc<SyncMutex<Player>>>)> for ClearMultipleArgumen
 
 struct ClearWithItemExecutor;
 
-impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), ItemRef)> for ClearWithItemExecutor {
+impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), ItemRef)> for ClearWithItemExecutor {
     fn execute(
         &self,
-        args: (((), Vec<Arc<SyncMutex<Player>>>), ItemRef),
+        args: (((), Vec<Arc<ServerPlayer>>), ItemRef),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let (((), targets), item) = args;
@@ -106,7 +105,7 @@ impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), ItemRef)> for ClearWith
         let count: i32 = targets
             .iter()
             .map(|it| {
-                let inventory = it.lock().inventory.clone();
+                let inventory = it.entity().lock().inventory.clone();
                 let count = inventory.lock().clear_content_matching(&mut filter);
                 count
             })
@@ -116,7 +115,7 @@ impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), ItemRef)> for ClearWith
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.lock().gameprofile.name.clone()),
+            targets.first().map(|it| it.name().to_string()),
             false,
         );
 
@@ -126,12 +125,12 @@ impl CommandExecutor<(((), Vec<Arc<SyncMutex<Player>>>), ItemRef)> for ClearWith
 
 struct ClearWithMaxAmountExecutor;
 
-impl CommandExecutor<((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32)>
+impl CommandExecutor<((((), Vec<Arc<ServerPlayer>>), ItemRef), i32)>
     for ClearWithMaxAmountExecutor
 {
     fn execute(
         &self,
-        args: ((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32),
+        args: ((((), Vec<Arc<ServerPlayer>>), ItemRef), i32),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let ((((), targets), item), max_amount) = args;
@@ -140,7 +139,7 @@ impl CommandExecutor<((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32)>
             .iter()
             .map(|it| {
                 let mut current_amount = max_amount;
-                let inventory = it.lock().inventory.clone();
+                let inventory = it.entity().lock().inventory.clone();
                 let mut inventory = inventory.lock();
                 let mut removed = 0;
                 for i in 0..inventory.get_container_size() {
@@ -171,7 +170,7 @@ impl CommandExecutor<((((), Vec<Arc<SyncMutex<Player>>>), ItemRef), i32)>
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.lock().gameprofile.name.clone()),
+            targets.first().map(|it| it.name().to_string()),
             max_amount == 0,
         );
 

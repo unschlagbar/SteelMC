@@ -223,6 +223,23 @@ impl<'a> WorldCollisionProvider<'a> {
         }
     }
 
+    /// Direct-passenger ids of the move source, resolved lock-free relative to
+    /// the candidate entities. Locks only the source's `relationships` mutex
+    /// (never a candidate's behavior mutex), so it is safe to call while a
+    /// passenger — e.g. the player driving the source vehicle — is locked.
+    fn source_passenger_ids(&self) -> Vec<i32> {
+        self.source
+            .map(|source| {
+                source
+                    .base()
+                    .passengers()
+                    .iter()
+                    .map(|passenger| passenger.id())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn get_collision_shape(
         &self,
         block_state: BlockStateId,
@@ -527,6 +544,12 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
         }
 
         let query = aabb.inflate(ENTITY_COLLISION_EPSILON);
+        // Passengers of the moving entity never collide with their own vehicle.
+        // Skipping them lock-free is also required for correctness: a player
+        // driving its vehicle holds its own behavior lock while this runs, so
+        // calling `is_spectator()`/`can_collide_with` on it would re-lock and
+        // self-deadlock.
+        let source_passenger_ids = self.source_passenger_ids();
         self.world
             .get_entities_in_aabb(&query)
             .into_iter()
@@ -534,6 +557,7 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
             .filter(|entity| match self.source {
                 Some(source) => {
                     entity.id() != source.id()
+                        && !source_passenger_ids.contains(&entity.id())
                         && !entity.is_spectator()
                         && entity.with_entity(|e| source.can_collide_with(e))
                 }
@@ -552,6 +576,9 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
         }
 
         let query = aabb.inflate(ENTITY_COLLISION_EPSILON);
+        // See `get_entity_collisions` — passengers of the mover are skipped
+        // lock-free (correctness + avoiding a self-deadlock on the driver's lock).
+        let source_passenger_ids = self.source_passenger_ids();
         self.world
             .get_entities_in_aabb(&query)
             .into_iter()
@@ -560,6 +587,7 @@ impl CollisionWorld for WorldCollisionProvider<'_> {
                     && match self.source {
                         Some(source) => {
                             entity.id() != source.id()
+                                && !source_passenger_ids.contains(&entity.id())
                                 && !entity.is_spectator()
                                 && entity.with_entity(|e| source.can_collide_with(e))
                         }

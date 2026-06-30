@@ -199,7 +199,7 @@ impl ItemBehavior for MaceItem {
         &self,
         _stack: &mut ItemStack,
         target: &dyn LivingEntity,
-        attacker: &dyn LivingEntity,
+        attacker: &mut dyn LivingEntity,
     ) {
         if !Self::can_smash_attack(attacker) {
             return;

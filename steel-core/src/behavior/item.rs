@@ -68,7 +68,7 @@ pub trait ItemBehavior: Send + Sync {
         &self,
         _stack: &mut ItemStack,
         _target: &dyn LivingEntity,
-        _attacker: &dyn LivingEntity,
+        _attacker: &mut dyn LivingEntity,
     ) {
     }
 

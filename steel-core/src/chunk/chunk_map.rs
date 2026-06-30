@@ -23,7 +23,6 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::instrument;
 
-use crate::behavior::BlockStateBehaviorExt;
 use crate::behavior::{BLOCK_BEHAVIORS, FLUID_BEHAVIORS};
 use crate::chunk::chunk_holder::ChunkHolder;
 use crate::chunk::chunk_ticket_manager::{
@@ -39,6 +38,7 @@ use crate::player::connection::NetworkConnection;
 use crate::world::World;
 use crate::world::tick_scheduler::{BlockTick, FluidTick};
 use crate::worldgen::{ChunkGeneratorType, WorldGenContext};
+use crate::{behavior::BlockStateBehaviorExt, player::ServerPlayer};
 use crate::{entity::Entity, player::Player};
 
 const GENERATION_THREAD_MULTIPLE: usize = 2;
@@ -1034,10 +1034,9 @@ impl ChunkMap {
     }
 
     /// Removes a player from the chunk map.
-    pub fn remove_player(&self, player: &Player) {
+    pub fn remove_player(&self, player: &Arc<ServerPlayer>) {
         // Okay to lock sync lock here cause it has low contention
-        let sp = player.server_player();
-        let mut last_view_guard = sp.last_tracking_view.lock();
+        let mut last_view_guard = player.last_tracking_view.lock();
         if let Some(last_view) = last_view_guard.take() {
             drop(last_view_guard);
             let mut chunk_tickets = self.chunk_tickets.lock();

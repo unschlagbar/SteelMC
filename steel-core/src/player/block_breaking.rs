@@ -464,7 +464,6 @@ fn drop_block_loot(player: &Player, _world: &Arc<World>, pos: BlockPos, state: B
     let mut rng = rand::rng();
     let luck = player
         .attributes()
-        .lock()
         .get_value(vanilla_attributes::LUCK)
         .unwrap_or(0.0) as f32;
 

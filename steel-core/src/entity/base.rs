@@ -7,13 +7,15 @@ use std::{
     collections::{BTreeSet, VecDeque},
     mem,
     ops::DerefMut,
-    sync::{Arc, OnceLock, Weak},
+    sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use glam::DVec3;
 use simdnbt::owned::NbtCompound;
-use steel_protocol::packets::game::AttributeSnapshot;
-use steel_registry::entity_data::{DataValue, EntityPose};
+use steel_registry::entity_data::EntityPose;
 use steel_registry::entity_type::EntityDimensions;
 use steel_registry::vanilla_entities;
 use steel_utils::random::{Random as _, legacy_random::LegacyRandom};
@@ -1008,6 +1010,16 @@ pub struct EntityBase {
     /// `Player::attack`, or player registration during join). Going through
     /// `with_entity` there would re-lock the held `Player` mutex and deadlock.
     static_info: OnceLock<StaticEntityInfo>,
+    /// Scoped, lock-free override that forces [`uses_client_movement_packets`]
+    /// to report `true` without re-deriving the controlling passenger.
+    ///
+    /// Set while a vehicle is moved on behalf of its already-confirmed client
+    /// controller (e.g. `Player::handle_move_vehicle`), where the controller's
+    /// player mutex is held by the caller. Re-deriving control there goes through
+    /// `controlling_passenger` → re-locks the held controller → self-deadlock.
+    ///
+    /// [`uses_client_movement_packets`]: Entity::uses_client_movement_packets
+    client_movement_override: AtomicBool,
 }
 
 /// Constant, type-derived entity properties cached on [`EntityBase`] for
@@ -1050,7 +1062,7 @@ impl EntityBase {
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
             let b = Self::new(id, position, dimensions, world);
-            b.attach_entity(Box::new(SyncMutex::new(make(weak.clone()))));
+            b.attach_entity(make(weak.clone()));
             b
         })
     }
@@ -1066,7 +1078,7 @@ impl EntityBase {
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
             let b = Self::from_load(load, dimensions);
-            b.attach_entity(Box::new(SyncMutex::new(make(weak.clone()))));
+            b.attach_entity(make(weak.clone()));
             b
         })
     }
@@ -1150,6 +1162,7 @@ impl EntityBase {
             entity: entity.map_or_else(OnceLock::new, |entity| OnceLock::from(entity)),
             player: Weak::new(),
             static_info: OnceLock::new(),
+            client_movement_override: AtomicBool::new(false),
         }
     }
 
@@ -1176,21 +1189,20 @@ impl EntityBase {
     ///
     /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
     /// already attached (double-init is a programming error).
-    pub fn attach_entity(&self, entity: Box<SyncMutex<dyn Entity>>) {
+    pub fn attach_entity<E: Entity + 'static>(&self, entity: E) {
         // Snapshot the constant type-derived properties while the mutex is still
         // uncontended (called once during `Arc::new_cyclic`), so later reads stay
         // lock-free. See `static_info` docs.
-        {
-            let guard = entity.lock();
-            let _ = self.static_info.set(StaticEntityInfo {
-                entity_type: guard.entity_type(),
-                always_ticking: guard.is_always_ticking(),
-                is_living_entity: guard.is_living_entity(),
-                is_mob: guard.is_mob(),
-            });
-        }
+
+        let _ = self.static_info.set(StaticEntityInfo {
+            entity_type: entity.entity_type(),
+            always_ticking: entity.is_always_ticking(),
+            is_living_entity: entity.is_living_entity(),
+            is_mob: entity.is_mob(),
+        });
+
         assert!(
-            self.entity.set(entity).is_ok(),
+            self.entity.set(Box::new(SyncMutex::new(entity))).is_ok(),
             "attach_entity called twice on the same EntityBase"
         );
     }
@@ -1314,6 +1326,14 @@ impl EntityBase {
         )
     }
 
+    /// Returns a [`LockedEntity`] guard that holds the entity mutex and exposes typed downcast.
+    ///
+    /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
+    /// Use this when you need to hold the lock across multiple calls on the same entity.
+    pub fn get_entity(&self) -> Option<&Box<SyncMutex<dyn Entity>>> {
+        self.entity.get()
+    }
+
     // These go through `with_entity`: mobs take the behavior lock, players
     // are reached lock-free. Never call these from code already inside this
     // entity's behavior lock — use `self` directly there. Prefer direct base
@@ -1340,11 +1360,6 @@ impl EntityBase {
     /// Mirrors vanilla `Entity.isAlwaysTicking`.
     pub fn is_always_ticking(&self) -> bool {
         self.static_info().always_ticking
-    }
-
-    /// Returns `true` if the entity can be targeted and damaged.
-    pub fn attackable(&self) -> bool {
-        self.with_entity(|e| e.attackable())
     }
 
     /// Returns `true` if players can pick up this entity (items, orbs, etc.).
@@ -1387,79 +1402,9 @@ impl EntityBase {
         self.with_entity(|e| e.check_despawn());
     }
 
-    /// Applies damage to this entity from the given source.
-    pub fn hurt(&self, source: &crate::entity::damage::DamageSource, amount: f32) -> bool {
-        self.with_entity(|e| e.hurt(source, amount))
-    }
-
-    /// Returns the entity's head yaw in degrees.
-    pub fn head_yaw(&self) -> f32 {
-        self.with_entity(|e| e.head_yaw())
-    }
-
-    /// Returns the entity's spawn position for the add-entity packet.
-    pub fn spawn_position(&self) -> DVec3 {
-        self.with_entity(|e| e.spawn_position())
-    }
-
-    /// Returns the entity's spawn data integer for the add-entity packet.
-    pub fn spawn_data(&self) -> i32 {
-        self.with_entity(|e| e.spawn_data())
-    }
-
-    /// Packs only the dirty synced entity data values.
-    pub fn pack_dirty_entity_data(&self) -> Option<Vec<DataValue>> {
-        self.with_entity(|e| e.pack_dirty_entity_data())
-    }
-
-    /// Packs all synced entity data values.
-    pub fn pack_all_entity_data(&self) -> Vec<DataValue> {
-        self.with_entity(|e| e.pack_all_entity_data())
-    }
-
-    /// Runs pre-sync entity data updates.
-    pub fn update_data_before_sync(&self) {
-        self.with_entity(|e| e.update_data_before_sync());
-    }
-
-    /// Packs all syncable attribute snapshots.
-    pub fn pack_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.with_entity(|e| e.pack_syncable_attributes())
-    }
-
-    /// Drains dirty syncable attribute snapshots.
-    pub fn drain_dirty_syncable_attributes(&self) -> Vec<AttributeSnapshot> {
-        self.with_entity(|e| e.drain_dirty_syncable_attributes())
-    }
-
-    /// Drains dirty mob effect sync changes.
-    pub fn drain_dirty_mob_effects(&self) -> Vec<crate::entity::living_base::MobEffectSyncChange> {
-        self.with_entity(|e| e.drain_dirty_mob_effects())
-    }
-
-    /// Packs all equipment slots.
-    pub fn pack_all_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
-        self.with_entity(|e| e.pack_all_equipment())
-    }
-
-    /// Drains dirty equipment slots.
-    pub fn drain_dirty_equipment(&self) -> Vec<steel_protocol::packets::game::EquipmentSlotItem> {
-        self.with_entity(|e| e.drain_dirty_equipment())
-    }
-
     /// Saves entity-type-specific NBT data.
     pub fn save_additional(&self, nbt: &mut simdnbt::owned::NbtCompound) {
         self.with_entity(|e| e.save_additional(nbt));
-    }
-
-    /// Loads entity-type-specific NBT data.
-    pub fn load_additional(&mut self, nbt: simdnbt::borrow::NbtCompound<'_, '_>) {
-        self.with_entity(|e| e.load_additional(nbt));
-    }
-
-    /// Syncs base fire/freeze data to the entity's synced data.
-    pub fn sync_base_entity_data(&self) {
-        self.with_entity(|e| e.sync_base_entity_data());
     }
 
     /// Handles a player touching this entity during pickup processing.
@@ -1475,6 +1420,18 @@ impl EntityBase {
     /// Returns whether this entity uses client-authoritative movement packets.
     pub fn uses_client_movement_packets(&self) -> bool {
         self.with_entity(|e| e.uses_client_movement_packets())
+    }
+
+    /// Sets the scoped [`client_movement_override`](Self::client_movement_override)
+    /// flag. Lock-free.
+    pub fn set_client_movement_override(&self, value: bool) {
+        self.client_movement_override.store(value, Ordering::Relaxed);
+    }
+
+    /// Returns the scoped client-movement override. Lock-free; see the field doc
+    /// on [`EntityBase`] for when it is set.
+    pub fn client_movement_override(&self) -> bool {
+        self.client_movement_override.load(Ordering::Relaxed)
     }
 
     /// Teleports this entity to a new world dimension.
@@ -1512,6 +1469,13 @@ impl EntityBase {
         self.with_entity(|e| e.controlling_passenger())
     }
 
+    /// Like [`controlling_passenger`](Self::controlling_passenger), but resolves
+    /// rider-dependent rules against the already-locked `rider` instead of
+    /// re-locking it. Locks this vehicle, never `rider`.
+    pub fn controlling_passenger_for_rider(&self, rider: &Player) -> Option<SharedEntity> {
+        self.with_entity(|e| e.controlling_passenger_for_rider(rider))
+    }
+
     /// Todo
     pub fn block_position(&self) -> BlockPos {
         BlockPos::from(self.position())
@@ -1530,11 +1494,6 @@ impl EntityBase {
     /// Todo
     pub fn forces_fall_flying_velocity_sync(&self) -> bool {
         self.with_entity(|e| e.forces_fall_flying_velocity_sync())
-    }
-
-    /// Todo
-    pub fn is_descending(&self) -> bool {
-        self.with_entity(|e| e.is_descending())
     }
 
     /// Todo
@@ -1589,13 +1548,8 @@ impl EntityBase {
     ///
     /// Takes `&dyn Entity` because pushers call this from inside their own
     /// behavior code, where re-locking the pusher would deadlock.
-    pub fn push_entity(&self, pusher: &dyn Entity) {
+    pub fn push_entity(&self, pusher: &mut dyn Entity) {
         self.with_entity(|e| e.push_entity(pusher));
-    }
-
-    /// Returns `true` if an attack from `source` should be skipped.
-    pub fn skip_attack_interaction(&self, source: &dyn Entity) -> bool {
-        self.with_entity(|e| e.skip_attack_interaction(source))
     }
 
     /// Todo
@@ -2834,7 +2788,9 @@ mod tests {
     use std::sync::{Arc, Weak};
 
     use glam::DVec3;
-    use steel_registry::{entity_type::EntityDimensions, entity_type::EntityTypeRef};
+    use steel_registry::{
+        entity_type::EntityDimensions, entity_type::EntityTypeRef, test_support::init_test_registry,
+    };
     use steel_registry::{vanilla_damage_types, vanilla_entities};
     use steel_utils::WorldAabb;
     use steel_utils::locks::SyncMutex;
@@ -2890,20 +2846,16 @@ mod tests {
 
     impl FallDamageTestEntity {
         fn new(id: i32) -> Arc<EntityBase> {
-            Arc::new_cyclic(|base| {
-                let inner = Box::new(SyncMutex::new(Self {
-                    base: base.clone(),
+            EntityBase::pack_with(
+                id,
+                DVec3::ZERO,
+                vanilla_entities::ITEM.dimensions,
+                Weak::new(),
+                |base| Self {
+                    base,
                     fall_damage_calls: SyncMutex::new(Vec::new()),
-                }));
-                let b = EntityBase::new(
-                    id,
-                    DVec3::ZERO,
-                    vanilla_entities::ITEM.dimensions,
-                    Weak::new(),
-                );
-                b.attach_entity(inner);
-                b
-            })
+                },
+            )
         }
     }
 
@@ -3484,6 +3436,7 @@ mod tests {
 
     #[test]
     fn base_fall_damage_propagates_to_passengers() {
+        init_test_registry();
         let vehicle = raw_entity(1);
         let passenger = FallDamageTestEntity::new(2);
         let passenger_entity: SharedEntity = passenger.clone();
