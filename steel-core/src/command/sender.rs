@@ -39,7 +39,7 @@ impl CommandSender {
 impl fmt::Display for CommandSender {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Player(p) => write!(f, "{}", p.name()),
+            Self::Player(p) => write!(f, "{}", p.name),
             Self::Console => write!(f, "Server"),
             Self::Rcon => write!(f, "Rcon"),
         }

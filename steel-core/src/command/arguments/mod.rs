@@ -213,7 +213,7 @@ impl Helper {
         {
             return DVec3::new(
                 context.position.x,
-                player.entity().lock().get_eye_y(),
+                player.entity.lock().get_eye_y(),
                 context.position.z,
             );
         }

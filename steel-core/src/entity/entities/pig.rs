@@ -568,9 +568,8 @@ impl Entity for PigEntity {
             && let Some(passenger) = self.first_passenger()
             && passenger.id() == rider.id()
             && {
-                let mut is_holding_carrot_on_a_stick = |item_stack: &ItemStack| {
-                    item_stack.is(&vanilla_items::ITEMS.carrot_on_a_stick)
-                };
+                let mut is_holding_carrot_on_a_stick =
+                    |item_stack: &ItemStack| item_stack.is(&vanilla_items::ITEMS.carrot_on_a_stick);
                 rider.is_holding(&mut is_holding_carrot_on_a_stick)
             }
         {
@@ -1868,16 +1867,12 @@ mod tests {
         );
     }
 
-    // FIXME(serverplayer-layer): deadlocks on the deferred mob cross-entity
-    // re-entrancy. Driving the controlling passenger holds its behavior lock
-    // while `set_wanted_position` → `controlled_mob_vehicle` →
-    // `vehicle.controlling_passenger()` → `passenger.with_entity_ref(
-    // can_control_vehicle)` re-locks the same passenger (non-reentrant
-    // `parking_lot::Mutex`). Resolving needs lock-free cross-entity
-    // type/liveness checks (e.g. caching `entity_type` on `EntityBase`); see the
-    // deferred combat/mob cross-entity work in PLAYER_ENTITY_REFACTOR_REMAINING.md.
+    // A mob driving its vehicle holds its own behavior lock while the vehicle's
+    // `controlling_passenger` is queried (`set_wanted_position` →
+    // `controlled_mob_vehicle` → `vehicle.controlling_passenger()`). That query
+    // resolves `can_control_vehicle` lock-free from the cached entity type
+    // instead of re-locking the passenger, so this no longer self-deadlocks.
     #[test]
-    #[ignore = "deferred mob cross-entity re-entrancy deadlock — see FIXME above"]
     fn pig_uses_mob_passenger_as_controller_when_not_player_controlled() {
         init_test_registry();
 
@@ -1898,8 +1893,8 @@ mod tests {
             Some(passenger.id())
         );
 
-        passenger.with_mob_mut(|mob| mob.set_wanted_position(DVec3::new(1.0, 0.0, 0.0), 1.0));
-        vehicle.with_mob_mut(|mob| mob.tick_move_control());
+        passenger.with_mob(|mob| mob.set_wanted_position(DVec3::new(1.0, 0.0, 0.0), 1.0));
+        vehicle.with_mob(|mob| mob.tick_move_control());
 
         assert_eq!(
             vehicle.with_living(|e| e.get_speed()).unwrap().to_bits(),
@@ -1912,7 +1907,7 @@ mod tests {
                 .to_bits(),
             0.25_f32.to_bits()
         );
-        passenger.with_mob_mut(|mob| mob.tick_move_control());
+        passenger.with_mob(|mob| mob.tick_move_control());
         assert_eq!(
             passenger
                 .with_living(|e| e.travel_input().forward())

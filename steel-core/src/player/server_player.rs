@@ -27,6 +27,7 @@ use steel_protocol::packets::game::CSystemChatMessage;
 
 use crate::chunk::player_chunk_view::PlayerChunkView;
 use crate::config::RuntimeConfig;
+use crate::entity::EntityBase;
 use crate::player::chat_state::ChatState;
 use crate::player::chunk_sender::ChunkSender;
 use crate::player::connection::NetworkConnection as _;
@@ -50,7 +51,14 @@ pub struct ServerPlayer {
     pub(crate) config: Arc<RuntimeConfig>,
 
     /// The locked game entity for this player.
-    entity: Arc<SyncMutex<Player>>,
+    pub entity: Arc<SyncMutex<Player>>,
+
+    /// Lock-free handle to the player's [`EntityBase`]. Cloned once from the
+    /// freshly built [`Player`] at construction, so lock-free base state
+    /// (position, id, velocity, rotation, removed flag, …) can be read without
+    /// taking the `Player` mutex. The base is interior-locked and shared with
+    /// the entity manager / trackers, so this is the same `Arc` the entity holds.
+    pub(crate) entity_base: Arc<EntityBase>,
 
     /// Inbound game-state packets queued by the connection listener, drained and
     /// applied on the game tick so game state is only mutated by one thread.
@@ -86,10 +94,10 @@ pub struct ServerPlayer {
     /// Lock-free copy of the player's profile name. Constant for the session, so
     /// command handlers can read it without locking the `Player` mutex (avoiding
     /// the self-deadlock when a command prints the name of the player who sent it).
-    name: Arc<str>,
+    pub name: String,
     /// Lock-free copy of the player's UUID (the profile id). Used for target
     /// matching in command argument parsing without locking the entity.
-    uuid: Uuid,
+    pub uuid: Uuid,
 }
 
 impl ServerPlayer {
@@ -114,7 +122,7 @@ impl ServerPlayer {
     ) -> Self {
         // Capture the lock-free profile fields before `gameprofile` is moved into
         // the `Player`.
-        let name: Arc<str> = gameprofile.name.as_str().into();
+        let name = gameprofile.name.clone();
         let uuid = gameprofile.id;
 
         let entity = Arc::new_cyclic(|entity_weak| {
@@ -127,6 +135,10 @@ impl ServerPlayer {
             ))
         });
 
+        // Single uncontended lock on the just-built entity to clone out its
+        // base `Arc`; every later read goes through `entity_base()` lock-free.
+        let entity_base = entity.lock().shared_entity();
+
         let chat_spam_threshold_seconds = config.chat_spam_threshold_seconds;
         let command_spam_threshold_seconds = config.command_spam_threshold_seconds;
 
@@ -135,6 +147,7 @@ impl ServerPlayer {
             server,
             config,
             entity,
+            entity_base,
             inbound_rx: SyncMutex::new(inbound_rx),
             view: Arc::new(PlayerView::new(ChunkPos::new(0, 0))),
             chat: SyncMutex::new(ChatState::new(
@@ -153,18 +166,6 @@ impl ServerPlayer {
         }
     }
 
-    /// The player's profile name (lock-free; constant for the session).
-    #[must_use]
-    pub fn name(&self) -> &Arc<str> {
-        &self.name
-    }
-
-    /// The player's UUID (lock-free; constant for the session).
-    #[must_use]
-    pub const fn uuid(&self) -> Uuid {
-        self.uuid
-    }
-
     /// The world the player is currently in (lock-free).
     #[must_use]
     pub fn world(&self) -> Arc<World> {
@@ -174,12 +175,6 @@ impl ServerPlayer {
     /// Sends a system message to the player without locking the entity.
     pub fn send_message(&self, text: &TextComponent) {
         self.send_packet(CSystemChatMessage::new(text, self, false));
-    }
-
-    /// Returns the game entity for this player.
-    #[must_use]
-    pub fn entity(&self) -> &Arc<SyncMutex<Player>> {
-        &self.entity
     }
 
     /// Returns the effective view distance (client request clamped to the server

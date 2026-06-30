@@ -31,7 +31,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     let count = targets.len();
 
                     for target in &targets {
-                        let guard = target.entity().lock();
+                        let guard = target.entity.lock();
                         if guard.is_domain_switching() {
                             return Err(CommandError::CommandFailed(Box::new(
                                 TextComponent::plain(format!(
@@ -46,7 +46,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                         let current_world = target.world();
                         if current_world.domain() == world.domain() {
                             context.server.queue_world_change(
-                                target.entity().lock().shared_entity(),
+                                target.entity.lock().shared_entity(),
                                 WorldChangeRequest::WorldSpawn {
                                     target_world: world.clone(),
                                 },
@@ -54,7 +54,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                         } else {
                             context
                                 .server
-                                .queue_domain_switch_to_world(target.entity().clone(), world.clone())
+                                .queue_domain_switch_to_world(target.entity.clone(), world.clone())
                                 .map_err(|error| {
                                     CommandError::CommandFailed(Box::new(TextComponent::plain(
                                         error,
@@ -64,11 +64,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                     }
 
                     let msg = if count == 1 {
-                        format!(
-                            "Teleporting {} to {}",
-                            targets[0].name(),
-                            dim_name
-                        )
+                        format!("Teleporting {} to {}", targets[0].name, dim_name)
                     } else {
                         format!("Teleporting {count} players to {dim_name}")
                     };

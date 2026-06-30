@@ -78,7 +78,7 @@ impl Goal for BreedGoal {
             return false;
         }
         if partner
-            .with_pathfinder_mob(|partner_mob| partner_mob.is_panicking())
+            .with_pathfinder(|partner_mob| partner_mob.is_panicking())
             .unwrap_or(false)
         {
             return false;

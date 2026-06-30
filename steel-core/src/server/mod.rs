@@ -540,7 +540,7 @@ impl Server {
 
         let server = Arc::clone(self);
         tokio::spawn(async move {
-            let state = server.prepare_player_join(player.entity()).await;
+            let state = server.prepare_player_join(&player.entity).await;
             server
                 .pending_player_joins
                 .send(PendingPlayerJoin { player, state });
@@ -571,7 +571,7 @@ impl Server {
         let state = match state {
             Ok(state) => state,
             Err(error) => {
-                let guard = player.entity().lock();
+                let guard = player.entity.lock();
                 log::error!(
                     "Failed to load player data for {}: {error}",
                     guard.gameprofile.name
@@ -581,13 +581,13 @@ impl Server {
             }
         };
 
-        Self::apply_domain_player_state(player.entity(), &state);
-        self.send_login_packet(&player.entity().lock(), &state.world);
+        Self::apply_domain_player_state(&player.entity, &state);
+        self.send_login_packet(&player.entity.lock(), &state.world);
 
         ServerPlayer::reset(&player, Arc::clone(&state.world), ResetReason::InitialJoin);
-        Self::apply_domain_player_state(player.entity(), &state);
+        Self::apply_domain_player_state(&player.entity, &state);
         let (pos, rotation) = {
-            let p = player.entity().lock();
+            let p = player.entity.lock();
             (p.position(), p.rotation())
         };
         let admitted = ServerPlayer::spawn(&player, pos, rotation, ResetReason::InitialJoin);
@@ -595,12 +595,12 @@ impl Server {
             return;
         }
         {
-            let p = player.entity().lock();
+            let p = player.entity.lock();
             if p.mark_joined_world() {
                 p.send_inventory_to_remote();
             }
         }
-        self.schedule_root_vehicle_restore(player.entity(), &state);
+        self.schedule_root_vehicle_restore(&player.entity, &state);
         if player.connection.closed() {
             tokio::spawn(async move {
                 state.world.remove_player(player).await;
@@ -808,7 +808,7 @@ impl Server {
         let mut players = vec![];
         for world in self.worlds.values() {
             world.players.iter_players(|_, p: &Arc<ServerPlayer>| {
-                players.push(Arc::clone(p.entity()));
+                players.push(p.entity.clone());
                 true
             });
         }
@@ -1253,14 +1253,14 @@ impl Server {
 
         for request in switches {
             let player = request.player.clone();
-            let player_name = player.entity().lock().gameprofile.name.clone();
+            let player_name = player.entity.lock().gameprofile.name.clone();
             let result = self.process_domain_switch(request).await;
-            player.entity().lock().finish_domain_switch();
+            player.entity.lock().finish_domain_switch();
 
             if let Err(error) = result {
                 log::error!("Failed to switch {player_name} domain: {error}");
                 if !player.connection.closed() {
-                    player.entity().lock().disconnect("Failed to switch domain");
+                    player.entity.lock().disconnect("Failed to switch domain");
                 }
             }
         }
@@ -1280,13 +1280,13 @@ impl Server {
             return Err(format!("unknown domain {target_domain}"));
         }
 
-        let current_domain = player.entity().lock().get_world().domain().to_owned();
+        let current_domain = player.entity.lock().get_world().domain().to_owned();
         if current_domain == target_domain {
             return Ok(());
         }
 
         let (uuid, current_data) = {
-            let p = player.entity().lock();
+            let p = player.entity.lock();
             (p.gameprofile.id, PersistentPlayerData::from_player(&p))
         };
         if let Err(e) = self
@@ -1303,7 +1303,7 @@ impl Server {
 
         let target_state = match self
             .load_domain_player_state(
-                player.entity(),
+                &player.entity,
                 &target_domain,
                 target_world.clone(),
                 restore_saved_location,
@@ -1325,17 +1325,17 @@ impl Server {
             &player,
             target_state.world.clone(),
             || {
-                Self::apply_domain_player_state(restore_player.entity(), &target_state);
+                Self::apply_domain_player_state(&restore_player.entity, &target_state);
             },
         );
         let (pos, rotation) = {
-            let p = player.entity().lock();
+            let p = player.entity.lock();
             (p.position(), p.rotation())
         };
         if !ServerPlayer::spawn(&player, pos, rotation, ResetReason::WorldChange) {
             return Err("failed to add player to target world".to_owned());
         }
-        self.schedule_root_vehicle_restore(player.entity(), &target_state);
+        self.schedule_root_vehicle_restore(&player.entity, &target_state);
 
         if let Err(e) = self
             .player_data_storage
@@ -1349,7 +1349,7 @@ impl Server {
         {
             log::error!(
                 "Failed to save global player data for {} after domain switch: {e}",
-                player.entity().lock().gameprofile.name
+                player.entity.lock().gameprofile.name
             );
         }
 

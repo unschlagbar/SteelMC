@@ -76,7 +76,7 @@ fn give(targets: &Vec<Arc<ServerPlayer>>, item: ItemRef, count: i32, sender: &Co
 
     for target in targets {
         let mut remaining = count;
-        let inventory = target.entity().lock().inventory.clone();
+        let inventory = target.entity.lock().inventory.clone();
 
         while remaining > 0 {
             let stack_size = max_stack_size.min(remaining);
@@ -85,7 +85,7 @@ fn give(targets: &Vec<Arc<ServerPlayer>>, item: ItemRef, count: i32, sender: &Co
             let added = inventory.lock().add(&mut copy);
 
             if !added || !copy.is_empty() {
-                target.entity().lock().drop_item(copy, false, false);
+                target.entity.lock().drop_item(copy, false, false);
             }
         }
     }
@@ -95,8 +95,8 @@ fn give(targets: &Vec<Arc<ServerPlayer>>, item: ItemRef, count: i32, sender: &Co
         let target_name = targets
             .first()
             .expect("targets cannot be empty.")
-            .name()
-            .to_string();
+            .name
+            .clone();
         sender.send_message(
             &translations::COMMANDS_GIVE_SUCCESS_SINGLE
                 .message([

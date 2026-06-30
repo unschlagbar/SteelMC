@@ -317,7 +317,7 @@ impl JavaConnection {
         server: &Arc<Server>,
     ) -> Result<(), PacketError> {
         let data = &mut Cursor::new(packet.payload.as_slice());
-        let player = s_player.entity();
+        let player = &s_player.entity;
 
         if !player.lock().has_joined_world() && !Self::can_process_before_join(packet.id) {
             return Ok(());
@@ -532,7 +532,10 @@ impl JavaConnection {
                 match SPingRequest::read_packet(&mut Cursor::new(packet.payload.as_slice())) {
                     Ok(ping) => self.send_packet(CPongResponse::new(ping.time)),
                     Err(err) => {
-                        log::warn!("Failed to decode ping request from client {}: {err}", self.id);
+                        log::warn!(
+                            "Failed to decode ping request from client {}: {err}",
+                            self.id
+                        );
                     }
                 }
                 return;
@@ -622,11 +625,13 @@ impl JavaConnection {
         let Some(server_player) = self.server_player.upgrade() else {
             return;
         };
-        let entity = server_player.entity();
-        if !entity.lock().has_joined_world() || entity.lock().server().cancel_token.is_cancelled() {
-            return;
-        }
-        let world = entity.lock().get_world();
+        let world = {
+            let entity = &server_player.entity.lock();
+            if !entity.has_joined_world() || entity.server().cancel_token.is_cancelled() {
+                return;
+            }
+            entity.get_world()
+        };
         world.remove_player(server_player).await;
     }
 

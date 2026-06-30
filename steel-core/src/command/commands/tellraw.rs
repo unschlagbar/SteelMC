@@ -27,16 +27,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 
 struct TellrawCommandExecutor;
 
-impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), TextComponent)>
-    for TellrawCommandExecutor
-{
+impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), TextComponent)> for TellrawCommandExecutor {
     fn execute(
         &self,
         args: (((), Vec<Arc<ServerPlayer>>), TextComponent),
         context: &mut CommandContext,
     ) -> Result<(), CommandError> {
         let sender = match &context.sender {
-            CommandSender::Player(player) => player.name().to_string(),
+            CommandSender::Player(player) => player.name.clone(),
             CommandSender::Console => "Console".to_string(),
             CommandSender::Rcon => "Rcon".to_string(),
         };

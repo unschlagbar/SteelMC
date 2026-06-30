@@ -1204,14 +1204,11 @@ pub trait Mob: LivingEntity {
 
     fn controlling_passenger_mob(&self) -> Option<SharedEntity> {
         let first_passenger = self.first_passenger()?;
-        // Reject non-mob passengers (e.g. players) lock-free before locking the
-        // passenger for `can_control_vehicle`: a player riding this mob may be
-        // mid-tick holding its own lock, so re-locking it here would deadlock.
-        if self.is_no_ai() || !first_passenger.is_mob() {
-            return None;
-        }
-        let can_control = first_passenger.with_entity(|e| e.can_control_vehicle());
-        if !can_control {
+        // Resolve both checks lock-free: a passenger driving this vehicle holds
+        // its own behavior lock while this runs (the vehicle's
+        // `controlling_passenger` is queried from the passenger's move control),
+        // so locking the passenger here would re-lock it and self-deadlock.
+        if self.is_no_ai() || !first_passenger.is_mob() || !first_passenger.can_control_vehicle() {
             return None;
         }
 
@@ -1436,7 +1433,7 @@ pub trait Mob: LivingEntity {
     fn set_wanted_position(&mut self, position: DVec3, speed_modifier: f64) {
         if let Some(vehicle) = self.controlled_mob_vehicle()
             && vehicle
-                .with_mob_mut(|mob| mob.set_wanted_position(position, speed_modifier))
+                .with_mob(|mob| mob.set_wanted_position(position, speed_modifier))
                 .is_some()
         {
             return;
@@ -1795,7 +1792,7 @@ fn ground_navigation_surface_y<M: Mob + ?Sized>(mob: &M, world: &World, can_floa
 pub trait PathfinderMob: Mob {
     fn controlled_pathfinder_vehicle(&self) -> Option<SharedEntity> {
         let vehicle = self.controlled_mob_vehicle()?;
-        vehicle.with_pathfinder_mob(|_| ())?;
+        vehicle.with_pathfinder(|_| ())?;
         Some(vehicle)
     }
 
@@ -1824,8 +1821,8 @@ pub trait PathfinderMob: Mob {
 
     fn can_path_to_targets_below_surface(&self) -> bool {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
-            && let Some(result) = vehicle
-                .with_pathfinder_mob(|pathfinder| pathfinder.can_path_to_targets_below_surface())
+            && let Some(result) =
+                vehicle.with_pathfinder(|pathfinder| pathfinder.can_path_to_targets_below_surface())
         {
             return result;
         }
@@ -1918,8 +1915,8 @@ pub trait PathfinderMob: Mob {
 
     fn create_path_to(&mut self, target: BlockPos, reach_range: i32) -> Option<Path> {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
-            && let Some(result) = vehicle
-                .with_pathfinder_mob(|pathfinder| pathfinder.create_path_to(target, reach_range))
+            && let Some(result) =
+                vehicle.with_pathfinder(|pathfinder| pathfinder.create_path_to(target, reach_range))
         {
             return result;
         }
@@ -1937,7 +1934,7 @@ pub trait PathfinderMob: Mob {
     fn recompute_path(&mut self, request: NavigationRecomputeRequest) {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
             && vehicle
-                .with_pathfinder_mob(|pathfinder| pathfinder.recompute_path(request))
+                .with_pathfinder(|pathfinder| pathfinder.recompute_path(request))
                 .is_some()
         {
             return;
@@ -1960,7 +1957,7 @@ pub trait PathfinderMob: Mob {
         speed_modifier: f64,
     ) -> bool {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
-            && let Some(result) = vehicle.with_pathfinder_mob(|pathfinder| {
+            && let Some(result) = vehicle.with_pathfinder(|pathfinder| {
                 pathfinder.move_to_pos_with_reach(target, reach_range, speed_modifier)
             })
         {
@@ -1998,8 +1995,8 @@ pub trait PathfinderMob: Mob {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle() {
             // The closure consumes `path`; only enter it when there is a
             // pathfinder vehicle so we don't lose `path` on the fallthrough.
-            if let Some(result) = vehicle
-                .with_pathfinder_mob(|pathfinder| pathfinder.move_to_path(path, speed_modifier))
+            if let Some(result) =
+                vehicle.with_pathfinder(|pathfinder| pathfinder.move_to_path(path, speed_modifier))
             {
                 return result;
             }
@@ -2023,8 +2020,7 @@ pub trait PathfinderMob: Mob {
 
     fn is_path_finding(&self) -> bool {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
-            && let Some(result) =
-                vehicle.with_pathfinder_mob(|pathfinder| pathfinder.is_path_finding())
+            && let Some(result) = vehicle.with_pathfinder(|pathfinder| pathfinder.is_path_finding())
         {
             return result;
         }
@@ -2043,7 +2039,7 @@ pub trait PathfinderMob: Mob {
         reach_range: i32,
     ) -> Option<Path> {
         if let Some(vehicle) = self.controlled_pathfinder_vehicle()
-            && let Some(result) = vehicle.with_pathfinder_mob(|pathfinder| {
+            && let Some(result) = vehicle.with_pathfinder(|pathfinder| {
                 pathfinder.create_path_to_targets(world, targets, reach_range)
             })
         {
@@ -2436,6 +2432,10 @@ mod tests {
             Some(self)
         }
 
+        fn as_living_entity_mut(&mut self) -> Option<&mut dyn LivingEntity> {
+            Some(self)
+        }
+
         fn is_mob(&self) -> bool {
             true
         }
@@ -2511,6 +2511,10 @@ mod tests {
         }
 
         fn as_living_entity(&self) -> Option<&dyn LivingEntity> {
+            Some(self)
+        }
+
+        fn as_living_entity_mut(&mut self) -> Option<&mut dyn LivingEntity> {
             Some(self)
         }
     }
@@ -2665,7 +2669,7 @@ mod tests {
         let boat: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
         EntityBase::restore_passenger_relationship(&boat, &mob_entity);
 
-        mob_entity.with_mob_mut(|mob| {
+        mob_entity.with_mob(|mob| {
             mob.update_control_flags();
 
             let selector = &mut mob.mob_base().goal_selector;

@@ -84,7 +84,7 @@ impl World {
     }
 
     pub(crate) fn register_respawned_player_entity(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
-        let mut player = player.entity().lock();
+        let mut player = player.entity.lock();
         self.register_player_entity(&mut player);
         self.chunk_map.update_player_status(&player);
     }
@@ -98,7 +98,7 @@ impl World {
 
         // Synchronous teardown under a single lock (no `.await` inside).
         let (uuid, player_data, server) = {
-            let guard = player.entity().lock();
+            let guard = player.entity.lock();
             let uuid = guard.gameprofile.id;
             let entity_id = guard.id();
             let player_data = PersistentPlayerData::from_player(&guard);
@@ -142,7 +142,7 @@ impl World {
 
         self.broadcast_to_all(CRemovePlayerInfo::single(uuid));
 
-        player.entity().lock().cleanup();
+        player.entity.lock().cleanup();
         log::info!("Player {uuid} removed in {:?}", start.elapsed());
     }
 
@@ -154,7 +154,7 @@ impl World {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
-        let guard = player.entity().lock();
+        let guard = player.entity.lock();
         let entity_id = guard.id();
 
         self.unride_player_for_removal(&guard, false);
@@ -171,7 +171,7 @@ impl World {
         let Some(player) = self.players.remove_player_sync(player) else {
             return;
         };
-        let guard = player.entity().lock();
+        let guard = player.entity.lock();
         let entity_id = guard.id();
 
         self.unride_player_for_removal(&guard, true);
@@ -200,7 +200,7 @@ impl World {
             self.sync_tab_list(&player);
         }
 
-        let mut guard = player.entity().lock();
+        let mut guard = player.entity.lock();
 
         self.register_player_entity(&mut guard);
         self.chunk_map.update_player_status(&guard);
@@ -225,14 +225,14 @@ impl World {
     /// new player's info to everyone. Entity spawn pairing is owned by
     /// `EntityTracker`, matching vanilla `ChunkMap`.
     fn sync_tab_list(self: &Arc<Self>, player: &Arc<ServerPlayer>) {
-        let new_uuid = player.entity().lock().gameprofile.id;
+        let new_uuid = player.entity.lock().gameprofile.id;
 
         // Collect existing players' tab-list packets (locking each briefly), then
         // send them to the new player. Avoids holding two player locks at once.
         let mut packets = Vec::new();
         self.players.iter_players(|_, existing_player| {
             let latency = existing_player.connection.latency();
-            let guard = existing_player.entity().lock();
+            let guard = existing_player.entity.lock();
             if guard.gameprofile.id == new_uuid {
                 return true;
             }
@@ -263,7 +263,7 @@ impl World {
         // existing-player entries to the new player.
         let player_info_packet = {
             let latency = player.connection.latency();
-            let guard = player.entity().lock();
+            let guard = player.entity.lock();
             for packet in packets {
                 guard.send_packet(packet);
             }

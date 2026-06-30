@@ -30,11 +30,11 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                 .then(literal("points").executes(
                     |((), players): ((), Vec<Arc<ServerPlayer>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let points = player.entity().lock().experience.points();
+                            let points = player.entity.lock().experience.points();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_POINTS
                                     .message([
-                                        TextComponent::from(player.name().to_string()),
+                                        TextComponent::from(player.name.clone()),
                                         TextComponent::from(points.to_string()),
                                     ])
                                     .into(),
@@ -46,11 +46,11 @@ pub fn command_handler() -> impl CommandHandlerDyn {
                 .then(literal("levels").executes(
                     |((), players): ((), Vec<Arc<ServerPlayer>>), ctx: &mut CommandContext| {
                         for player in players {
-                            let level = player.entity().lock().experience.level();
+                            let level = player.entity.lock().experience.level();
                             ctx.sender.send_message(
                                 &translations::COMMANDS_EXPERIENCE_QUERY_LEVELS
                                     .message([
-                                        TextComponent::from(player.name().to_string()),
+                                        TextComponent::from(player.name.clone()),
                                         TextComponent::from(level.to_string()),
                                     ])
                                     .into(),
@@ -118,14 +118,14 @@ pub fn command_handler() -> impl CommandHandlerDyn {
         literal("clear")
             .executes(|(): (), ctx: &mut CommandContext| {
                 if let Some(player) = ctx.sender.get_player() {
-                    player.entity().lock().experience.set_total_points(0);
+                    player.entity.lock().experience.set_total_points(0);
                 }
                 Ok(())
             })
             .then(argument("target", PlayerArgument::multiple()).executes(
                 |((), players): ((), Vec<Arc<ServerPlayer>>), _ctx: &mut CommandContext| {
                     for player in players {
-                        player.entity().lock().experience.set_total_points(0);
+                        player.entity.lock().experience.set_total_points(0);
                     }
                     Ok(())
                 },
@@ -145,7 +145,7 @@ fn set_experience(
     ctx: &mut CommandContext,
 ) -> Result<(), CommandError> {
     for player in &players {
-        let mut player_guard = player.entity().lock();
+        let mut player_guard = player.entity.lock();
         let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience
@@ -163,7 +163,7 @@ fn set_experience(
 
         // Release the player lock before `send_message` locks the sender, which may
         // be this same player.
-        let player_name = player.name().to_string();
+        let player_name = player.name.clone();
         ctx.sender.send_message(
             &translation
                 .message([
@@ -202,7 +202,7 @@ fn add_experience(
     ctx: &mut CommandContext,
 ) {
     for player in &players {
-        let mut player_guard = player.entity().lock();
+        let mut player_guard = player.entity.lock();
         let experience = &mut player_guard.experience;
         match xp_type {
             ExperienceType::Points => experience.add_points(amount),
@@ -218,7 +218,7 @@ fn add_experience(
 
         // Release the player lock before `send_message` locks the sender, which may
         // be this same player.
-        let player_name = player.name().to_string();
+        let player_name = player.name.clone();
         ctx.sender.send_message(
             &translation
                 .message([

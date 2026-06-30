@@ -40,11 +40,11 @@ fn list_players(context: &mut CommandContext, show_uuids: bool) {
             // Name and UUID are lock-free on `ServerPlayer`.
             if show_uuids {
                 COMMANDS_LIST_NAME_AND_ID
-                    .message([player.name().to_string(), player.uuid().to_string()])
+                    .message([player.name.clone(), player.uuid.to_string()])
                     .component()
                     .to_string()
             } else {
-                player.name().to_string()
+                player.name.clone()
             }
         })
         .collect::<Vec<String>>()

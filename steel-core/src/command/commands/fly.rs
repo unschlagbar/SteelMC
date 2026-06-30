@@ -50,8 +50,7 @@ pub fn command_handler() -> impl CommandHandlerDyn {
             .then(
                 literal("speed")
                     .executes(
-                        |((), targets): ((), Vec<Arc<ServerPlayer>>),
-                         ctx: &mut CommandContext| {
+                        |((), targets): ((), Vec<Arc<ServerPlayer>>), ctx: &mut CommandContext| {
                             query_flying_speed(&targets, &ctx.sender);
                             Ok(())
                         },
@@ -104,21 +103,21 @@ pub fn command_handler() -> impl CommandHandlerDyn {
 fn toggle_fly(targets: &[Arc<ServerPlayer>]) {
     for target in targets {
         {
-            let mut target_guard = target.entity().lock();
+            let mut target_guard = target.entity.lock();
             let abilities = &mut target_guard.abilities;
             abilities.may_fly = !abilities.may_fly;
             if !abilities.may_fly {
                 abilities.flying = false;
             }
         }
-        target.entity().lock().send_abilities();
+        target.entity.lock().send_abilities();
     }
 }
 
 fn set_fly(targets: &[Arc<ServerPlayer>], value: bool) {
     for target in targets {
         {
-            let mut target_guard = target.entity().lock();
+            let mut target_guard = target.entity.lock();
             let abilities = &mut target_guard.abilities;
 
             abilities.may_fly = value;
@@ -126,7 +125,7 @@ fn set_fly(targets: &[Arc<ServerPlayer>], value: bool) {
                 abilities.flying = false;
             }
         }
-        target.entity().lock().send_abilities();
+        target.entity.lock().send_abilities();
     }
 }
 
@@ -134,7 +133,7 @@ fn set_flying_speed(targets: &[Arc<ServerPlayer>], multiplier: f32, sender: &Com
     let speed = multiplier * 0.05;
     for target in targets {
         let target_name = {
-            let mut guard = target.entity().lock();
+            let mut guard = target.entity.lock();
             guard.set_flying_speed(speed);
             guard.send_abilities();
             guard.gameprofile.name.clone()
@@ -149,7 +148,7 @@ fn set_flying_speed(targets: &[Arc<ServerPlayer>], multiplier: f32, sender: &Com
 fn query_flying_speed(targets: &[Arc<ServerPlayer>], sender: &CommandSender) {
     for target in targets {
         let (speed, target_name) = {
-            let guard = target.entity().lock();
+            let guard = target.entity.lock();
             (guard.get_flying_speed(), guard.gameprofile.name.clone())
         };
         let multiplier = speed / 0.05; // Show as multiplier of default speed

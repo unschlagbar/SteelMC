@@ -153,7 +153,7 @@ fn transfer_leashables_to_holder(leashables: Vec<SharedEntity>, new_holder: &Sha
     let mut transferred = false;
     for leashable in leashables {
         let accepted = leashable
-            .with_mob_mut(|mob| {
+            .with_mob(|mob| {
                 let can_attach =
                     new_holder.with_entity(|holder| mob.can_have_a_leash_attached_to(holder));
                 if can_attach {
@@ -1229,9 +1229,7 @@ pub trait Entity: EntityEventSource {
     ///
     /// Mirrors vanilla `Entity.canControlVehicle`.
     fn can_control_vehicle(&self) -> bool {
-        !REGISTRY
-            .entity_types
-            .is_in_tag(self.entity_type(), &EntityTypeTag::NON_CONTROLLING_RIDER)
+        self.base().can_control_vehicle()
     }
 
     /// Returns whether this entity currently has a controlling passenger.
@@ -1714,7 +1712,7 @@ pub trait Entity: EntityEventSource {
         }
 
         for leashable in leashables {
-            leashable.with_mob_mut(|mob| mob.drop_leash());
+            leashable.with_mob(|mob| mob.drop_leash());
         }
 
         if !dropped {
@@ -5315,7 +5313,15 @@ pub trait LivingEntity: Entity {
 
     /// Refreshes transient item attribute modifiers for one equipment slot.
     fn refresh_equipment_attribute_modifiers(&mut self, slot: EquipmentSlot) {
-        let item_stack = self.living_base_ref().equipment_ref().get_ref(slot).clone();
+        // Source the item through `with_equipment_slot` so player overrides that
+        // back MainHand with the selected hotbar slot are honored. Reading
+        // `equipment_ref()` directly returns an empty MainHand for players,
+        // which would strip the held item's attribute modifiers (e.g. a sword's
+        // attack damage), dropping attacks back to bare-hand damage.
+        let mut item_stack = ItemStack::empty();
+        self.with_equipment_slot(slot, &mut |stack| {
+            item_stack = stack.copy_with_count(stack.count());
+        });
         self.living_base()
             .refresh_equipment_attribute_modifiers(slot, &item_stack);
     }
@@ -7136,7 +7142,7 @@ mod tests {
         assert!(entity.last_hurt_mob().is_some());
         assert_eq!(entity.last_hurt_mob_timestamp(), 0);
 
-        target.with_living_mut(|living| living.set_health(0.0));
+        target.with_living(|living| living.set_health(0.0));
         entity.living_base().tick_living_combat_memory(1);
 
         assert!(entity.last_hurt_mob().is_none());
@@ -8103,7 +8109,7 @@ mod tests {
         );
         assert!(
             leashable
-                .with_mob_mut(|mob| mob.set_leashed_to(&old_holder))
+                .with_mob(|mob| mob.set_leashed_to(&old_holder))
                 .unwrap()
         );
 
@@ -8134,7 +8140,7 @@ mod tests {
         );
         assert!(
             leashable
-                .with_mob_mut(|mob| mob.set_leashed_to(&old_holder))
+                .with_mob(|mob| mob.set_leashed_to(&old_holder))
                 .unwrap()
         );
 
@@ -8160,7 +8166,7 @@ mod tests {
         let leashable: SharedEntity =
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
-        leashable.with_mob_mut(|mob| {
+        leashable.with_mob(|mob| {
             assert!(mob.set_leashed_to(&old_holder));
             assert!(mob.set_leashed_to(&new_holder));
         });
@@ -8179,7 +8185,7 @@ mod tests {
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
-            .with_mob_mut(|mob| {
+            .with_mob(|mob| {
                 assert!(mob.set_leashed_to(&holder));
                 mob.tick_leash();
                 mob.is_leashed()
@@ -8201,7 +8207,7 @@ mod tests {
             PigEntity::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
-            .with_mob_mut(|mob| {
+            .with_mob(|mob| {
                 assert!(mob.set_leashed_to(&holder));
                 mob.tick_leash();
                 mob.is_leashed()

@@ -93,7 +93,7 @@ fn create_entity(
         return Err(command_failed(translations::COMMANDS_SUMMON_FAILED.msg()));
     };
 
-    entity.with_mob_mut(|mob| {
+    entity.with_mob(|mob| {
         let _ = mob.finalize_spawn(&world, EntitySpawnReason::Command, None);
     });
 

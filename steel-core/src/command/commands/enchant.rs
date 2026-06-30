@@ -79,7 +79,7 @@ fn enchant(
     let enchantment_key = enchantment.key.clone();
 
     for target in targets {
-        let inventory = target.entity().lock().inventory.clone();
+        let inventory = target.entity.lock().inventory.clone();
         let mut inv = inventory.lock();
         let item = inv.get_selected_item();
 
@@ -87,7 +87,7 @@ fn enchant(
             if targets.len() == 1 {
                 return Err(CommandError::CommandFailed(Box::new(
                     translations::COMMANDS_ENCHANT_FAILED_ITEMLESS
-                        .message([TextComponent::from(target.name().to_string())])
+                        .message([TextComponent::from(target.name.clone())])
                         .into(),
                 )));
             }
@@ -124,13 +124,10 @@ fn enchant(
     if targets.len() == 1 {
         // Release the target lock before `send_message` locks the sender (possibly
         // this same player) — re-locking the non-reentrant mutex would self-deadlock.
-        let target_name = targets[0].name().to_string();
+        let target_name = targets[0].name.clone();
         ctx.sender.send_message(
             &translations::COMMANDS_ENCHANT_SUCCESS_SINGLE
-                .message([
-                    enchantment_name,
-                    TextComponent::from(target_name),
-                ])
+                .message([enchantment_name, TextComponent::from(target_name)])
                 .into(),
         );
     } else {

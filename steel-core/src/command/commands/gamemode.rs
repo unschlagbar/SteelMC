@@ -48,7 +48,7 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
             .ok_or(CommandError::InvalidRequirement)?;
 
         // Set the player's game mode
-        player.entity().lock().set_game_mode(gamemode);
+        player.entity.lock().set_game_mode(gamemode);
 
         Ok(())
     }
@@ -56,9 +56,7 @@ impl CommandExecutor<((), GameType)> for GameModeCommandExecutor {
 
 struct GameModeTargetCommandExecutor;
 
-impl CommandExecutor<(((), GameType), Vec<Arc<ServerPlayer>>)>
-    for GameModeTargetCommandExecutor
-{
+impl CommandExecutor<(((), GameType), Vec<Arc<ServerPlayer>>)> for GameModeTargetCommandExecutor {
     fn execute(
         &self,
         args: (((), GameType), Vec<Arc<ServerPlayer>>),
@@ -69,16 +67,16 @@ impl CommandExecutor<(((), GameType), Vec<Arc<ServerPlayer>>)>
         let mode_translation = get_gamemode_translation(gamemode);
 
         for target in targets {
-            if target.entity().lock().set_game_mode(gamemode) {
+            if target.entity.lock().set_game_mode(gamemode) {
                 // Send feedback to sender only if the sender is not the target.
                 // UUIDs are lock-free on `ServerPlayer`.
                 let sender_is_target = context
                     .sender
                     .get_player()
-                    .is_some_and(|sender_player| sender_player.uuid() == target.uuid());
+                    .is_some_and(|sender_player| sender_player.uuid == target.uuid);
 
                 if !sender_is_target {
-                    let target_name = target.name().to_string();
+                    let target_name = target.name.clone();
                     context.sender.send_message(
                         &translations::COMMANDS_GAMEMODE_SUCCESS_OTHER
                             .message([

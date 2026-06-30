@@ -291,7 +291,7 @@ impl ExperienceOrbEntity {
         let current = self
             .following_player_id
             .and_then(|id| world.players.get_by_entity_id(id))
-            .map(|sp| Arc::clone(sp.entity()));
+            .map(|sp| sp.entity.clone());
 
         let should_refresh = current.as_ref().is_none_or(|player| {
             let player = player.lock();

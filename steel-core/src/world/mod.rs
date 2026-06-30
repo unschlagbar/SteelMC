@@ -275,7 +275,7 @@ impl NavigatingMobTracker {
     }
 
     fn track(&self, entity: &SharedEntity) {
-        if entity.with_pathfinder_mob(|_| ()).is_some() {
+        if entity.with_pathfinder(|_| ()).is_some() {
             self.ids.lock().insert(entity.id());
         }
     }
@@ -1146,7 +1146,7 @@ impl World {
                 self.untrack_navigating_mob(entity_id);
                 continue;
             };
-            let recomputed = entity.with_pathfinder_mob(|pathfinder| {
+            let recomputed = entity.with_pathfinder(|pathfinder| {
                 if !pathfinder.is_path_finding() {
                     return;
                 }
@@ -1172,7 +1172,7 @@ impl World {
                 self.untrack_navigating_mob(entity_id);
                 continue;
             };
-            entity.with_pathfinder_mob(|pathfinder| {
+            entity.with_pathfinder(|pathfinder| {
                 {
                     let navigation = &mut pathfinder.mob_base().navigation;
                     navigation.invalidate_path_type(pos);
@@ -1427,9 +1427,9 @@ impl World {
             let _span = tracing::trace_span!("player_tick").entered();
             let start = Instant::now();
             self.players.iter_players(|_uuid, player| {
-                player.entity().lock().tick();
+                let mut player_guard = player.entity.lock();
+                player_guard.tick();
                 if runs_normally {
-                    let player_guard = player.entity().lock();
                     if !player_guard.is_passenger() {
                         let dirty_chunks = self
                             .entity_manager
@@ -2030,7 +2030,7 @@ impl World {
             // The sender's lock is already released (see `Player::handle_chat`), so
             // locking each recipient here — including the sender — is deadlock-free.
             let sp = recipient;
-            let recipient = sp.entity().lock();
+            let recipient = sp.entity.lock();
             let messages_received = recipient.get_and_increment_messages_received();
             packet.global_index = messages_received;
 
@@ -2114,7 +2114,7 @@ impl World {
     pub fn broadcast_to_all_with<P: ClientPacket, F: Fn(&Player) -> P>(&self, packet: F) {
         self.players.iter_players(|_, player| {
             let Ok(encoded) = EncodedPacket::from_bare(
-                packet(&player.entity().lock()),
+                packet(&player.entity.lock()),
                 self.compression,
                 ConnectionProtocol::Play,
             ) else {
@@ -2136,7 +2136,7 @@ impl World {
     /// Broadcasts an already-encoded packet to all players except one.
     pub fn broadcast_to_all_encoded_except(&self, packet: EncodedPacket, exclude: i32) {
         self.players.iter_players(|_, player| {
-            if player.entity().lock().id() != exclude {
+            if player.entity.lock().id() != exclude {
                 player.connection.send_encoded(packet.clone());
             }
             true
@@ -2146,7 +2146,7 @@ impl World {
     /// Broadcasts an unsigned player chat message to all players.
     pub fn broadcast_unsigned_chat(&self, mut packet: CPlayerChat) {
         self.players.iter_players(|_, recipient| {
-            let recipient = recipient.entity().lock();
+            let recipient = recipient.entity.lock();
             let messages_received = recipient.get_and_increment_messages_received();
             packet.global_index = messages_received;
 
@@ -3874,16 +3874,16 @@ impl World {
         let max_distance_sqr = max_distance * max_distance;
         let mut nearest: Option<(Arc<SyncMutex<Player>>, f64)> = None;
         self.players.iter_players(|_, player| {
-            let guard = player.entity().lock();
-            if predicate(&guard) {
-                let distance_sqr = guard.position().distance_squared(position);
-                if nearest_player_distance_in_range(distance_sqr, max_distance, max_distance_sqr)
-                    && nearest
-                        .as_ref()
-                        .is_none_or(|(_, current)| distance_sqr < *current)
-                {
-                    nearest = Some((Arc::clone(player.entity()), distance_sqr));
-                }
+            // Position read lock-free from the base; only lock the player for the
+            // predicate once it is a viable nearest candidate within range.
+            let distance_sqr = player.entity_base.position().distance_squared(position);
+            if nearest_player_distance_in_range(distance_sqr, max_distance, max_distance_sqr)
+                && nearest
+                    .as_ref()
+                    .is_none_or(|(_, current)| distance_sqr < *current)
+                && predicate(&player.entity.lock())
+            {
+                nearest = Some((player.entity.clone(), distance_sqr));
             }
             true
         });
@@ -3895,7 +3895,7 @@ impl World {
     pub fn nearest_player_distance_sqr(&self, position: DVec3) -> Option<f64> {
         let mut nearest = None;
         self.players.iter_players(|_, player| {
-            let player = player.entity().lock();
+            let player = player.entity.lock();
             if player.is_spectator() {
                 return true;
             }

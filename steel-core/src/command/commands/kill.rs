@@ -41,11 +41,11 @@ impl CommandExecutor<()> for KillSelfExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        kill_player(&mut player.entity().lock());
+        kill_player(&mut player.entity.lock());
 
         // TODO: use getDisplayName() (team formatting, hover event, UUID insertion)
         // Release the player lock before `send_message` re-locks the same sender.
-        let player_name = player.name().to_string();
+        let player_name = player.name.clone();
         context.sender.send_message(
             &translations::COMMANDS_KILL_SUCCESS_SINGLE
                 .message([TextComponent::plain(player_name)])
@@ -75,9 +75,9 @@ impl CommandExecutor<((), Vec<Arc<ServerPlayer>>)> for KillTargetsExecutor {
         let mut last_name = String::new();
         let mut victim_count = 0;
         for target in &targets {
-            kill_player(&mut target.entity().lock());
+            kill_player(&mut target.entity.lock());
             victim_count += 1;
-            last_name.clone_from(&target.entity().lock().gameprofile.name);
+            last_name.clone_from(&target.name);
             // TODO: non-player entities via Entity::kill() (remove with RemovalReason::KILLED)
         }
 

@@ -22,10 +22,12 @@
 
 use std::ops::{Deref, DerefMut};
 
+use parking_lot::{ArcMutexGuard, RawMutex};
 use steel_utils::Identifier;
 use steel_utils::locks::SyncMutexGuard;
 
 use super::Entity;
+use crate::player::Player;
 
 /// Downcast to `&mut T`. Returns `None` if not attached or wrong kind.
 ///
@@ -57,17 +59,32 @@ pub trait EntityIdentifier {
 ///
 /// Obtained via [`EntityBase::lock_entity`]. Holds the lock until dropped, so all downcast
 /// references live within this guard's lifetime.
-pub struct LockedEntity<'a>(pub(super) SyncMutexGuard<'a, dyn Entity + 'static>);
+///
+/// A player is a normal entity too: its behavior lives behind the player mutex rather than
+/// the `entity` cell, so locking one yields an owning [`ArcMutexGuard`] over the `Player`
+/// (which implements [`Entity`]). Callers see `&mut dyn Entity` either way.
+pub enum LockedEntity<'a> {
+    /// A non-player entity locked through the base's `entity` cell.
+    Borrowed(SyncMutexGuard<'a, dyn Entity + 'static>),
+    /// A player locked through its shared `Arc<SyncMutex<Player>>`.
+    Player(ArcMutexGuard<RawMutex, Player>),
+}
 
 impl<'a> LockedEntity<'a> {
     /// Returns a shared reference to the inner entity, if attached.
     pub fn get(&self) -> &dyn Entity {
-        self.0.deref()
+        match self {
+            LockedEntity::Borrowed(guard) => guard.deref(),
+            LockedEntity::Player(guard) => &**guard,
+        }
     }
 
     /// Returns a mutable reference to the inner entity, if attached.
     pub fn get_mut(&mut self) -> &mut dyn Entity {
-        self.0.deref_mut()
+        match self {
+            LockedEntity::Borrowed(guard) => guard.deref_mut(),
+            LockedEntity::Player(guard) => &mut **guard,
+        }
     }
 
     /// Downcast to `&mut T`. Returns `None` if not attached or wrong kind.

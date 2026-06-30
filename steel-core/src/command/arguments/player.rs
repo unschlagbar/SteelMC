@@ -2,7 +2,6 @@
 use crate::command::arguments::CommandArgument;
 use crate::command::arguments::SuggestionContext;
 use crate::command::context::CommandContext;
-use crate::entity::Entity;
 use crate::player::ServerPlayer;
 use rand::seq::IteratorRandom;
 use std::sync::Arc;
@@ -53,11 +52,7 @@ impl CommandArgument for PlayerArgument {
                 let position = context.position;
                 let mut near_dist = (f64::MAX, players[0].clone());
                 for player in players {
-                    let dist = player
-                        .entity()
-                        .lock()
-                        .position()
-                        .distance_squared(position);
+                    let dist = player.entity_base.position().distance_squared(position);
                     if dist < near_dist.0 {
                         near_dist = (dist, player);
                     }
@@ -83,7 +78,7 @@ impl CommandArgument for PlayerArgument {
                 // Name and UUID are lock-free on `ServerPlayer`.
                 let player = players
                     .into_iter()
-                    .find(|p| p.name().as_ref() == name || p.uuid() == uuid)?;
+                    .find(|p| &p.name == name || p.uuid == uuid)?;
                 vec![player]
             }
         };
@@ -112,7 +107,7 @@ impl CommandArgument for PlayerArgument {
                 .server
                 .get_server_players()
                 .iter()
-                .map(|p| SuggestionEntry::new(p.name().to_string()))
+                .map(|p| SuggestionEntry::new(p.name.clone()))
                 .collect(),
         );
         suggestions.retain(|s| s.text.starts_with(prefix));

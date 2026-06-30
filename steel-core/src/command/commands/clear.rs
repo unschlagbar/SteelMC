@@ -49,9 +49,9 @@ impl CommandExecutor<()> for ClearNoArgumentExecutor {
             .get_player()
             .ok_or(CommandError::InvalidRequirement)?;
 
-        let inventory = player.entity().lock().inventory.clone();
+        let inventory = player.entity.lock().inventory.clone();
         let count = inventory.lock().clear_content();
-        let target_name = player.name().to_string();
+        let target_name = player.name.clone();
 
         clear_messages(&context.sender, count, 1, Some(target_name), false);
 
@@ -72,7 +72,7 @@ impl CommandExecutor<((), Vec<Arc<ServerPlayer>>)> for ClearMultipleArgumentExec
         let count = targets
             .iter()
             .map(|player| {
-                let inventory = player.entity().lock().inventory.clone();
+                let inventory = player.entity.lock().inventory.clone();
                 let count = inventory.lock().clear_content();
                 count
             })
@@ -82,7 +82,7 @@ impl CommandExecutor<((), Vec<Arc<ServerPlayer>>)> for ClearMultipleArgumentExec
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.name().to_string()),
+            targets.first().map(|it| it.name.clone()),
             false,
         );
 
@@ -105,7 +105,7 @@ impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), ItemRef)> for ClearWithItemE
         let count: i32 = targets
             .iter()
             .map(|it| {
-                let inventory = it.entity().lock().inventory.clone();
+                let inventory = it.entity.lock().inventory.clone();
                 let count = inventory.lock().clear_content_matching(&mut filter);
                 count
             })
@@ -115,7 +115,7 @@ impl CommandExecutor<(((), Vec<Arc<ServerPlayer>>), ItemRef)> for ClearWithItemE
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.name().to_string()),
+            targets.first().map(|it| it.name.clone()),
             false,
         );
 
@@ -139,7 +139,7 @@ impl CommandExecutor<((((), Vec<Arc<ServerPlayer>>), ItemRef), i32)>
             .iter()
             .map(|it| {
                 let mut current_amount = max_amount;
-                let inventory = it.entity().lock().inventory.clone();
+                let inventory = it.entity.lock().inventory.clone();
                 let mut inventory = inventory.lock();
                 let mut removed = 0;
                 for i in 0..inventory.get_container_size() {
@@ -170,7 +170,7 @@ impl CommandExecutor<((((), Vec<Arc<ServerPlayer>>), ItemRef), i32)>
             &context.sender,
             count,
             targets.len(),
-            targets.first().map(|it| it.name().to_string()),
+            targets.first().map(|it| it.name.clone()),
             max_amount == 0,
         );
 

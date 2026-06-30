@@ -50,7 +50,7 @@ impl FollowMobGoal {
         }
 
         following_mob
-            .with_mob_mut(|following_mob| {
+            .with_mob(|following_mob| {
                 following_mob
                     .mob_base()
                     .controls

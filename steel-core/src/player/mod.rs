@@ -62,7 +62,8 @@ use std::cell::RefCell;
 use std::sync::{Arc, Weak};
 use steel_protocol::packets::game::{
     AttributeSnapshot, CEntityEvent, CPlayerCombatKill, CRespawn, CSetHealth, CSetHeldSlot,
-    CSetPassengers, CSetTime, ClientCommandAction, EquipmentSlotItem, SoundSource,
+    CSetPassengers, CSetTime, CUpdateAttributes, ClientCommandAction, EquipmentSlotItem,
+    SoundSource,
 };
 use steel_registry::RegistryEntry;
 use steel_registry::blocks::block_state_ext::BlockStateExt as _;
@@ -514,6 +515,23 @@ impl Player {
                 total_experience: self.experience.total_points(),
             });
             self.experience.dirty = false;
+        }
+
+        // Sync the player's own dirty attributes (e.g. ATTACK_SPEED from held
+        // equipment) to nearby players and the player itself. The entity tracker
+        // skips players entirely (`EntityBase::get_entity` is `None` for them,
+        // since players are stored in the separate `player` field), so without
+        // this the client never learns the held weapon's attack speed — breaking
+        // the attack-strength crosshair indicator. Vanilla: `ServerEntity` sends
+        // attribute updates via `broadcastAndSend`.
+        let attribute_snapshots = self.attributes_mut().drain_dirty_sync();
+        if !attribute_snapshots.is_empty() {
+            let chunk_pos = self.view().last_chunk_pos();
+            self.get_world().broadcast_to_nearby(
+                chunk_pos,
+                CUpdateAttributes::new(self.id(), attribute_snapshots),
+                None,
+            );
         }
 
         self.connection().tick();
@@ -1178,7 +1196,7 @@ impl ServerPlayer {
             if let Err(err) = JavaConnection::apply_inbound_packet(self, packet, &server) {
                 log::warn!(
                     "Failed to apply inbound packet for player {}: {err}",
-                    self.entity().lock().id()
+                    self.entity_base.id()
                 );
             }
         }
@@ -1218,12 +1236,12 @@ impl ServerPlayer {
     ) where
         F: FnOnce(),
     {
-        let old_world = self.entity().lock().get_world();
+        let old_world = self.entity.lock().get_world();
         let switching_worlds = !Arc::ptr_eq(&old_world, &new_world);
 
         if switching_worlds {
             {
-                let player = self.entity().lock();
+                let player = self.entity.lock();
                 player.do_close_container();
                 player.send_packet(CContainerClose { container_id: 0 });
             }
@@ -1233,11 +1251,11 @@ impl ServerPlayer {
             } else {
                 old_world.remove_player_for_world_change(self);
             }
-            self.entity().lock().set_world(new_world.clone());
+            self.entity.lock().set_world(new_world.clone());
         }
 
         {
-            let mut player = self.entity().lock();
+            let mut player = self.entity.lock();
             player.set_client_loaded(false);
             player.set_velocity(DVec3::ZERO);
             player.movement.reset_last_known_client_movement();
@@ -1265,7 +1283,7 @@ impl ServerPlayer {
                 _ => 0x00,
             };
 
-            let player = self.entity().lock();
+            let player = self.entity.lock();
             player.send_packet(CRespawn {
                 dimension_type: new_world.dimension_type.id() as i32,
                 dimension_name: new_world.key.clone(),
@@ -1299,13 +1317,13 @@ impl ServerPlayer {
         rotation: (f32, f32),
         reason: ResetReason,
     ) -> bool {
-        let world = self.entity().lock().get_world();
+        let world = self.entity.lock().get_world();
 
         // Body: single lock, sending position/abilities/time/weather/context to
         // the player. None of these re-lock this entity (`resend_player_context`
         // takes `&Player`), so holding the guard is safe.
         let (entity_id, player_name) = {
-            let mut player = self.entity().lock();
+            let mut player = self.entity.lock();
 
             // Set position and rotation
             player.base.set_position_local(position);
@@ -1392,7 +1410,7 @@ impl ServerPlayer {
                 world.chunk_map.remove_player(self);
                 world.entity_tracker().on_player_leave(entity_id);
 
-                self.entity().lock().send_packet(CGameEvent {
+                self.entity.lock().send_packet(CGameEvent {
                     event: GameEventType::LevelChunksLoadStart,
                     data: 0.0,
                 });
@@ -1407,7 +1425,7 @@ impl ServerPlayer {
     /// Called from a tick safe point with the entity unlocked, since `reset`/`spawn`
     /// re-lock it. The `&mut self` prep (state reset, unregister) already ran inline.
     pub(crate) fn finish_respawn(self: &Arc<Self>) {
-        let world = self.entity().lock().get_world();
+        let world = self.entity.lock().get_world();
 
         // Shared reset (clears transient state, sends CRespawn)
         self.reset(world.clone(), ResetReason::Respawn);
@@ -1421,7 +1439,7 @@ impl ServerPlayer {
         );
 
         {
-            let mut player = self.entity().lock();
+            let mut player = self.entity.lock();
             player.send_difficulty();
 
             // Handle XP loss on death
@@ -1453,7 +1471,7 @@ impl ServerPlayer {
             return;
         }
         // Vanilla: PlayerList.sendAllPlayerInfo -> inventoryMenu.sendAllDataToRemote
-        self.entity().lock().send_inventory_to_remote();
+        self.entity.lock().send_inventory_to_remote();
     }
 }
 
@@ -1915,7 +1933,9 @@ impl LivingEntity for Player {
             self.reset_fall_distance();
         }
 
-        self.default_ai_step()
+        let result = self.default_ai_step();
+        self.set_y_head_rot(self.rotation().0);
+        result
     }
 
     fn travel(&mut self, input: DVec3) -> Option<MoveResult> {

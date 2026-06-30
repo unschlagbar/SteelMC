@@ -17,7 +17,8 @@ use glam::DVec3;
 use simdnbt::owned::NbtCompound;
 use steel_registry::entity_data::EntityPose;
 use steel_registry::entity_type::EntityDimensions;
-use steel_registry::vanilla_entities;
+use steel_registry::vanilla_entity_type_tags::EntityTypeTag;
+use steel_registry::{REGISTRY, TaggedRegistryExt, vanilla_entities};
 use steel_utils::random::{Random as _, legacy_random::LegacyRandom};
 use steel_utils::{BlockPos, BlockStateId, WorldAabb};
 use steel_utils::{locks::SyncMutex, types::InteractionHand};
@@ -1273,27 +1274,17 @@ impl EntityBase {
     }
 
     /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
-    pub fn with_living<R>(&self, f: impl FnOnce(&dyn LivingEntity) -> R) -> Option<R> {
-        self.with_entity(|e| e.as_living_entity().map(f))
-    }
-
-    /// Runs a closure with the attached entity as a [`LivingEntity`], if it is one.
-    pub fn with_living_mut<R>(&self, f: impl FnOnce(&mut dyn LivingEntity) -> R) -> Option<R> {
+    pub fn with_living<R>(&self, f: impl FnOnce(&mut dyn LivingEntity) -> R) -> Option<R> {
         self.with_entity(|e| e.as_living_entity_mut().map(f))
     }
 
-    /// Runs a closure with the attached entity as a [`Mob`], if it is one.
-    pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&dyn Mob) -> R) -> Option<R> {
-        self.with_entity(|e| e.as_mob().map(f))
-    }
-
     /// Runs a closure with the attached entity as a mutable [`Mob`], if it is one.
-    pub(crate) fn with_mob_mut<R>(&self, f: impl FnOnce(&mut dyn Mob) -> R) -> Option<R> {
+    pub(crate) fn with_mob<R>(&self, f: impl FnOnce(&mut dyn Mob) -> R) -> Option<R> {
         self.with_entity(|e| e.as_mob_mut().map(f))
     }
 
     /// Runs a closure with the attached entity as a [`PathfinderMob`], if it is one.
-    pub(crate) fn with_pathfinder_mob<R>(
+    pub(crate) fn with_pathfinder<R>(
         &self,
         f: impl FnOnce(&mut dyn PathfinderMob) -> R,
     ) -> Option<R> {
@@ -1318,7 +1309,13 @@ impl EntityBase {
     /// Prefer [`with_entity_as`](Self::with_entity_as) for single-operation access.
     /// Use this when you need to hold the lock across multiple calls on the same entity.
     pub fn lock_entity(&self) -> LockedEntity<'_> {
-        LockedEntity(
+        // A player is a normal entity, but its behavior lives behind the player
+        // mutex rather than the `entity` cell. Lock it through the shared Arc so
+        // callers get `&mut dyn Entity` uniformly (mirrors `with_entity`).
+        if let Some(player) = self.player.upgrade() {
+            return LockedEntity::Player(SyncMutex::lock_arc(&player));
+        }
+        LockedEntity::Borrowed(
             self.entity
                 .get()
                 .expect("Entity must be initialised")
@@ -1353,6 +1350,18 @@ impl EntityBase {
     /// Returns the entity type for this entity. Lock-free.
     pub fn entity_type(&self) -> steel_registry::entity_type::EntityTypeRef {
         self.static_info().entity_type
+    }
+
+    /// Lock-free [`can_control_vehicle`](Entity::can_control_vehicle) (vanilla
+    /// `Entity.canControlVehicle`), resolved from the cached entity type.
+    ///
+    /// Safe to call on an entity whose behavior mutex is already held by the
+    /// current thread — e.g. a mob driving its vehicle, where the vehicle's
+    /// `controlling_passenger` check would otherwise re-lock this passenger.
+    pub fn can_control_vehicle(&self) -> bool {
+        !REGISTRY
+            .entity_types
+            .is_in_tag(self.entity_type(), &EntityTypeTag::NON_CONTROLLING_RIDER)
     }
 
     /// Returns whether this entity ignores chunk ticking visibility. Lock-free.
@@ -1425,7 +1434,8 @@ impl EntityBase {
     /// Sets the scoped [`client_movement_override`](Self::client_movement_override)
     /// flag. Lock-free.
     pub fn set_client_movement_override(&self, value: bool) {
-        self.client_movement_override.store(value, Ordering::Relaxed);
+        self.client_movement_override
+            .store(value, Ordering::Relaxed);
     }
 
     /// Returns the scoped client-movement override. Lock-free; see the field doc

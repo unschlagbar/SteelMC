@@ -4,7 +4,6 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use crate::command::sender::CommandSender;
-use crate::entity::Entity;
 use crate::player::ServerPlayer;
 use crate::server::Server;
 use crate::world::World;
@@ -57,12 +56,12 @@ impl CommandContext {
                     f64::from(world_spawn.y),
                     f64::from(world_spawn.z),
                 ),
-                |p| p.entity().lock().position(),
+                |p| p.entity_base.position(),
             );
 
         let rotation = player
             .as_ref()
-            .map_or((0.0, 0.0), |p| p.entity().lock().rotation());
+            .map_or((0.0, 0.0), |p| p.entity_base.rotation());
 
         Self {
             sender,

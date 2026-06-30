@@ -204,7 +204,7 @@ impl EntityLevelCallback for PlayerEntityCallback {
                         if let Some(player) = world.players.get_by_entity_id(self.entity_id) {
                             world
                                 .entity_tracker()
-                                .update_player(&player.entity().lock(), &view);
+                                .update_player(&player.entity.lock(), &view);
                         }
                     }
                 }

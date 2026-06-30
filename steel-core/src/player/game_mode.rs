@@ -464,7 +464,8 @@ impl Player {
             && let Some(player) = self.get_world().players.get_by_entity_id(entity.id())
         {
             let velocity = entity.velocity();
-            let player = player.entity().lock();
+            // Send lock-free via ServerPlayer: taking the target's entity lock here
+            // deadlocks the tick thread, which already holds a Player guard.
             player.send_packet(CSetEntityMotion::new(entity.id(), velocity));
             entity.clear_hurt_mark();
             entity.set_velocity(old_movement);
