@@ -257,7 +257,7 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::entities::Pig;
@@ -274,7 +274,7 @@ mod tests {
     fn move_to_block_goal_requires_world_after_start_delay() {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -284,7 +284,7 @@ mod tests {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| true);
         goal.next_start_tick = 2;
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
 
@@ -320,12 +320,7 @@ mod tests {
         init_test_registry();
         let mut goal = MoveToBlockGoal::new(1.0, 8, |_, _| false);
         goal.block_pos = BlockPos::new(0, -1, 0);
-        let mut mob = Pig::create(
-            &vanilla_entities::PIG,
-            1,
-            DVec3::new(0.5, 0.5, 0.5),
-            Weak::new(),
-        );
+        let mut mob = Pig::create(1, DVec3::new(0.5, 0.5, 0.5), Weak::new());
 
         goal.tick(&mut mob);
 

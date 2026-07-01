@@ -48,6 +48,11 @@ pub(crate) struct DiscoveredObject {
     pub(crate) struct_name: String,
     pub(crate) class_name: String,
     pub(crate) fields: Vec<JsonArgField>,
+    /// Whether the entity's `new` constructor takes an `entity_type` first parameter.
+    /// Only meaningful for entity behaviors; `false` for blocks/items.
+    pub(crate) new_takes_entity_type: bool,
+    /// Whether the entity's `from_saved` constructor takes an `entity_type` first parameter.
+    pub(crate) from_saved_takes_entity_type: bool,
 }
 
 pub(crate) fn parse_object_behavior(
@@ -73,7 +78,46 @@ pub(crate) fn parse_object_behavior(
         struct_name: s.ident.to_string(),
         class_name,
         fields,
+        // Populated later from the enclosing file's impl blocks.
+        new_takes_entity_type: false,
+        from_saved_takes_entity_type: false,
     })
+}
+
+/// Returns whether the `impl #struct_name` method `#method` declares an
+/// `entity_type` first parameter. Used to decide whether the generated factory
+/// closure forwards `entity_type` to the constructor.
+pub(crate) fn method_takes_entity_type(file: &syn::File, struct_name: &str, method: &str) -> bool {
+    for item in &file.items {
+        let syn::Item::Impl(imp) = item else { continue };
+        if imp.trait_.is_some() {
+            continue;
+        }
+        let syn::Type::Path(self_ty) = &*imp.self_ty else {
+            continue;
+        };
+        if self_ty
+            .path
+            .segments
+            .last()
+            .is_none_or(|s| s.ident != struct_name)
+        {
+            continue;
+        }
+        for impl_item in &imp.items {
+            let syn::ImplItem::Fn(func) = impl_item else {
+                continue;
+            };
+            if func.sig.ident != method {
+                continue;
+            }
+            return func.sig.inputs.first().is_some_and(|arg| {
+                matches!(arg, syn::FnArg::Typed(pat)
+                    if matches!(&*pat.pat, syn::Pat::Ident(pi) if pi.ident == "entity_type"))
+            });
+        }
+    }
+    false
 }
 
 const KNOWN_REGISTRIES: &[&str] = &[
@@ -327,8 +371,12 @@ pub(crate) fn scan_object_behaviors_with_pattern(
 
         for item in &file.items {
             if let syn::Item::Struct(s) = item
-                && let Some(info) = parse_object_behavior(s, attribute_name)
+                && let Some(mut info) = parse_object_behavior(s, attribute_name)
             {
+                info.new_takes_entity_type =
+                    method_takes_entity_type(&file, &info.struct_name, "new");
+                info.from_saved_takes_entity_type =
+                    method_takes_entity_type(&file, &info.struct_name, "from_saved");
                 let class_name = info.class_name.to_upper_camel_case();
                 discovered.insert(class_name, info);
             }

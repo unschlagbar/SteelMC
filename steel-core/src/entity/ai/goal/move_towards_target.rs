@@ -78,7 +78,7 @@ impl Goal for MoveTowardsTargetGoal {
 mod tests {
     use std::sync::Weak;
 
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::{Mob, entities::Pig};
@@ -94,7 +94,7 @@ mod tests {
     fn move_towards_target_goal_requires_target() {
         init_test_registry();
         let mut goal = MoveTowardsTargetGoal::new(1.0, 16.0);
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -103,13 +103,8 @@ mod tests {
     fn move_towards_target_goal_rejects_target_outside_range() {
         init_test_registry();
         let mut goal = MoveTowardsTargetGoal::new(1.0, 8.0);
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let target: SharedEntity = Pig::new(
-            &vanilla_entities::PIG,
-            2,
-            DVec3::new(9.0, 0.0, 0.0),
-            Weak::new(),
-        );
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
+        let target: SharedEntity = Pig::new(2, DVec3::new(9.0, 0.0, 0.0), Weak::new());
         assert!(mob.set_target(Some(&target)));
 
         assert!(!goal.can_use(&mut mob));

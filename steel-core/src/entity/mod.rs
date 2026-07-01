@@ -6837,6 +6837,7 @@ mod tests {
 
     struct LivingFluidTestEntity {
         base: Weak<EntityBase>,
+        #[allow(unused, reason = "we dont want base to be dropped")]
         base_strong: Option<Arc<EntityBase>>,
         living_base: LivingEntityBase,
         entity_data: SyncMutex<SyncedLivingEntityData>,
@@ -6874,6 +6875,33 @@ mod tests {
             }
         }
 
+        fn shared(water_height: f64, lava_height: f64, affected_by_fluids: bool) -> SharedEntity {
+            let base = EntityBase::pack_with(
+                0,
+                DVec3::ZERO,
+                vanilla_entities::PLAYER.dimensions,
+                Weak::new(),
+                |base| Self {
+                    base,
+                    base_strong: None,
+                    living_base: LivingEntityBase::new(&vanilla_entities::PLAYER),
+                    entity_data: SyncMutex::new(SyncedLivingEntityData::new()),
+                    health: SyncMutex::new(20.0),
+                    entity_type: &vanilla_entities::PLAYER,
+                    affected_by_fluids,
+                    can_stand_on_fluid: false,
+                    vehicle: false,
+                },
+            );
+            base.set_fluid_contact(EntityFluidContact::from_parts(
+                water_height,
+                lava_height,
+                false,
+                false,
+            ));
+            base
+        }
+
         const fn with_standing_on_fluid(mut self) -> Self {
             self.can_stand_on_fluid = true;
             self
@@ -6896,13 +6924,6 @@ mod tests {
 
         fn equip(&mut self, slot: EquipmentSlot, stack: ItemStack) {
             self.living_base.equipment().set(slot, stack);
-        }
-
-        /// Attaches this entity to its own base and returns the shared handle.
-        fn shared(mut self) -> SharedEntity {
-            let base = self.base_strong.take().expect("entity already shared");
-            base.attach_entity(self);
-            base
         }
     }
 
@@ -7112,7 +7133,7 @@ mod tests {
         init_test_registry();
 
         let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
-        let attacker: SharedEntity = LivingFluidTestEntity::new(0.0, 0.0, true).shared();
+        let attacker = LivingFluidTestEntity::shared(0.0, 0.0, true);
         entity.advance_tick_count();
 
         entity.set_last_hurt_by_mob(Some(&attacker));
@@ -7136,7 +7157,7 @@ mod tests {
         init_test_registry();
 
         let mut entity = LivingFluidTestEntity::new(0.0, 0.0, true);
-        let target: SharedEntity = LivingFluidTestEntity::new(0.0, 0.0, true).shared();
+        let target = LivingFluidTestEntity::shared(0.0, 0.0, true);
 
         entity.set_last_hurt_mob(Some(&target));
         assert!(entity.last_hurt_mob().is_some());
@@ -7153,7 +7174,7 @@ mod tests {
     fn living_death_loot_table_uses_default_and_custom_mob_tables() {
         init_test_registry();
 
-        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(1, DVec3::ZERO, Weak::new());
         let Some(default_table) = pig.death_loot_table() else {
             panic!("pig should resolve its default entity loot table");
         };
@@ -8097,16 +8118,9 @@ mod tests {
     fn transfer_leashables_to_holder_moves_valid_mobs() {
         init_test_registry();
 
-        let old_holder: SharedEntity =
-            Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let new_holder: SharedEntity =
-            Pig::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
-        let leashable: SharedEntity = Pig::new(
-            &vanilla_entities::PIG,
-            3,
-            DVec3::new(1.0, 0.0, 0.0),
-            Weak::new(),
-        );
+        let old_holder: SharedEntity = Pig::new(1, DVec3::ZERO, Weak::new());
+        let new_holder: SharedEntity = Pig::new(2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(3, DVec3::new(1.0, 0.0, 0.0), Weak::new());
         assert!(
             leashable
                 .with_mob(|mob| mob.set_leashed_to(&old_holder))
@@ -8128,16 +8142,9 @@ mod tests {
     fn transfer_leashables_to_holder_skips_mobs_outside_snap_distance() {
         init_test_registry();
 
-        let old_holder: SharedEntity =
-            Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
-        let new_holder: SharedEntity =
-            Pig::new(&vanilla_entities::PIG, 2, DVec3::ZERO, Weak::new());
-        let leashable: SharedEntity = Pig::new(
-            &vanilla_entities::PIG,
-            3,
-            DVec3::new(20.0, 0.0, 0.0),
-            Weak::new(),
-        );
+        let old_holder: SharedEntity = Pig::new(1, DVec3::ZERO, Weak::new());
+        let new_holder: SharedEntity = Pig::new(2, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(3, DVec3::new(20.0, 0.0, 0.0), Weak::new());
         assert!(
             leashable
                 .with_mob(|mob| mob.set_leashed_to(&old_holder))
@@ -8163,7 +8170,7 @@ mod tests {
         let old_holder: SharedEntity = old_holder_typed.entity.clone();
         let new_holder_typed = LeashNotifications::new(2);
         let new_holder: SharedEntity = new_holder_typed.entity.clone();
-        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(3, DVec3::ZERO, Weak::new());
 
         leashable.with_mob(|mob| {
             assert!(mob.set_leashed_to(&old_holder));
@@ -8180,7 +8187,7 @@ mod tests {
 
         let holder_typed = LeashNotifications::new(1);
         let holder: SharedEntity = holder_typed.entity.clone();
-        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
             .with_mob(|mob| {
@@ -8201,7 +8208,7 @@ mod tests {
 
         let holder_typed = LeashNotifications::with_position(1, DVec3::new(13.0, 0.0, 0.0));
         let holder: SharedEntity = holder_typed.entity.clone();
-        let leashable: SharedEntity = Pig::new(&vanilla_entities::PIG, 3, DVec3::ZERO, Weak::new());
+        let leashable: SharedEntity = Pig::new(3, DVec3::ZERO, Weak::new());
 
         let still_leashed = leashable
             .with_mob(|mob| {

@@ -100,7 +100,7 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::Entity;
@@ -117,7 +117,7 @@ mod tests {
     fn try_find_water_goal_requires_on_ground() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
 
         assert!(!goal.can_use(&mut mob));
     }
@@ -126,7 +126,7 @@ mod tests {
     fn try_find_water_goal_requires_world_after_on_ground_check() {
         init_test_registry();
         let mut goal = TryFindWaterGoal::new();
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
         mob.set_on_ground(true);
 
         assert!(!goal.can_use(&mut mob));

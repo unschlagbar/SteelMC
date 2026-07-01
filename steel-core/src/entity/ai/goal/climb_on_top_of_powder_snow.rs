@@ -67,14 +67,14 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::entities::Pig;
     use crate::entity::{Entity as _, InsideBlockEffectType, Mob as _};
 
     fn pig() -> Pig {
-        Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+        Pig::create(1, DVec3::ZERO, Weak::new())
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
     fn climb_on_top_of_powder_snow_goal_requires_world_after_tag_and_contact() {
         init_test_registry();
         let mut goal = ClimbOnTopOfPowderSnowGoal::new();
-        let mut mob = Pig::create(&vanilla_entities::RABBIT, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
         mob.apply_inside_block_effect(InsideBlockEffectType::Freeze);
 
         assert!(!goal.can_use(&mut mob));

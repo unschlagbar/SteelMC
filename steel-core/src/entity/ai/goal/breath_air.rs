@@ -129,7 +129,7 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::entities::Pig;
@@ -147,7 +147,7 @@ mod tests {
     fn breath_air_goal_uses_vanilla_air_threshold() {
         init_test_registry();
         let mut goal = BreathAirGoal::new();
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
 
         mob.set_air_supply(BREATH_AIR_THRESHOLD);
         assert!(!goal.can_use(&mut mob));
@@ -161,7 +161,7 @@ mod tests {
     fn breath_air_goal_tick_applies_travel_input_to_velocity() {
         init_test_registry();
         let mut goal = BreathAirGoal::new();
-        let mut mob = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut mob = Pig::create(1, DVec3::ZERO, Weak::new());
         mob.set_travel_input(LivingTravelInput::new(1.0, 0.0, 0.0));
 
         goal.tick(&mut mob);

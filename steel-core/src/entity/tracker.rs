@@ -1675,7 +1675,7 @@ mod tests {
         test_support::init_test_registry();
 
         let tracker = EntityTracker::new();
-        let pig: SharedEntity = Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig: SharedEntity = Pig::new(1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity = PairingTestEntity::new(2, Vec::new()).entity();
         assert!(pig.with_mob(|mob| mob.set_leashed_to(&holder)).unwrap());
 
@@ -1689,7 +1689,7 @@ mod tests {
         test_support::init_test_registry();
 
         let tracker = EntityTracker::new();
-        let pig: SharedEntity = Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig: SharedEntity = Pig::new(1, DVec3::ZERO, Weak::new());
         let holder: SharedEntity = PairingTestEntity::new(2, Vec::new()).entity();
         track_entity_for_player(&tracker, &pig, 99);
 
@@ -1920,7 +1920,7 @@ mod tests {
         test_support::init_test_registry();
 
         // A mob has a real behavior mutex, so re-locking it would deadlock (unlike players).
-        let pig: SharedEntity = Pig::new(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let pig: SharedEntity = Pig::new(1, DVec3::ZERO, Weak::new());
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {

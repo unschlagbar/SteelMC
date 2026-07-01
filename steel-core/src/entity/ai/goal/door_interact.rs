@@ -193,7 +193,7 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::ai::node::Node;
@@ -201,7 +201,7 @@ mod tests {
     use crate::entity::{Entity, EntityGroundContact, EntityMovementFlags};
 
     fn pig(position: DVec3) -> Pig {
-        Pig::create(&vanilla_entities::PIG, 1, position, Weak::new())
+        Pig::create(1, position, Weak::new())
     }
 
     fn set_horizontal_collision(mob: &Pig) {

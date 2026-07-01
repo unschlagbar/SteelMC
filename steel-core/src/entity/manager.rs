@@ -1585,7 +1585,7 @@ mod tests {
             entity_type: EntityTypeRef,
         ) -> SharedEntity {
             Arc::new_cyclic(|weak| {
-                let base =
+                let mut base =
                     EntityBase::with_uuid(id, uuid, position, entity_type.dimensions, Weak::new());
                 base.attach_entity(Self {
                     base: weak.clone(),
@@ -1598,7 +1598,7 @@ mod tests {
 
         fn shared_always_ticking(id: i32, uuid: Uuid, position: DVec3) -> SharedEntity {
             Arc::new_cyclic(|weak| {
-                let base = EntityBase::with_uuid(
+                let mut base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,
@@ -1644,7 +1644,7 @@ mod tests {
             tick_rotation: (f32, f32),
         ) -> SharedEntity {
             Arc::new_cyclic(|weak| {
-                let base = EntityBase::with_uuid(
+                let mut base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,
@@ -1694,7 +1694,7 @@ mod tests {
             entity_to_add: SharedEntity,
         ) -> SharedEntity {
             Arc::new_cyclic(|weak| {
-                let base = EntityBase::with_uuid(
+                let mut base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,
@@ -1741,7 +1741,7 @@ mod tests {
     impl DespawnOnCheckTestEntity {
         fn shared(id: i32, uuid: Uuid, position: DVec3) -> SharedEntity {
             Arc::new_cyclic(|weak| {
-                let base = EntityBase::with_uuid(
+                let mut base = EntityBase::with_uuid(
                     id,
                     uuid,
                     position,

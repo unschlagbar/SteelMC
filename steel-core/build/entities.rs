@@ -67,17 +67,28 @@ pub fn build(entities: &[EntityClass]) -> String {
             args.push(common::generate_arg(field, &entity.extra, &entity.name));
         }
 
+        // The factory closures always receive `entity_type`, but only forward it
+        // to constructors that actually declare it as a parameter. Constructors
+        // that don't need it bind the closure parameter as `_entity_type` to
+        // avoid an unused-variable warning.
+        let new_binding = ident_or_ignored(info.new_takes_entity_type);
+        let new_forward = info.new_takes_entity_type.then(|| quote! { entity_type, });
+        let from_saved_binding = ident_or_ignored(info.from_saved_takes_entity_type);
+        let from_saved_forward = info
+            .from_saved_takes_entity_type
+            .then(|| quote! { entity_type, });
+
         let registration = quote! {
             registry.register(
                 &vanilla_entities::#entity_type_ident,
-                |entity_type, id, pos, world| {
-                    #struct_ident::new(entity_type, id, pos, world #(, #args)*)
+                |#new_binding, id, pos, world| {
+                    #struct_ident::new(#new_forward id, pos, world #(, #args)*)
                 },
             );
             registry.register_load(
                 &vanilla_entities::#entity_type_ident,
-                |entity_type, load| {
-                    #struct_ident::from_saved(entity_type, load #(, #args)*)
+                |#from_saved_binding, load| {
+                    #struct_ident::from_saved(#from_saved_forward load #(, #args)*)
                 },
             );
         };
@@ -133,4 +144,11 @@ pub fn build(entities: &[EntityClass]) -> String {
     };
 
     output.to_string()
+}
+
+/// Returns the closure parameter binding for `entity_type`: the real identifier
+/// when the constructor uses it, or `_entity_type` when it doesn't.
+fn ident_or_ignored(used: bool) -> Ident {
+    let name = if used { "entity_type" } else { "_entity_type" };
+    Ident::new(name, Span::call_site())
 }

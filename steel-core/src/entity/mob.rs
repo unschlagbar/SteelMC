@@ -2306,24 +2306,17 @@ mod tests {
         entity_type: EntityTypeRef,
         living_base: LivingEntityBase,
         mob_base: MobBase,
-        flags: SyncMutex<i8>,
-        health: SyncMutex<f32>,
+        flags: i8,
+        health: f32,
         nearest_player_distance_sqr: Option<f64>,
         remove_when_far_away: bool,
-        controlling_passenger: SyncMutex<Option<SharedEntity>>,
+        controlling_passenger: Option<SharedEntity>,
     }
 
     impl DespawnTestMob {
         /// Returns the shared handle backing this plain test mob.
         fn entity(&self) -> SharedEntity {
             self.base_strong.clone().expect("entity already shared")
-        }
-
-        /// Attaches this mob to its own base and returns the shared handle.
-        fn shared(mut self) -> SharedEntity {
-            let base = self.base_strong.take().expect("entity already shared");
-            base.attach_entity(self);
-            base
         }
 
         fn new(nearest_player_distance_sqr: Option<f64>, remove_when_far_away: bool) -> Self {
@@ -2337,14 +2330,38 @@ mod tests {
             )
         }
 
+        fn shared(
+            nearest_player_distance_sqr: Option<f64>,
+            remove_when_far_away: bool,
+        ) -> SharedEntity {
+            let entity_type = &vanilla_entities::PIG;
+
+            EntityBase::pack_with(
+                0,
+                DVec3::ZERO,
+                entity_type.dimensions,
+                Weak::new(),
+                |base| Self {
+                    base,
+                    base_strong: None,
+                    entity_type,
+                    living_base: LivingEntityBase::new(entity_type),
+                    mob_base: MobBase::new(),
+                    flags: 0,
+                    health: 10.0,
+                    nearest_player_distance_sqr,
+                    remove_when_far_away,
+                    controlling_passenger: None,
+                },
+            )
+        }
+
         fn with_position_self(
             id: i32,
             position: DVec3,
             nearest_player_distance_sqr: Option<f64>,
             remove_when_far_away: bool,
         ) -> Self {
-            init_test_registry();
-
             let entity_type = &vanilla_entities::PIG;
 
             let base = Arc::new(EntityBase::new(
@@ -2359,11 +2376,11 @@ mod tests {
                 entity_type,
                 living_base: LivingEntityBase::new(entity_type),
                 mob_base: MobBase::new(),
-                flags: SyncMutex::new(0),
-                health: SyncMutex::new(10.0),
+                flags: 0,
+                health: 10.0,
                 nearest_player_distance_sqr,
                 remove_when_far_away,
-                controlling_passenger: SyncMutex::new(None),
+                controlling_passenger: None,
             }
         }
 
@@ -2401,17 +2418,17 @@ mod tests {
                     entity_type,
                     living_base: LivingEntityBase::new(entity_type),
                     mob_base: MobBase::new(),
-                    flags: SyncMutex::new(0),
-                    health: SyncMutex::new(10.0),
+                    flags: 0,
+                    health: 10.0,
                     nearest_player_distance_sqr,
                     remove_when_far_away,
-                    controlling_passenger: SyncMutex::new(None),
+                    controlling_passenger: None,
                 }
             })
         }
 
-        fn set_controlling_passenger(&self, passenger: SharedEntity) {
-            *self.controlling_passenger.lock() = Some(passenger);
+        fn set_controlling_passenger(&mut self, passenger: SharedEntity) {
+            self.controlling_passenger = Some(passenger);
         }
     }
 
@@ -2449,7 +2466,7 @@ mod tests {
         }
 
         fn controlling_passenger(&self) -> Option<SharedEntity> {
-            self.controlling_passenger.lock().clone()
+            self.controlling_passenger.clone()
         }
 
         fn hurt(&mut self, source: &DamageSource, amount: f32) -> bool {
@@ -2467,11 +2484,11 @@ mod tests {
         }
 
         fn get_health(&self) -> f32 {
-            *self.health.lock()
+            self.health
         }
 
         fn set_health(&mut self, health: f32) {
-            *self.health.lock() = health;
+            self.health = health;
         }
     }
 
@@ -2550,11 +2567,11 @@ mod tests {
         }
 
         fn mob_flags(&self) -> i8 {
-            *self.flags.lock()
+            self.flags
         }
 
         fn set_mob_flags(&mut self, flags: i8) {
-            *self.flags.lock() = flags;
+            self.flags = flags;
         }
 
         fn remove_when_far_away(&self, _dist_sqr: f64) -> bool {
@@ -2665,8 +2682,8 @@ mod tests {
 
     #[test]
     fn mob_control_flags_disable_jump_when_riding_boat() {
-        let mob_entity: SharedEntity = DespawnTestMob::new(None, false).shared();
-        let boat: SharedEntity = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
+        let mob_entity = DespawnTestMob::shared(None, false);
+        let boat = MobControlVehicleEntity::new(2, &vanilla_entities::OAK_BOAT);
         EntityBase::restore_passenger_relationship(&boat, &mob_entity);
 
         mob_entity.with_mob(|mob| {

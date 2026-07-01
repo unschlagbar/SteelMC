@@ -1172,9 +1172,7 @@ mod tests {
     use glam::DVec3;
     use steel_registry::blocks::block_state_ext::BlockStateExt as _;
     use steel_registry::blocks::properties::{BlockStateProperties, SlabType};
-    use steel_registry::{
-        REGISTRY, test_support::init_test_registry, vanilla_blocks, vanilla_entities,
-    };
+    use steel_registry::{REGISTRY, test_support::init_test_registry, vanilla_blocks};
     use steel_utils::{BlockPos, BlockStateId, Direction, WorldAabb};
 
     use super::{AcceptedNodeRequest, MobPathSettings, WalkNodeEvaluator, WalkPathEvaluator};
@@ -1229,7 +1227,7 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_open_doors_from_navigation() {
         init_test_registry();
-        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(1, DVec3::ZERO, Weak::new());
         pig.mob_base().navigation.set_can_open_doors(true);
 
         let settings = MobPathSettings::from_mob(&pig);
@@ -1240,7 +1238,7 @@ mod tests {
     #[test]
     fn mob_path_settings_reads_can_walk_over_fences_from_navigation() {
         init_test_registry();
-        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(1, DVec3::ZERO, Weak::new());
         pig.mob_base().navigation.set_can_walk_over_fences(true);
 
         let settings = MobPathSettings::from_mob(&pig);

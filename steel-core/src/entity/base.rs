@@ -15,10 +15,10 @@ use std::{
 
 use glam::DVec3;
 use simdnbt::owned::NbtCompound;
-use steel_registry::entity_data::EntityPose;
 use steel_registry::entity_type::EntityDimensions;
 use steel_registry::vanilla_entity_type_tags::EntityTypeTag;
 use steel_registry::{REGISTRY, TaggedRegistryExt, vanilla_entities};
+use steel_registry::{entity_data::EntityPose, entity_type::EntityTypeRef};
 use steel_utils::random::{Random as _, legacy_random::LegacyRandom};
 use steel_utils::{BlockPos, BlockStateId, WorldAabb};
 use steel_utils::{locks::SyncMutex, types::InteractionHand};
@@ -1010,7 +1010,7 @@ pub struct EntityBase {
     /// by the tick loop — is locked (e.g. damage resolution during
     /// `Player::attack`, or player registration during join). Going through
     /// `with_entity` there would re-lock the held `Player` mutex and deadlock.
-    static_info: OnceLock<StaticEntityInfo>,
+    static_info: StaticEntityInfo,
     /// Scoped, lock-free override that forces [`uses_client_movement_packets`]
     /// to report `true` without re-deriving the controlling passenger.
     ///
@@ -1027,10 +1027,21 @@ pub struct EntityBase {
 /// lock-free access. None of these change for the life of an entity.
 #[derive(Clone, Copy)]
 struct StaticEntityInfo {
-    entity_type: steel_registry::entity_type::EntityTypeRef,
+    entity_type: EntityTypeRef,
     always_ticking: bool,
     is_living_entity: bool,
     is_mob: bool,
+}
+
+impl Default for StaticEntityInfo {
+    fn default() -> Self {
+        Self {
+            entity_type: &vanilla_entities::ACACIA_BOAT,
+            always_ticking: false,
+            is_living_entity: false,
+            is_mob: false,
+        }
+    }
 }
 
 impl EntityBase {
@@ -1062,7 +1073,7 @@ impl EntityBase {
         make: impl FnOnce(Weak<Self>) -> E,
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
-            let b = Self::new(id, position, dimensions, world);
+            let mut b = Self::new(id, position, dimensions, world);
             b.attach_entity(make(weak.clone()));
             b
         })
@@ -1078,7 +1089,7 @@ impl EntityBase {
         make: impl FnOnce(Weak<Self>) -> E,
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
-            let b = Self::from_load(load, dimensions);
+            let mut b = Self::from_load(load, dimensions);
             b.attach_entity(make(weak.clone()));
             b
         })
@@ -1162,7 +1173,12 @@ impl EntityBase {
             level_callback: SyncMutex::new(Arc::new(NullEntityCallback)),
             entity: entity.map_or_else(OnceLock::new, |entity| OnceLock::from(entity)),
             player: Weak::new(),
-            static_info: OnceLock::new(),
+            static_info: StaticEntityInfo {
+                entity_type: &vanilla_entities::PLAYER,
+                always_ticking: false,
+                is_living_entity: true,
+                is_mob: false,
+            },
             client_movement_override: AtomicBool::new(false),
         }
     }
@@ -1190,17 +1206,17 @@ impl EntityBase {
     ///
     /// Called once during `Arc::new_cyclic` construction. Panics if an entity is
     /// already attached (double-init is a programming error).
-    pub fn attach_entity<E: Entity + 'static>(&self, entity: E) {
+    pub fn attach_entity<E: Entity + 'static>(&mut self, entity: E) {
         // Snapshot the constant type-derived properties while the mutex is still
         // uncontended (called once during `Arc::new_cyclic`), so later reads stay
         // lock-free. See `static_info` docs.
 
-        let _ = self.static_info.set(StaticEntityInfo {
+        let _ = self.static_info = StaticEntityInfo {
             entity_type: entity.entity_type(),
             always_ticking: entity.is_always_ticking(),
             is_living_entity: entity.is_living_entity(),
             is_mob: entity.is_mob(),
-        });
+        };
 
         assert!(
             self.entity.set(Box::new(SyncMutex::new(entity))).is_ok(),
@@ -1223,12 +1239,12 @@ impl EntityBase {
         // cross-entity reads of a locked player's static properties don't re-lock
         // it. These mirror `Player`'s `Entity` impl (a player is a living entity,
         // not a mob, never always-ticking, type `PLAYER`).
-        let _ = self.static_info.set(StaticEntityInfo {
+        let _ = self.static_info = StaticEntityInfo {
             entity_type: &vanilla_entities::PLAYER,
             always_ticking: false,
             is_living_entity: true,
             is_mob: false,
-        });
+        };
     }
 
     /// Returns the player behind this base, if this is a player base.
@@ -1342,9 +1358,10 @@ impl EntityBase {
     /// this entity (notably a player) is already locked — going through
     /// `with_entity` there would re-lock the held `Player` mutex and deadlock.
     fn static_info(&self) -> &StaticEntityInfo {
-        self.static_info
-            .get()
-            .expect("static entity info read before attach_entity/attach_player")
+        if self.entity.get().is_none() && self.player().is_none() {
+            panic!("static entity info read before attach_entity/attach_player")
+        }
+        &self.static_info
     }
 
     /// Returns the entity type for this entity. Lock-free.

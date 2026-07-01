@@ -115,13 +115,13 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::entities::Pig;
 
     fn pig() -> Pig {
-        Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new())
+        Pig::create(1, DVec3::ZERO, Weak::new())
     }
 
     #[test]

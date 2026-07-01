@@ -137,7 +137,7 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::entities::Pig;
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn breed_goal_requires_love_mode() {
         init_test_registry();
-        let mut pig = Pig::create(&vanilla_entities::PIG, 1, DVec3::ZERO, Weak::new());
+        let mut pig = Pig::create(1, DVec3::ZERO, Weak::new());
         let mut goal = BreedGoal::new(1.0);
 
         assert!(!goal.can_use(&mut pig));

@@ -161,18 +161,18 @@ mod tests {
     use std::sync::Weak;
 
     use glam::DVec3;
-    use steel_registry::{test_support::init_test_registry, vanilla_entities};
+    use steel_registry::test_support::init_test_registry;
 
     use super::*;
     use crate::entity::ai::targeting::TargetingConditions;
     use crate::entity::{Mob, entities::Pig};
 
     fn pig(id: i32, position: DVec3) -> Pig {
-        Pig::create(&vanilla_entities::PIG, id, position, Weak::new())
+        Pig::create(id, position, Weak::new())
     }
 
     fn shared_pig(id: i32, position: DVec3) -> SharedEntity {
-        Pig::new(&vanilla_entities::PIG, id, position, Weak::new())
+        Pig::new(id, position, Weak::new())
     }
 
     #[test]

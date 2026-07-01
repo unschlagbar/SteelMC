@@ -4143,12 +4143,7 @@ mod tests {
 
         let tracker = NavigatingMobTracker::new();
         let non_pathfinder = TrackerTestEntity::shared();
-        let pig = Pig::new(
-            &vanilla_entities::PIG,
-            2,
-            DVec3::ZERO,
-            std::sync::Weak::new(),
-        );
+        let pig = Pig::new(2, DVec3::ZERO, Weak::new());
 
         tracker.track(&non_pathfinder);
         assert!(tracker.ids().is_empty());

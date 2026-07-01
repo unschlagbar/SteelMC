@@ -196,7 +196,7 @@ impl ItemEntity {
                 thrower: None,
                 owner: None,
             };
-            let base = EntityBase::new_with_state(
+            let mut base = EntityBase::new_with_state(
                 id,
                 EntityBaseState::new(position, entity_type.dimensions)
                     .with_velocity(velocity)
